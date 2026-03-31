@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Local configuration and secret data
+data/config.json
+data/
+*.db
+*.sqlite3
+
+# Documents, Spreadsheets & Analytics
+*.ods
+*.csv
+*.xls
+*.xlsx
+*.xlsm
+*.pdf
+*.docx
+*.doc
+
+# macOS / OS generated
+.DS_Store
+*.swp
