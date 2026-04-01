@@ -80,6 +80,8 @@ def export_to_excel(data):
         ("", "Current other-deductions", "8B"),
         ("", "Ending accumulative other-deductions", "8C"),
         ("", "", ""),
+        ("9", "Net amount payable", "9A"),
+        ("", "", ""),
         ("10", "Current period reality amount paid", "10A"),
         ("", "", ""),
         ("11", "Ending accumulative reality amount paid", "11A"),
@@ -96,7 +98,7 @@ def export_to_excel(data):
         ws[f'C{row}'] = data.get(key, 0.0)
         
         # highlighting logic
-        if key in ["1F", "2D", "2E", "3A", "4D", "5D", "6C", "7B", "8C", "11A", "11B"]:
+        if key in ["1F", "2D", "2E", "3A", "4D", "5D", "6C", "7B", "8C", "9A", "11A", "11B"]:
             ws[f'C{row}'].fill = calc_fill
             
         row += 1
@@ -314,19 +316,27 @@ def main():
             calc_display("期初累计总支付金额", "Initial total accumulative paid amount", val_7B)
 
 
-    # 10 & 11. ENDING PAID
+    # 9, 10 & 11. ENDING PAID
     with st.container(border=True):
         st.markdown('<div class="section-title">实际与期末合计 | Realities & Ending Totals</div>', unsafe_allow_html=True)
         col1, col2, col3 = st.columns(3)
         with col1:
-            val_10A = (val_1B + val_1E) - val_2C - total_deductions
-            calc_display("本期实际支付金额", "Current period reality amount paid", val_10A)
+            val_9A = val_3A - val_4D - val_5D - val_6C - val_7A - val_8C
+            calc_display("应付款项净额", "Net amount payable", val_9A)
         with col2:
-            val_11A = val_7A + val_10A + val_2A
-            calc_display("期末累计实际支付金额", "Ending accumulative reality amount paid", val_11A)
+            st.markdown('<div style="height: 1px;"></div>', unsafe_allow_html=True)
+            val_10A = num_input("本期实际付款", "Current period Reality amount paid", "val_10A", 0.0)
         with col3:
+            st.markdown('<div style="height: 1px;"></div>', unsafe_allow_html=True)
+            val_11A = val_7A + val_10A + val_2A
+            calc_display("期末累计实际已付款", "Ending accumulative reality amount paid", val_11A)
+            
+        col4, col5 = st.columns(2)
+        with col4:
+            pass
+        with col5:
             val_11B = val_11A + val_6C
-            calc_display("期末累计总支付金额", "Ending total accumulative amount paid", val_11B)
+            calc_display("期末累计已付款项合计", "Ending total accumulative amount paid", val_11B)
 
     st.markdown('<div style="margin-top: 25px;"></div>', unsafe_allow_html=True)
     
@@ -345,6 +355,7 @@ def main():
             "6A": val_6A, "6B": val_6B, "6C": val_6C,
             "7A": val_7A, "7B": val_7B,
             "8A": val_8A, "8B": val_8B, "8C": val_8C,
+            "9A": val_9A,
             "10A": val_10A,
             "11A": val_11A, "11B": val_11B
         }
