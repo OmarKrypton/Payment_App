@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use crate::models::{CalcResult, FormData, RateRow};
 
 fn parse_amt(s: &str) -> f64 {
