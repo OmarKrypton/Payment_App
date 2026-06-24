@@ -991,8 +991,19 @@ pub fn import_pdf(file_path: &str) -> Result<FormData, String> {
     import_pdf_with_progress(file_path, &None)
 }
 
+#[allow(unused_mut)]
+fn silent_cmd(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
 fn find_tool(program: &str) -> String {
-    if Command::new(program).arg("--version").output().is_ok() {
+    if silent_cmd(program).arg("--version").output().is_ok() {
         return program.to_string();
     }
     #[cfg(target_os = "windows")]
@@ -1057,18 +1068,12 @@ fn find_in_dir(dir: std::path::PathBuf, target: &str) -> Result<String, ()> {
 #[allow(unused_mut)]
 fn create_command(program: &str) -> Command {
     let tool_path = find_tool(program);
-    let mut cmd = Command::new(tool_path);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-    cmd
+    silent_cmd(&tool_path)
 }
 
 fn check_tool(tool: &str) -> bool {
     let found = find_tool(tool);
-    Command::new(&found).arg("--version").output().is_ok()
+    silent_cmd(&found).arg("--version").output().is_ok()
 }
 
 fn check_required_tools() -> Result<(), String> {
