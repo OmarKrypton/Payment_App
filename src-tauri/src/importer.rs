@@ -671,6 +671,7 @@ fn preprocess_image(input: &Path, output: &Path) -> Result<(), String> {
 
 /// Run tesseract with multiple PSM modes on a single image.
 /// Returns a vector of (psm_label, text) for each successful pass.
+#[allow(dead_code)]
 fn ocr_multi_pass(image_path: &str, lang: &str) -> Vec<(String, String)> {
     let psms = &["6", "3", "4"];
     let mut results = Vec::new();
@@ -692,7 +693,6 @@ fn try_pdftotext(file_path: &str) -> Option<String> {
         {
             if output.status.success() {
                 let text = String::from_utf8_lossy(&output.stdout).to_string();
-                let chinese = text.chars().filter(|c| (*c as u32) >= 0x4E00 && (*c as u32) <= 0x9FFF).count();
                 let chinese = text.chars().filter(|c| (*c as u32) >= 0x4E00 && (*c as u32) <= 0x9FFF).count();
                 let ascii_len: usize = text.chars().filter(|c| c.is_ascii_graphic()).count();
                 // Require some real content, not just whitespace
@@ -986,6 +986,7 @@ fn build_form_data(
     Ok(data)
 }
 
+#[allow(dead_code)]
 pub fn import_pdf(file_path: &str) -> Result<FormData, String> {
     import_pdf_with_progress(file_path, &None)
 }

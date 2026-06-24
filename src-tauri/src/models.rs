@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrFieldInfo {
@@ -12,6 +11,7 @@ pub struct OcrFieldInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(non_snake_case)]
 pub struct FormData {
     pub val_1A: String,
     pub val_1B: String,
@@ -127,6 +127,7 @@ pub struct RateRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(non_snake_case)]
 pub struct CalcResult {
     pub c_1A: f64,
     pub c_1B: f64,
@@ -176,9 +177,4 @@ pub struct HistoryEntry {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExcelData {
-    pub data: FormData,
-    pub computed: CalcResult,
-    pub file_path: String,
-}
+

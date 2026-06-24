@@ -6,7 +6,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     let mut workbook = Workbook::new();
 
     // ── Sheet 1: Settlement Report ──
-    let mut sheet1 = workbook.add_worksheet();
+    let sheet1 = workbook.add_worksheet();
     sheet1.set_name("Settlement Report").map_err(|e| e.to_string())?;
     sheet1.set_column_width(0, 8).map_err(|e| e.to_string())?;
     sheet1.set_column_width(1, 55).map_err(|e| e.to_string())?;
@@ -139,7 +139,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     }
 
     // ── Sheet 2: Audit Checklist ──
-    let mut sheet2 = workbook.add_worksheet();
+    let sheet2 = workbook.add_worksheet();
     sheet2.set_name("Audit Checklist").map_err(|e| e.to_string())?;
     sheet2.set_column_width(0, 30).map_err(|e| e.to_string())?;
     sheet2.set_column_width(1, 50).map_err(|e| e.to_string())?;
