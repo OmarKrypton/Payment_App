@@ -7,17 +7,6 @@ use crate::models::{FormData, InvoiceData, OcrFieldInfo};
 
 pub type ProgressFn = Box<dyn Fn(&str, &str) + Send>;
 
-#[allow(unused_mut)]
-fn create_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
-    cmd
-}
-
 /// Remove spaces between CJK characters introduced by tesseract output,
 /// and clean up obvious OCR spacing artifacts.
 fn normalize_ocr(text: &str) -> String {
@@ -1002,8 +991,84 @@ pub fn import_pdf(file_path: &str) -> Result<FormData, String> {
     import_pdf_with_progress(file_path, &None)
 }
 
+fn find_tool(program: &str) -> String {
+    if Command::new(program).arg("--version").output().is_ok() {
+        return program.to_string();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let candidates: &[&str] = match program {
+            "tesseract" => &[
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+                r"C:\Program Files\Tesseract-OCR\TesseractOCR\tesseract.exe",
+            ],
+            "pdftotext" | "pdftoppm" => &[],
+            _ => &[],
+        };
+        for c in candidates {
+            if std::path::Path::new(c).exists() {
+                return c.to_string();
+            }
+        }
+        // Search winget package dirs for poppler tools
+        if matches!(program, "pdftotext" | "pdftoppm") {
+            if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                let winget_root = format!(r"{}\Microsoft\WinGet\Packages", local_app_data);
+                if let Ok(entries) = std::fs::read_dir(&winget_root) {
+                    for entry in entries.flatten() {
+                        let dir_name = entry.file_name().to_string_lossy().to_string();
+                        if dir_name.contains("poppler") || dir_name.contains("Poppler") {
+                            let exe_name = format!("{}.exe", program);
+                            if let Ok(found) = find_in_dir(entry.path(), &exe_name) {
+                                return found;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    program.to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn find_in_dir(dir: std::path::PathBuf, target: &str) -> Result<String, ()> {
+    let mut stack = vec![dir];
+    for _ in 0..5 {
+        if let Some(current) = stack.pop() {
+            if let Ok(entries) = std::fs::read_dir(&current) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if let Some(name) = path.file_name() {
+                        if name.to_string_lossy().eq_ignore_ascii_case(target) {
+                            return Ok(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Err(())
+}
+
+#[allow(unused_mut)]
+fn create_command(program: &str) -> Command {
+    let tool_path = find_tool(program);
+    let mut cmd = Command::new(tool_path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
 fn check_tool(tool: &str) -> bool {
-    Command::new(tool).arg("--version").output().is_ok()
+    let found = find_tool(tool);
+    Command::new(&found).arg("--version").output().is_ok()
 }
 
 fn check_required_tools() -> Result<(), String> {
