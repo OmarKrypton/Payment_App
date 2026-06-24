@@ -7,6 +7,17 @@ use crate::models::{FormData, InvoiceData, OcrFieldInfo};
 
 pub type ProgressFn = Box<dyn Fn(&str, &str) + Send>;
 
+#[allow(unused_mut)]
+fn create_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
 /// Remove spaces between CJK characters introduced by tesseract output,
 /// and clean up obvious OCR spacing artifacts.
 fn normalize_ocr(text: &str) -> String {
@@ -440,7 +451,7 @@ pub fn parse_text(text: &str) -> FormData {
 
 /// Run tesseract with a specific PSM mode and language.
 fn ocr_page(image_path: &str, lang: &str, psm: &str) -> String {
-    if let Ok(output) = Command::new("tesseract")
+    if let Ok(output) = create_command("tesseract")
         .args(&[image_path, "stdout", "-l", lang, "--psm", psm])
         .output()
     {
@@ -634,7 +645,7 @@ fn cross_validate(data: &mut FormData, extras: &HashMap<String, String>) {
 /// Preprocess an image for better OCR using ImageMagick:
 /// grayscale + local adaptive threshold + optional sharpen.
 fn preprocess_image(input: &Path, output: &Path) -> Result<(), String> {
-    let status = Command::new("magick")
+    let status = create_command("magick")
         .args([
             input.to_str().unwrap(),
             "-colorspace", "gray",
@@ -649,7 +660,7 @@ fn preprocess_image(input: &Path, output: &Path) -> Result<(), String> {
 
     if !status.success() {
         // Fallback: try "convert" (ImageMagick 6)
-        let status2 = Command::new("convert")
+        let status2 = create_command("convert")
             .args([
                 input.to_str().unwrap(),
                 "-colorspace", "gray",
@@ -687,7 +698,7 @@ fn ocr_multi_pass(image_path: &str, lang: &str) -> Vec<(String, String)> {
 fn try_pdftotext(file_path: &str) -> Option<String> {
     let mut best = String::new();
     for flag in &["-layout", "-raw", "-table"] {
-        if let Ok(output) = Command::new("pdftotext")
+        if let Ok(output) = create_command("pdftotext")
             .args([flag, file_path, "-"])
             .output()
         {
@@ -708,7 +719,7 @@ fn try_pdftotext(file_path: &str) -> Option<String> {
 fn try_pdftotext_all(file_path: &str) -> Option<String> {
     let mut best = String::new();
     for flag in &["-layout", "-raw", "-table"] {
-        if let Ok(output) = Command::new("pdftotext")
+        if let Ok(output) = create_command("pdftotext")
             .args([flag, file_path, "-"])
             .output()
         {
@@ -991,7 +1002,30 @@ pub fn import_pdf(file_path: &str) -> Result<FormData, String> {
     import_pdf_with_progress(file_path, &None)
 }
 
+fn check_tool(tool: &str) -> bool {
+    Command::new(tool).arg("--version").output().is_ok()
+}
+
+fn check_required_tools() -> Result<(), String> {
+    let mut missing = Vec::new();
+    if !check_tool("pdftotext") { missing.push("pdftotext (install poppler-utils)"); }
+    if !check_tool("pdftoppm") { missing.push("pdftoppm (install poppler-utils)"); }
+    if !check_tool("tesseract") { missing.push("tesseract (install tesseract-ocr)"); }
+    if !check_tool("magick") && !check_tool("convert") { missing.push("ImageMagick (install imagemagick)"); }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("Missing required tools:\n  {}\n\nInstall them and ensure they are on your PATH, then restart the application.", missing.join("\n  ")))
+    }
+}
+
 pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) -> Result<FormData, String> {
+    // Check required tools first
+    call_progress(progress, "check", "Checking required tools...");
+    if let Err(e) = check_required_tools() {
+        return Err(e);
+    }
+
     // Try pdftotext first (instant)
     call_progress(progress, "render", "Trying pdftotext extraction...");
     if let Some(pte_text) = try_pdftotext(file_path) {
@@ -1007,7 +1041,7 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
     std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
     let output_prefix = tmp_dir.join("page");
-    let status = Command::new("pdftoppm")
+    let status = create_command("pdftoppm")
         .args(["-png", "-r", "250", file_path])
         .arg(output_prefix.to_str().unwrap())
         .status()
