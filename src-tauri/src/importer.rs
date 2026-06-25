@@ -154,8 +154,10 @@ pub fn parse_text(text: &str) -> FormData {
     );
 
     data.vat_rate = extract_rate(t, &[
-        r"(?i)增值税率[：:\s]*([\d.]+%)",
-        r"(?i)vat[_\s]*rate[^:]*[:：\s]*([\d.]+%)",
+        r"(?i)增值税率[：:\s]*([\d.]+)\s*%",
+        r"(?i)vat[_\s]*rate[^:]*[:：\s]*([\d.]+)\s*%",
+        r"(?i)vat\s*[:：]\s*([\d.]+)\s*%",
+        r"(?i)(?:value[- ]added|vat)\D{0,20}?([\d.]+)\s*%",
     ]);
 
     // Card 2 – Advance payment
@@ -211,8 +213,10 @@ pub fn parse_text(text: &str) -> FormData {
 
     // Card 5 – Temp labour
     data.temp_rate = extract_rate(t, &[
-        r"(?i)临时工[社保率比例][^：:\n]*?([\d.]+%)",
-        r"(?i)temp[_\s]*labour[_\s]*rate[^:]*[:：\s]*([\d.]+%)",
+        r"(?i)临时工[社保率比例][^：:\n]*?([\d.]+)\s*%",
+        r"(?i)temp[_\s]*labou?r[_\s]*rate[^:]*[:：\s]*([\d.]+)\s*%",
+        r"(?i)temp\s*[:：]\s*([\d.]+)\s*%",
+        r"(?i)temporary[_\s]*labou?r\D{0,20}?([\d.]+)\s*%",
     ]);
 
     set_field!(val_5A,
@@ -1121,6 +1125,9 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
         .and_then(|t| {
             let trimmed = t.trim().to_string();
             if !trimmed.is_empty() {
+                // Debug: write pdftotext output for comparison
+                let debug_pte = std::env::temp_dir().join("cscec_debug_pdftotext.txt");
+                let _ = std::fs::write(&debug_pte, &trimmed);
                 build_form_data(&trimmed, &[], "", progress).ok()
             } else {
                 None
@@ -1227,11 +1234,13 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
     let debug_text: String = pass_texts.iter().enumerate()
         .map(|(i, t)| format!("=== PASS {} ===\n{}\n", i+1, t))
         .collect();
-    let _ = std::fs::write("/tmp/cscec_debug_ocr.txt", &debug_text);
+    let debug_path = std::env::temp_dir().join("cscec_debug_ocr.txt");
+    let _ = std::fs::write(&debug_path, &debug_text);
 
     let mut data = build_form_data(&text, &pass_texts, &high_quality_text, progress)?;
 
     // Merge pdftotext results into OCR data: pdftotext values win when available
+    call_progress(progress, "merge", "Merging pdftotext overrides into OCR data...");
     if let Some(ref pte) = pte_result {
         macro_rules! merge_field {
             ($field:ident, $default:expr) => {
