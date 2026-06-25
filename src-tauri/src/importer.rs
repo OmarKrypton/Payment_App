@@ -1015,6 +1015,10 @@ fn find_tool(program: &str) -> String {
                 r"C:\Program Files\Tesseract-OCR\TesseractOCR\tesseract.exe",
             ],
             "pdftotext" | "pdftoppm" => &[],
+            "magick" | "convert" => &[
+                r"C:\Program Files\ImageMagick\magick.exe",
+                r"C:\Program Files\ImageMagick\convert.exe",
+            ],
             _ => &[],
         };
         for c in candidates {
@@ -1028,11 +1032,26 @@ fn find_tool(program: &str) -> String {
                 let winget_root = format!(r"{}\Microsoft\WinGet\Packages", local_app_data);
                 if let Ok(entries) = std::fs::read_dir(&winget_root) {
                     for entry in entries.flatten() {
-                        let dir_name = entry.file_name().to_string_lossy().to_string();
-                        if dir_name.contains("poppler") || dir_name.contains("Poppler") {
+                        if entry.file_name().to_string_lossy().contains("poppler") {
                             let exe_name = format!("{}.exe", program);
                             if let Ok(found) = find_in_dir(entry.path(), &exe_name) {
                                 return found;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Search for ImageMagick in versioned directories
+        if matches!(program, "magick" | "convert") {
+            let exe_name = format!("{}.exe", program);
+            for prog_files in &[r"C:\Program Files", r"C:\Program Files (x86)"] {
+                if let Ok(entries) = std::fs::read_dir(prog_files) {
+                    for entry in entries.flatten() {
+                        if entry.file_name().to_string_lossy().starts_with("ImageMagick") {
+                            let candidate = entry.path().join(&exe_name);
+                            if candidate.exists() {
+                                return candidate.to_string_lossy().to_string();
                             }
                         }
                     }
