@@ -1115,14 +1115,17 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
         return Err(e);
     }
 
-    // Try pdftotext first (instant)
+    // Try pdftotext first (instant) — save result for later merge
     call_progress(progress, "render", "Trying pdftotext extraction...");
-    if let Some(pte_text) = try_pdftotext(file_path) {
-        let trimmed = pte_text.trim().to_string();
-        if !trimmed.is_empty() {
-            return build_form_data(&trimmed, &[], "", progress);
-        }
-    }
+    let pte_result: Option<FormData> = try_pdftotext(file_path)
+        .and_then(|t| {
+            let trimmed = t.trim().to_string();
+            if !trimmed.is_empty() {
+                build_form_data(&trimmed, &[], "", progress).ok()
+            } else {
+                None
+            }
+        });
 
     // Fall back to OCR pipeline
     call_progress(progress, "render", "Rendering PDF pages with pdftoppm...");
@@ -1227,6 +1230,54 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
     let _ = std::fs::write("/tmp/cscec_debug_ocr.txt", &debug_text);
 
     let mut data = build_form_data(&text, &pass_texts, &high_quality_text, progress)?;
+
+    // Merge pdftotext results into OCR data: pdftotext values win when available
+    if let Some(ref pte) = pte_result {
+        macro_rules! merge_field {
+            ($field:ident, $default:expr) => {
+                if !pte.$field.is_empty() && pte.$field != $default {
+                    data.$field = pte.$field.clone();
+                }
+            };
+        }
+        merge_field!(val_1A, "0.00");
+        merge_field!(val_1B, "0.00");
+        merge_field!(val_1C, "0.00");
+        merge_field!(val_1D, "0.00");
+        merge_field!(val_2A, "0.00");
+        merge_field!(val_2B, "0.00");
+        merge_field!(val_2C, "0.00");
+        merge_field!(val_4A, "0.00");
+        merge_field!(val_4B, "0.00");
+        merge_field!(val_4C, "0.00");
+        merge_field!(val_5A, "0.00");
+        merge_field!(val_5B, "0.00");
+        merge_field!(val_5C, "0.00");
+        merge_field!(val_6A, "0.00");
+        merge_field!(val_6B, "0.00");
+        merge_field!(val_6C, "0.00");
+        merge_field!(val_7A, "0.00");
+        merge_field!(val_8A, "0.00");
+        merge_field!(val_10A, "0.00");
+        merge_field!(val_11A, "0.00");
+        merge_field!(val_11B, "0.00");
+        merge_field!(val_12A, "0.00");
+        merge_field!(vat_rate, "14%");
+        merge_field!(temp_rate, "0%");
+        merge_field!(wht_rate, "0%");
+        merge_field!(ret_rate, "0%");
+        merge_field!(oth_rate, "0%");
+        merge_field!(soc_rate, "0%");
+        if !pte.seller_tax_id.is_empty() && data.seller_tax_id.is_empty() {
+            data.seller_tax_id = pte.seller_tax_id.clone();
+        }
+        // Merge seller_tax_ids from pdftotext (but don't deduplicate — already done)
+        for tid in &pte.seller_tax_ids {
+            if !data.seller_tax_ids.contains(tid) {
+                data.seller_tax_ids.push(tid.clone());
+            }
+        }
+    }
 
     // Also extract tax IDs from full pdftotext output (all pages)
     // English scanned PDFs have clean invoice pages at the end (e.g. 221123-1.pdf pages 11-12)
