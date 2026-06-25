@@ -819,6 +819,36 @@ fn build_form_data(
                 formula_values.insert(name.to_string(), best);
             }
         }
+        // Fallback to mid-line (\\b) patterns for fields missed by ^ patterns
+        let loose_fc: &[(&str, &str)] = &[
+            ("val_1A", r"(?i)\b1[4A]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_1B", r"(?i)\b1[8B]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_1C", r"(?i)\b1[Cc]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_1D", r"(?i)\b1[Dd]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_2A", r"(?i)\b2[4A]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_2B", r"(?i)\b2[8B]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_2C", r"(?i)\b2[Cc]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_4A", r"(?i)\b4[Ah]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_4B", r"(?i)\b4[8B]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_4C", r"(?i)\b4[Cc]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_5A", r"(?i)\b[5S][4A]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_5B", r"(?i)\b5[8B]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_5C", r"(?i)\b5[Cc]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_6A", r"(?i)\b6[Ah,&]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_6B", r"(?i)\b6[8B]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_6C", r"(?i)\b6[Cc]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_7A", r"(?i)\b[7T][4A]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_8A", r"(?i)\b[8B][4Ah,]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+            ("val_10A", r"(?i)\b10[Ah,]\b\D*?([\d,.\s]+?)(?:\s|$)"),
+        ];
+        for (name, pattern) in loose_fc {
+            if field_values.contains_key(*name) { continue; }
+            let (best, conf, _vals) = vote_field(pass_texts, pattern);
+            if !best.is_empty() {
+                field_values.insert(name.to_string(), best);
+                field_confidence.insert(name.to_string(), conf * 0.9);
+            }
+        }
         // Fallback to high_quality_text for missed formulas
         for (name, pattern) in formula_patterns {
             if !formula_values.contains_key(*name) && !high_quality_text.is_empty() {
