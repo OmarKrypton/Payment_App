@@ -56,14 +56,14 @@ interface CalcResult {
 }
 
 const DEFAULT_FORM: FormData = {
-  val_1A: "1715291.20", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00",
-  vat_rate: "14%", val_2A: "277500.00", val_2B: "256358.13", val_2C: "935.25",
+  val_1A: "0.00", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00",
+  vat_rate: "14%", val_2A: "0.00", val_2B: "0.00", val_2C: "0.00",
   ret_rate: "0%", val_4A: "0.00", val_4B: "0.00", val_4C: "0.00",
   temp_rate: "0%", val_5A: "0.00", val_5B: "0.00", val_5C: "0.00",
   wht_rate: "0%", val_6A: "0.00", val_6B: "0.00", val_6C: "0.00",
   oth_rate: "0%", val_8A: "0.00",
   soc_rate: "0%", val_12A: "0.00",
-  val_7A: "1302933.73", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
+  val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, audit_notes: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
@@ -148,36 +148,45 @@ function App() {
     setComputed(result);
   }, []);
 
+  const saveConfig = useCallback(async () => {
+    try { await invoke("save_config", { data: formRef.current }); } catch {}
+  }, []);
+
   const updateField = useCallback((key: keyof FormData, value: any) => {
     formRef.current = { ...formRef.current, [key]: value };
     recalc(formRef.current);
-  }, [recalc]);
+    saveConfig();
+  }, [recalc, saveConfig]);
 
   const updateNested = useCallback((parent: string, index: number, key: string, value: string) => {
     const arr = [...(formRef.current as any)[parent]];
     arr[index] = { ...arr[index], [key]: value };
     formRef.current = { ...formRef.current, [parent]: arr };
     recalc(formRef.current);
-  }, [recalc]);
+    saveConfig();
+  }, [recalc, saveConfig]);
 
   const addRow = useCallback((parent: string) => {
     const arr = [...(formRef.current as any)[parent], { amount: "0.00", rate: "0%" }];
     formRef.current = { ...formRef.current, [parent]: arr };
     recalc(formRef.current);
-  }, [recalc]);
+    saveConfig();
+  }, [recalc, saveConfig]);
 
   const delRow = useCallback((parent: string, index: number) => {
     const arr = [...(formRef.current as any)[parent]];
     arr.splice(index, 1);
     formRef.current = { ...formRef.current, [parent]: arr };
     recalc(formRef.current);
-  }, [recalc]);
+    saveConfig();
+  }, [recalc, saveConfig]);
 
   const toggleManual = useCallback((key: string) => {
     const current = !(formRef.current as any)[key];
     formRef.current = { ...formRef.current, [key]: current };
     recalc(formRef.current);
-  }, [recalc]);
+    saveConfig();
+  }, [recalc, saveConfig]);
 
   // Init
   useEffect(() => {
@@ -202,12 +211,13 @@ function App() {
       const parsed = event.payload;
       formRef.current = parsed;
       recalc(parsed);
+      saveConfig();
       setProgressMsg("");
       if (overlayRef.current) overlayRef.current.style.display = 'none';
       alert(t("PDF导入成功", "PDF imported successfully"));
     });
     return () => { unlisten.then(f => f()); };
-  }, [recalc, t]);
+  }, [recalc, t, saveConfig]);
 
   // Listen for background import error
   useEffect(() => {
