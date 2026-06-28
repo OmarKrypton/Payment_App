@@ -64,14 +64,14 @@ pub struct FormData {
 impl Default for FormData {
     fn default() -> Self {
         Self {
-            val_1A: "1715291.20".into(),
+            val_1A: "0.00".into(),
             val_1B: "0.00".into(),
             val_1C: "0.00".into(),
             val_1D: "0.00".into(),
             vat_rate: "14%".into(),
-            val_2A: "277500.00".into(),
-            val_2B: "256358.13".into(),
-            val_2C: "935.25".into(),
+            val_2A: "0.00".into(),
+            val_2B: "0.00".into(),
+            val_2C: "0.00".into(),
             ret_rate: "0%".into(),
             val_4A: "0.00".into(),
             val_4B: "0.00".into(),
@@ -88,7 +88,7 @@ impl Default for FormData {
             val_8A: "0.00".into(),
             soc_rate: "0%".into(),
             val_12A: "0.00".into(),
-            val_7A: "1302933.73".into(),
+            val_7A: "0.00".into(),
             val_10A: "0.00".into(),
             val_11A: "0.00".into(),
             val_11B: "0.00".into(),
