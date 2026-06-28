@@ -88,6 +88,14 @@ const EMPTY_CALC: CalcResult = {
 
 const fmt = (v: number) => `EGP ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+function focusNext(current: HTMLElement) {
+  const fields = document.querySelectorAll<HTMLElement>('.field-input, .field-select, button, textarea');
+  const idx = Array.from(fields).indexOf(current);
+  if (idx >= 0 && idx < fields.length - 1) {
+    fields[idx + 1].focus();
+  }
+}
+
 function Input({ label, sub, value, onChange, width, confidence }: {
   label: string; sub?: string; value: string; onChange: (v: string) => void; width?: number; confidence?: number;
 }) {
@@ -99,7 +107,15 @@ function Input({ label, sub, value, onChange, width, confidence }: {
   return (
     <div className="field" style={width ? { maxWidth: width } : {}}>
       <label className="field-label">{dot}{label}{sub ? <><br /><span className="field-sub">{sub}</span></> : null}</label>
-      <input className={"field-input" + (confidence !== undefined && confidence < 0.33 ? " conf-low-input" : "")} type="text" value={value} onChange={e => onChange(e.target.value)} />
+      <input
+        className={"field-input" + (confidence !== undefined && confidence < 0.33 ? " conf-low-input" : "")}
+        type="text" value={value}
+        onChange={e => onChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); focusNext(e.currentTarget); }
+          if (e.key === 'Escape') { e.currentTarget.blur(); }
+        }}
+      />
     </div>
   );
 }
@@ -110,7 +126,13 @@ function Select({ label, sub, value, options, onChange }: {
   return (
     <div className="field">
       <label className="field-label">{label}{sub ? <><br /><span className="field-sub">{sub}</span></> : null}</label>
-      <select className="field-select" value={value} onChange={e => onChange(e.target.value)}>
+      <select
+        className="field-select" value={value}
+        onChange={e => onChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { e.currentTarget.blur(); }
+        }}
+      >
         {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     </div>
@@ -474,7 +496,8 @@ function App() {
       </div>
       <div className="card">
         <h3>{t("审计备注", "Audit Notes")}</h3>
-        <textarea className="audit-notes" value={data.audit_notes} onChange={e => updateField("audit_notes", e.target.value)} rows={5} />
+        <textarea className="audit-notes" value={data.audit_notes} onChange={e => updateField("audit_notes", e.target.value)} rows={5}
+          onKeyDown={e => { if (e.key === 'Escape') { e.currentTarget.blur(); } }} />
       </div>
     </div>
   );
