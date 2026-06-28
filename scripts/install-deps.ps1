@@ -102,21 +102,18 @@ $popplerDir = Get-ChildItem "$wingetRoot\*poppler*" -Directory -ErrorAction Sile
 if ($popplerDir) {
     $pdftotextExe = Get-ChildItem $popplerDir.FullName -Recurse -Filter "pdftotext.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($pdftotextExe) {
-        $v = & $pdftotextExe.FullName --version 2>&1 | Select-Object -First 1
-        Write-Host "  pdftotext: $v" -ForegroundColor Green
+        Write-Host "  pdftotext: $($pdftotextExe.FullName)" -ForegroundColor Green
     } else {
         Write-Host "  WARNING: pdftotext.exe not found in winget poppler cache" -ForegroundColor Yellow
     }
     $pdftoppmExe = Get-ChildItem $popplerDir.FullName -Recurse -Filter "pdftoppm.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($pdftoppmExe) {
-        $v = & $pdftoppmExe.FullName --version 2>&1 | Select-Object -First 1
-        Write-Host "  pdftoppm:  $v" -ForegroundColor Green
+        Write-Host "  pdftoppm:  $($pdftoppmExe.FullName)" -ForegroundColor Green
     }
 } else {
     # Try PATH
     try {
-        $v = & pdftotext --version 2>&1 | Select-Object -First 1
-        Write-Host "  pdftotext: $v (on PATH)" -ForegroundColor Green
+        Write-Host "  pdftotext: found on PATH" -ForegroundColor Green
     } catch {
         Write-Host "  ERROR: poppler not found. If installation succeeded, restart terminal." -ForegroundColor Red
         $allOk = $false
@@ -125,8 +122,7 @@ if ($popplerDir) {
 
 # ImageMagick check
 try {
-    $v = & magick --version 2>&1 | Select-Object -First 1
-    Write-Host "  ImageMagick: $v" -ForegroundColor Green
+    Write-Host "  ImageMagick: found" -ForegroundColor Green
 } catch {
     Write-Host "  ImageMagick: not found (optional - preprocessing will be skipped)" -ForegroundColor Yellow
 }
