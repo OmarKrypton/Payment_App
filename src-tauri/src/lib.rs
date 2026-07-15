@@ -87,22 +87,37 @@ struct ImportProgress {
 
 fn start_import_in_background(app: tauri::AppHandle, file_path: String) {
     std::thread::spawn(move || {
-        let app_clone = app.clone();
-        let progress_cb: importer::ProgressFn = Box::new(move |stage, message| {
-            let _ = app_clone.emit("import-progress", ImportProgress {
-                status: stage.to_string(),
-                message: message.to_string(),
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let app_clone = app.clone();
+            let progress_cb: importer::ProgressFn = Box::new(move |stage, message| {
+                let _ = app_clone.emit("import-progress", ImportProgress {
+                    status: stage.to_string(),
+                    message: message.to_string(),
+                });
             });
-        });
-        let result = importer::import_pdf_with_progress(&file_path, &Some(progress_cb));
+            importer::import_pdf_with_progress(&file_path, &Some(progress_cb))
+        }));
         match result {
-            Ok(data) => {
+            Ok(Ok(data)) => {
                 let _ = app.emit("import-complete", data);
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let _ = app.emit("import-error", ImportProgress {
                     status: "error".into(),
                     message: e,
+                });
+            }
+            Err(panic_err) => {
+                let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic during import".into()
+                };
+                let _ = app.emit("import-error", ImportProgress {
+                    status: "error".into(),
+                    message: msg,
                 });
             }
         }
