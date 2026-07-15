@@ -678,8 +678,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 50vh;
-  overflow-y: auto;
 }
 
 .history-item {

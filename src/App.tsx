@@ -259,7 +259,7 @@ function App() {
     if (!el) return;
     const handler: EventListener = (e) => {
       const target = e.target as HTMLElement;
-      if (target.closest('select, textarea, .history-list')) return;
+      if (target.closest('.modal-overlay, select, textarea')) return;
       (el as HTMLElement).scrollTop += (e as WheelEvent).deltaY;
       e.preventDefault();
     };
