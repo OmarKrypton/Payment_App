@@ -69,7 +69,7 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let c_3A = c_1F - c_2D;
 
     let c_4A = gv("val_4A");
-    let c_4B = gv("val_4B");
+    let c_4B = (c_1B * gv("ret_rate") / 100.0 * 100.0).round() / 100.0;
     let c_4C = gv("val_4C");
     let c_4D = c_4A + c_4B - c_4C;
 
