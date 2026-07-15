@@ -153,6 +153,20 @@ function Computed({ label, sub, value, highlight }: { label: string; sub?: strin
   );
 }
 
+function FastInput({ value, onChange, className, type, rows }: {
+  value: string; onChange: (v: string) => void; className?: string; type?: string; rows?: number;
+}) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  if (rows) {
+    return <textarea className={className || "field-input"} value={local} rows={rows}
+      onChange={e => { setLocal(e.target.value); onChange(e.target.value); }}
+      onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }} />;
+  }
+  return <input className={className || "field-input"} type={type || "text"} value={local}
+    onChange={e => { setLocal(e.target.value); onChange(e.target.value); }} />;
+}
+
 interface HistoryEntry {
   id: number; label: string; notes: string; created_at: string;
 }
@@ -294,7 +308,7 @@ function App() {
     <div className="rate-rows">
       {rows.map((r, i) => (
         <div key={i} className="rate-row">
-          <input className="field-input small" type="text" value={r.amount} onChange={e => updateNested(parent, i, "amount", e.target.value)} />
+          <FastInput className="field-input small" value={r.amount} onChange={v => updateNested(parent, i, "amount", v)} />
           <select className="field-select small" value={r.rate} onChange={e => updateNested(parent, i, "rate", e.target.value)}>
             {rates.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
@@ -489,7 +503,7 @@ function App() {
         <div className="field"><label className="field-label">{t("卖方税号", "Seller TAX IDs")}</label></div>
         {data.seller_tax_ids.map((tid, i) => (
           <div key={i} className="invoice-row" style={{marginTop: 4}}>
-            <input className="field-input" value={tid} onChange={e => updSellerTaxId(i, e.target.value)} />
+            <FastInput value={tid} onChange={v => updSellerTaxId(i, v)} />
             <button className="btn-danger" onClick={() => delSellerTaxId(i)}>✕</button>
           </div>
         ))}
@@ -502,8 +516,8 @@ function App() {
         </div>
         {data.invoices.map((inv, i) => (
           <div key={i} className="invoice-row">
-            <input className="field-input" value={inv.invoice_no} onChange={e => updInv(i, "invoice_no", e.target.value)} />
-            <input className="field-input" type="text" value={inv.amount} onChange={e => updInv(i, "amount", e.target.value)} />
+            <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
+            <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
             <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
           </div>
         ))}
@@ -529,8 +543,7 @@ function App() {
       </div>
       <div className="card">
         <h3>{t("审计备注", "Audit Notes")}</h3>
-        <textarea className="audit-notes" value={data.audit_notes} onChange={e => updateField("audit_notes", e.target.value)} rows={5}
-          onKeyDown={e => { if (e.key === 'Escape') { e.currentTarget.blur(); } }} />
+        <FastInput className="audit-notes" value={data.audit_notes} onChange={v => updateField("audit_notes", v)} rows={5} />
       </div>
     </div>
   );
