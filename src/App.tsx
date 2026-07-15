@@ -237,6 +237,22 @@ function App() {
     })();
   }, []);
 
+  // Refresh scroll after initial layout settles
+  const loadedRef = useRef(false);
+  useEffect(() => {
+    if (computed === EMPTY_CALC || loadedRef.current) return;
+    loadedRef.current = true;
+    const el = document.querySelector('.content');
+    if (!el) return;
+    const force = () => {
+      (el as HTMLElement).style.overflowY = 'hidden';
+      requestAnimationFrame(() => {
+        (el as HTMLElement).style.overflowY = 'scroll';
+      });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(force));
+  }, [computed]);
+
   // Listen for import progress updates
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-progress", (event) => {
