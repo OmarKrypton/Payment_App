@@ -580,11 +580,28 @@ function App() {
     }
   };
 
-  const [showHistory, setShowHistory] = useState(false);
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState("");
   const [historyLoading, setHistoryLoading] = useState(false);
   const [isSerialDuplicate, setIsSerialDuplicate] = useState(false);
+  const historyOverlayRef = useRef<HTMLDivElement>(null);
+
+  const showHistoryModal = () => {
+    if (historyOverlayRef.current) {
+      historyOverlayRef.current.style.visibility = 'visible';
+      historyOverlayRef.current.style.opacity = '1';
+      historyOverlayRef.current.style.pointerEvents = 'auto';
+    }
+    loadHistoryList("");
+  };
+
+  const hideHistoryModal = () => {
+    if (historyOverlayRef.current) {
+      historyOverlayRef.current.style.visibility = 'hidden';
+      historyOverlayRef.current.style.opacity = '0';
+      historyOverlayRef.current.style.pointerEvents = 'none';
+    }
+  };
 
   const loadHistoryList = async (search = "") => {
     setHistoryLoading(true);
@@ -633,7 +650,7 @@ function App() {
     const parsed = JSON.parse(dataJson);
     formRef.current = parsed;
     recalc(parsed);
-    setShowHistory(false);
+    hideHistoryModal();
   };
 
   const historySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -695,7 +712,7 @@ function App() {
           <button onClick={saveSnapshot}>{t("💾 保存快照", "💾 Save Snapshot")}</button>
           <button onClick={exportExcel}>{t("📥 导出Excel", "📥 Export Excel")}</button>
           <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
-          <button onClick={() => { loadHistoryList(""); setShowHistory(true); }}>{t("📂 历史记录", "📂 History")}</button>
+          <button onClick={showHistoryModal}>{t("📂 历史记录", "📂 History")}</button>
         </div>
       </aside>
       <main className="content">
@@ -721,11 +738,11 @@ function App() {
         )}
       </main>
 
-      <div className="modal-overlay" style={{ visibility: showHistory ? 'visible' : 'hidden', opacity: showHistory ? 1 : 0, pointerEvents: showHistory ? 'auto' : 'none' }} onClick={() => setShowHistory(false)}>
+      <div ref={historyOverlayRef} className="modal-overlay" style={{ visibility: 'hidden', opacity: 0, pointerEvents: 'none' }} onClick={hideHistoryModal}>
         <div className="modal" onClick={e => e.stopPropagation()}>
           <div className="modal-header">
             <h3>{t("历史记录", "History Browser")}</h3>
-            <button className="modal-close" onClick={() => setShowHistory(false)}>✕</button>
+            <button className="modal-close" onClick={hideHistoryModal}>✕</button>
           </div>
           <div className="modal-search">
             <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
