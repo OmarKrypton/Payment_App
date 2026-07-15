@@ -164,7 +164,6 @@ function App() {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
 
-  // Recalculate
   const recalc = useCallback(async (data: FormData) => {
     const result = await invoke<CalcResult>("recalculate", { data });
     setComputed(result);
@@ -174,48 +173,67 @@ function App() {
     try { await invoke("save_config", { data: formRef.current }); } catch {}
   }, []);
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueFlush = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      debounceRef.current = null;
+      const d = formRef.current;
+      const result = await invoke<CalcResult>("recalculate", { data: d });
+      setComputed(result);
+      try { await invoke("save_config", { data: d }); } catch {}
+    }, 300);
+  }, []);
+
   const updateField = useCallback((key: keyof FormData, value: any) => {
     formRef.current = { ...formRef.current, [key]: value };
-    recalc(formRef.current);
-    saveConfig();
-  }, [recalc, saveConfig]);
+    queueFlush();
+  }, [queueFlush]);
 
   const updateNested = useCallback((parent: string, index: number, key: string, value: string) => {
     const arr = [...(formRef.current as any)[parent]];
     arr[index] = { ...arr[index], [key]: value };
     formRef.current = { ...formRef.current, [parent]: arr };
-    recalc(formRef.current);
-    saveConfig();
-  }, [recalc, saveConfig]);
+    queueFlush();
+  }, [queueFlush]);
 
   const addRow = useCallback((parent: string) => {
     const arr = [...(formRef.current as any)[parent], { amount: "0.00", rate: "0%" }];
     formRef.current = { ...formRef.current, [parent]: arr };
-    recalc(formRef.current);
-    saveConfig();
-  }, [recalc, saveConfig]);
+    queueFlush();
+  }, [queueFlush]);
 
   const delRow = useCallback((parent: string, index: number) => {
     const arr = [...(formRef.current as any)[parent]];
     arr.splice(index, 1);
     formRef.current = { ...formRef.current, [parent]: arr };
-    recalc(formRef.current);
-    saveConfig();
-  }, [recalc, saveConfig]);
+    queueFlush();
+  }, [queueFlush]);
 
   const toggleManual = useCallback((key: string) => {
     const current = !(formRef.current as any)[key];
     formRef.current = { ...formRef.current, [key]: current };
-    recalc(formRef.current);
-    saveConfig();
-  }, [recalc, saveConfig]);
+    queueFlush();
+  }, [queueFlush]);
+
+  // ── Overlay safety ──
+  const importTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideOverlay = useCallback(() => {
+    if (importTimerRef.current) { clearTimeout(importTimerRef.current); importTimerRef.current = null; }
+    setProgressMsg("");
+    if (overlayRef.current) overlayRef.current.style.display = 'none';
+  }, []);
 
   // Init
   useEffect(() => {
     (async () => {
-      const cfg = await invoke<FormData>("load_config");
-      formRef.current = cfg;
-      recalc(cfg);
+      try {
+        const cfg = await invoke<FormData>("load_config");
+        formRef.current = cfg;
+        recalc(cfg);
+      } catch (e) {
+        console.error("load_config failed", e);
+      }
     })();
   }, []);
 
@@ -234,22 +252,20 @@ function App() {
       formRef.current = parsed;
       recalc(parsed);
       saveConfig();
-      setProgressMsg("");
-      if (overlayRef.current) overlayRef.current.style.display = 'none';
+      hideOverlay();
       alert(t("PDF导入成功", "PDF imported successfully"));
     });
     return () => { unlisten.then(f => f()); };
-  }, [recalc, t, saveConfig]);
+  }, [recalc, t, saveConfig, hideOverlay]);
 
   // Listen for background import error
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-error", (event) => {
-      setProgressMsg("");
-      if (overlayRef.current) overlayRef.current.style.display = 'none';
+      hideOverlay();
       alert(`${t("导入失败", "Import failed")}: ${event.payload.message}`);
     });
     return () => { unlisten.then(f => f()); };
-  }, [t]);
+  }, [t, hideOverlay]);
 
   const data = formRef.current;
 
@@ -516,11 +532,13 @@ function App() {
       const overlay = overlayRef.current;
       if (overlay) {
         overlay.style.display = 'flex';
-        // Force synchronous reflow before any IPC
         void overlay.offsetHeight;
       }
       setProgressMsg(t("正在准备导入...", "Preparing import..."));
-      // Fire-and-forget event — Rust listener does the import in background
+      importTimerRef.current = setTimeout(() => {
+        hideOverlay();
+        console.warn("import timed out, overlay auto-hidden");
+      }, 60000);
       emit("start-import", { filePath: path });
     }
   };
