@@ -619,6 +619,7 @@ body {
   align-items: center;
   justify-content: center;
   z-index: 100;
+  transition: opacity 0.15s ease;
 }
 
 .modal {
