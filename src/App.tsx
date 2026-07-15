@@ -366,7 +366,8 @@ function App() {
     <div className="card">
       <h3>{t("4. 保留金", "4. Retention")}</h3>
       <Input label={t("期初保留金", "Initial retention")} value={data.val_4A} onChange={v => updateField("val_4A", v)} confidence={ocrConf("val_4A")} />
-      <Input label={t("本期应扣保留金", "Current deduction")} value={data.val_4B} onChange={v => updateField("val_4B", v)} confidence={ocrConf("val_4B")} />
+      <Select label={t("保留金率", "Retention rate")} value={data.ret_rate} options={["0%", "0.5%", "3%", "5%", "10%"]} onChange={v => updateField("ret_rate", v)} />
+      <Computed label={t("本期应扣保留金", "Current deduction")} value={computed.c_4B} />
       <Input label={t("本期返还保留金", "Current return")} value={data.val_4C} onChange={v => updateField("val_4C", v)} confidence={ocrConf("val_4C")} />
       <Computed label={t("期末保留金余额", "Ending balance")} value={computed.c_4D} highlight />
     </div>
@@ -376,9 +377,8 @@ function App() {
     <div className="card">
       <h3>{t("5. 临时工社保", "5. Temp. Labour Insurance")}</h3>
       <Input label={t("期初余额", "Initial balance")} value={data.val_5A} onChange={v => updateField("val_5A", v)} confidence={ocrConf("val_5A")} />
-      <Input label={t("本期应扣", "Current deductible")} value={data.val_5B} onChange={v => updateField("val_5B", v)} confidence={ocrConf("val_5B")} />
       <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} />
-      <Computed label={t("(公式计算)", "(Formula)")} value={computed.c_5B} />
+      <Computed label={t("本期应扣", "Current deductible")} value={computed.c_5B} />
       <Input label={t("本期返还", "Current return")} value={data.val_5C} onChange={v => updateField("val_5C", v)} confidence={ocrConf("val_5C")} />
       <Computed label={t("期末余额", "Ending balance")} value={computed.c_5D} highlight />
     </div>
@@ -388,7 +388,6 @@ function App() {
     <div className="card">
       <h3>{t("6. 预提税", "6. WHT")}</h3>
       <Input label={t("期初累计预提税", "Initial accum. WHT")} value={data.val_6A} onChange={v => updateField("val_6A", v)} confidence={ocrConf("val_6A")} />
-      <Input label={t("本期预提税", "Current WHT")} value={data.val_6B} onChange={v => updateField("val_6B", v)} confidence={ocrConf("val_6B")} />
       <div className="section-header">
         <label className="toggle">
           <input type="checkbox" checked={data.wht_manual} onChange={() => toggleManual("wht_manual")} />
@@ -398,12 +397,15 @@ function App() {
       {data.wht_manual ? (
         <>
           {renderRateRows(data.wht_rows, "wht_rows", ["0%", "1%", "3%", "5%"])}
-          <div className="rate-total">WHT: {fmt(computed.c_6B)}</div>
+          <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
         </>
       ) : (
-        <Select label={t("预提税率", "WHT Rate")} value={data.wht_rate} options={["0%", "1%", "3%", "5%"]} onChange={v => updateField("wht_rate", v)} />
+        <>
+          <Select label={t("预提税率", "WHT Rate")} value={data.wht_rate} options={["0%", "1%", "3%", "5%"]} onChange={v => updateField("wht_rate", v)} />
+          <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
+        </>
       )}
-      <Input label={t("期末累计预提税", "Ending WHT")} value={data.val_6C} onChange={v => updateField("val_6C", v)} confidence={ocrConf("val_6C")} />
+      <Computed label={t("期末累计预提税", "Ending WHT")} value={computed.c_6C} />
       <Computed label={t("决算含税减去预提税", "Settlement minus WHT")} value={computed.c_6D} highlight />
     </div>
   );
@@ -444,8 +446,8 @@ function App() {
     <div className="card">
       <h3>{t("10 & 11. 实付合计", "10 & 11. Paid Totals")}</h3>
       <Input label={t("本期实付", "Current paid")} value={data.val_10A} onChange={v => updateField("val_10A", v)} confidence={ocrConf("val_10A")} />
-      <Input label={t("期末累计实付", "Ending accum. paid")} value={data.val_11A} onChange={v => updateField("val_11A", v)} confidence={ocrConf("val_11A")} />
-      <Input label={t("期末累计已付合计", "Ending total paid")} value={data.val_11B} onChange={v => updateField("val_11B", v)} confidence={ocrConf("val_11B")} />
+      <Computed label={t("期末累计实付", "Ending accum. paid")} value={computed.c_11A} highlight />
+      <Computed label={t("期末累计已付合计", "Ending total paid")} value={computed.c_11B} highlight />
     </div>
   );
 
