@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 struct DbState(Mutex<Option<Connection>>);
 
 #[tauri::command]
+fn ping() -> bool { true }
+
+#[tauri::command]
 fn recalculate(data: FormData) -> CalcResult {
     calc::recalculate(&data)
 }
@@ -154,6 +157,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ping,
             recalculate,
             load_config,
             save_config,

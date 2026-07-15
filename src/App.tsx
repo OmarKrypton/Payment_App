@@ -237,17 +237,10 @@ function App() {
     })();
   }, []);
 
-  // Manual wheel handler — WebKitGTK scroll bug workaround
+  // Heartbeat to prevent WebKitGTK compositor stall
   useEffect(() => {
-    const el = document.querySelector('.content');
-    if (!el) return;
-    const handler: EventListener = (e) => {
-      const we = e as WheelEvent;
-      el.scrollTop += we.deltaY;
-      e.preventDefault();
-    };
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
+    const id = setInterval(() => { invoke("ping"); }, 8000);
+    return () => clearInterval(id);
   }, []);
 
   // Listen for import progress updates
