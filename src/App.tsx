@@ -239,7 +239,9 @@ function App() {
 
   // Heartbeat to prevent WebKitGTK compositor stall
   useEffect(() => {
-    const id = setInterval(() => { invoke("ping"); }, 8000);
+    const ping = () => { invoke("ping"); };
+    ping();
+    const id = setInterval(ping, 5000);
     return () => clearInterval(id);
   }, []);
 
