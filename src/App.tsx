@@ -172,8 +172,7 @@ interface HistoryEntry {
 }
 
 function App() {
-  const [tab, setTab] = useState<"settlement" | "audit" | "history">("settlement");
-  const prevTabRef = useRef<"settlement" | "audit" | "history">("settlement");
+  const [tab, setTab] = useState<"settlement" | "audit">("settlement");
   const [lang, setLang] = useState<"zh" | "en">("zh");
   const t = useCallback((zh: string, en: string) => lang === "zh" ? zh : en, [lang]);
   const formRef = useRef<FormData>(DEFAULT_FORM);
@@ -259,6 +258,8 @@ function App() {
     const el = document.querySelector('.content');
     if (!el) return;
     const handler: EventListener = (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('select, textarea, .history-list')) return;
       (el as HTMLElement).scrollTop += (e as WheelEvent).deltaY;
       e.preventDefault();
     };
@@ -579,6 +580,7 @@ function App() {
     }
   };
 
+  const [showHistory, setShowHistory] = useState(false);
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState("");
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -631,7 +633,7 @@ function App() {
     const parsed = JSON.parse(dataJson);
     formRef.current = parsed;
     recalc(parsed);
-    setTab("settlement");
+    setShowHistory(false);
   };
 
   const historySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -693,7 +695,7 @@ function App() {
           <button onClick={saveSnapshot}>{t("💾 保存快照", "💾 Save Snapshot")}</button>
           <button onClick={exportExcel}>{t("📥 导出Excel", "📥 Export Excel")}</button>
           <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
-          <button onClick={() => { if (tab !== "history") prevTabRef.current = tab; loadHistoryList(""); setTab("history"); }}>{t("📂 历史记录", "📂 History")}</button>
+          <button onClick={() => { loadHistoryList(""); setShowHistory(true); }}>{t("📂 历史记录", "📂 History")}</button>
         </div>
       </aside>
       <main className="content">
@@ -714,37 +716,39 @@ function App() {
             </div>
             {Card11()}
           </>
-        ) : tab === "audit" ? (
-          AuditTab()
         ) : (
-          <div className="card">
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-              <h3>{t("历史记录", "History Browser")}</h3>
-              <button className="btn-add" onClick={() => setTab(prevTabRef.current)}>{t("← 返回", "← Back")}</button>
-            </div>
-            <div className="modal-search" style={{marginBottom:12}}>
-              <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
-            </div>
-            <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
-              {historyLoading ? (
-                <div className="history-empty">{t("加载中...", "Loading...")}</div>
-              ) : historyList.map(h => (
-                <div key={h.id} className="history-item">
-                  <div>
-                    <strong>{h.label}</strong>
-                    <p><small>{h.created_at}</small></p>
-                  </div>
-                  <div className="history-actions">
-                    <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
-                    <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
-                  </div>
-                </div>
-              ))}
-              {historyList.length === 0 && <div className="history-empty">{t("未找到快照", "No snapshots found")}</div>}
-            </div>
-          </div>
+          AuditTab()
         )}
       </main>
+
+      <div className="modal-overlay" style={{ visibility: showHistory ? 'visible' : 'hidden', opacity: showHistory ? 1 : 0, pointerEvents: showHistory ? 'auto' : 'none' }} onClick={() => setShowHistory(false)}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <h3>{t("历史记录", "History Browser")}</h3>
+            <button className="modal-close" onClick={() => setShowHistory(false)}>✕</button>
+          </div>
+          <div className="modal-search">
+            <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
+          </div>
+          <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
+            {historyLoading ? (
+              <div className="history-empty">{t("加载中...", "Loading...")}</div>
+            ) : historyList.map(h => (
+              <div key={h.id} className="history-item">
+                <div>
+                  <strong>{h.label}</strong>
+                  <p><small>{h.created_at}</small></p>
+                </div>
+                <div className="history-actions">
+                  <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
+                  <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
+                </div>
+              </div>
+            ))}
+            {historyList.length === 0 && <div className="history-empty">{t("未找到快照", "No snapshots found")}</div>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
