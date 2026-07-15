@@ -237,12 +237,17 @@ function App() {
     })();
   }, []);
 
-  // Heartbeat to prevent WebKitGTK compositor stall
+  // Manual wheel handler + heartbeat to keep event loop alive
   useEffect(() => {
-    const ping = () => { invoke("ping"); };
-    ping();
-    const id = setInterval(ping, 5000);
-    return () => clearInterval(id);
+    const el = document.querySelector('.content');
+    if (!el) return;
+    const handler: EventListener = (e) => {
+      (el as HTMLElement).scrollTop += (e as WheelEvent).deltaY;
+      e.preventDefault();
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    const id = setInterval(() => { invoke("ping"); }, 4000);
+    return () => { el.removeEventListener('wheel', handler); clearInterval(id); };
   }, []);
 
   // Listen for import progress updates
