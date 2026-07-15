@@ -99,6 +99,8 @@ function focusNext(current: HTMLElement) {
 function Input({ label, sub, value, onChange, width, confidence }: {
   label: string; sub?: string; value: string; onChange: (v: string) => void; width?: number; confidence?: number;
 }) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
   const dot = confidence !== undefined ? (
     <span className={`conf-dot ${confidence >= 0.67 ? "conf-high" : confidence >= 0.33 ? "conf-med" : "conf-low"}`}
           title={`OCR confidence: ${(confidence * 100).toFixed(0)}%${confidence >= 0.67 ? " ✓" : confidence >= 0.33 ? " ~" : " ✗"}`}
@@ -109,8 +111,8 @@ function Input({ label, sub, value, onChange, width, confidence }: {
       <label className="field-label">{dot}{label}{sub ? <><br /><span className="field-sub">{sub}</span></> : null}</label>
       <input
         className={"field-input" + (confidence !== undefined && confidence < 0.33 ? " conf-low-input" : "")}
-        type="text" value={value}
-        onChange={e => onChange(e.target.value)}
+        type="text" value={local}
+        onChange={e => { setLocal(e.target.value); onChange(e.target.value); }}
         onKeyDown={e => {
           if (e.key === 'Enter') { e.preventDefault(); focusNext(e.currentTarget); }
           if (e.key === 'Escape') { e.currentTarget.blur(); }
