@@ -237,21 +237,18 @@ function App() {
     })();
   }, []);
 
-  // Refresh scroll after initial layout settles
-  const loadedRef = useRef(false);
+  // Manual wheel handler — WebKitGTK scroll bug workaround
   useEffect(() => {
-    if (computed === EMPTY_CALC || loadedRef.current) return;
-    loadedRef.current = true;
     const el = document.querySelector('.content');
     if (!el) return;
-    const force = () => {
-      (el as HTMLElement).style.overflowY = 'hidden';
-      requestAnimationFrame(() => {
-        (el as HTMLElement).style.overflowY = 'scroll';
-      });
+    const handler: EventListener = (e) => {
+      const we = e as WheelEvent;
+      el.scrollTop += we.deltaY;
+      e.preventDefault();
     };
-    requestAnimationFrame(() => requestAnimationFrame(force));
-  }, [computed]);
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
 
   // Listen for import progress updates
   useEffect(() => {
