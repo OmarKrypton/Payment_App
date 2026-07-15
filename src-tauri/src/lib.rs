@@ -65,6 +65,13 @@ fn load_history(state: tauri::State<'_, DbState>, id: i64) -> Result<String, Str
 }
 
 #[tauri::command]
+fn check_serial_exists(state: tauri::State<'_, DbState>, serial: String) -> Result<bool, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::check_serial_exists(conn, &serial)
+}
+
+#[tauri::command]
 fn delete_history(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -166,6 +173,7 @@ pub fn run() {
             save_history,
             load_history,
             delete_history,
+            check_serial_exists,
             export_excel,
         ])
         .run(tauri::generate_context!())

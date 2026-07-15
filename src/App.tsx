@@ -495,6 +495,11 @@ function App() {
       <div className="card">
         <h3>{t("文件信息", "Document Information")}</h3>
         <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={v => updateField("doc_serial", v)} />
+        {isSerialDuplicate && (
+          <div className="field-warning" style={{color: 'var(--red)'}}>
+            {t("警告: 该文档编号已存在!", "Warning: This document serial already exists!")}
+          </div>
+        )}
         <div className="field"><label className="field-label">{t("日期", "Date")}</label><div className="computed-value">{new Date().toLocaleDateString()}</div></div>
         <Input label={t("买方税号", "Buyer TAX ID")} value={data.buyer_tax_id} onChange={v => updateField("buyer_tax_id", v)} />
         {data.buyer_tax_id && data.buyer_tax_id !== "100489095" && (
@@ -576,14 +581,46 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [isSerialDuplicate, setIsSerialDuplicate] = useState(false);
 
   const loadHistoryList = async (search = "") => {
-    const list = await invoke<HistoryEntry[]>("list_history", { search });
-    setHistoryList(list);
+    setHistoryLoading(true);
+    try {
+      const list = await invoke<HistoryEntry[]>("list_history", { search });
+      setHistoryList(list);
+    } catch (e) {
+      console.error("list_history failed", e);
+      setHistoryList([]);
+    }
+    setHistoryLoading(false);
   };
 
+  // Debounced duplicate serial check
+  const serialCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const serial = data.doc_serial;
+    if (!serial) { setIsSerialDuplicate(false); return; }
+    if (serialCheckTimer.current) clearTimeout(serialCheckTimer.current);
+    serialCheckTimer.current = setTimeout(async () => {
+      try {
+        const exists = await invoke<boolean>("check_serial_exists", { serial });
+        setIsSerialDuplicate(exists);
+      } catch { setIsSerialDuplicate(false); }
+    }, 500);
+    return () => { if (serialCheckTimer.current) clearTimeout(serialCheckTimer.current); };
+  }, [data.doc_serial]);
+
   const saveSnapshot = async () => {
-    const label = data.doc_serial || `Snapshot-${new Date().toLocaleDateString()}`;
+    const serial = data.doc_serial;
+    if (serial) {
+      const exists = await invoke<boolean>("check_serial_exists", { serial });
+      if (exists) {
+        alert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
+        return;
+      }
+    }
+    const label = serial || `Snapshot-${new Date().toLocaleDateString()}`;
     const dataJson = JSON.stringify(data);
     await invoke("save_history", { label, notes: "", dataJson });
     alert(`${t("快照已保存", "Snapshot saved")} (${label})`);
@@ -595,6 +632,13 @@ function App() {
     formRef.current = parsed;
     recalc(parsed);
     setShowHistory(false);
+  };
+
+  const historySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onHistorySearch = (v: string) => {
+    setHistorySearch(v);
+    if (historySearchTimer.current) clearTimeout(historySearchTimer.current);
+    historySearchTimer.current = setTimeout(() => loadHistoryList(v), 300);
   };
 
   const deleteSnapshot = async (id: number) => {
@@ -683,10 +727,12 @@ function App() {
               <button className="modal-close" onClick={() => setShowHistory(false)}>✕</button>
             </div>
             <div className="modal-search">
-              <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => { setHistorySearch(e.target.value); loadHistoryList(e.target.value); }} />
+              <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
             </div>
-            <div className="history-list">
-              {historyList.map(h => (
+            <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
+              {historyLoading ? (
+                <div className="history-empty">{t("加载中...", "Loading...")}</div>
+              ) : historyList.map(h => (
                 <div key={h.id} className="history-item">
                   <div>
                     <strong>{h.label}</strong>

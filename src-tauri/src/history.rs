@@ -88,3 +88,14 @@ pub fn delete_snapshot(conn: &Connection, id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+pub fn check_serial_exists(conn: &Connection, serial: &str) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM snapshots WHERE label = ?1",
+            params![serial],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
