@@ -48,7 +48,9 @@ pub struct FormData {
     pub seller_tax_ids: Vec<String>,
     pub check_cover: bool,
     pub check_invoices: bool,
+    #[serde(default)]
     pub check_company_name: bool,
+    #[serde(default)]
     pub check_wht_cert: bool,
     pub audit_notes: String,
     pub vat_manual: bool,
