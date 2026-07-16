@@ -141,8 +141,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(DbState(Mutex::new(None)))
         .setup(|app| {
-            #[cfg(target_os = "linux")]
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
             let app_dir = app.path().app_data_dir().expect("no app data dir");
             std::fs::create_dir_all(&app_dir).expect("failed to create app data dir");
             let db_path = app_dir.join("history.db");
