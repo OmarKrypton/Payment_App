@@ -319,13 +319,17 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     sheet3.set_column_width(0, 35).map_err(|e| e.to_string())?;
     sheet3.set_column_width(1, 25).map_err(|e| e.to_string())?;
     sheet3.set_column_width(2, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(2, 18).map_err(|e| e.to_string())?;
     sheet3.set_column_width(3, 18).map_err(|e| e.to_string())?;
     sheet3.set_column_width(4, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(5, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(6, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(7, 18).map_err(|e| e.to_string())?;
 
     let mut r3 = 0u32;
 
     // Title
-    sheet3.merge_range(r3, 0, r3, 4, "CSCEC - Import Calculation", &title_fmt)
+    sheet3.merge_range(r3, 0, r3, 7, "CSCEC - Import Calculation", &title_fmt)
         .map_err(|e| e.to_string())?;
     r3 += 1;
 
@@ -360,16 +364,16 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .map_err(|e| e.to_string())?;
     r3 += 1;
     // Header
-    let headers_import = ["Service", "Amount", "Free WHT", "VAT", "WHT", "Total (+VAT)"];
+    let headers_import = ["Service", "Amount", "Free WHT", "VAT Rate", "WHT Rate", "VAT", "WHT", "Total (+VAT)"];
     for (ci, h) in headers_import.iter().enumerate() {
         sheet3.write_with_format(r3, ci as u16, *h, &bold_fmt)
             .map_err(|e| e.to_string())?;
     }
     r3 += 1;
 
-    let vat_rate: f64 = parse_rate(&data.import_vat_rate);
     for entry in &data.import_entries {
         let amt: f64 = parse_amt(&entry.amount);
+        let vat_rate: f64 = parse_rate(&entry.vat_rate);
         let vat = (amt * vat_rate / 100.0 * 100.0).round() / 100.0;
         let wht_rate: f64 = parse_rate(&entry.wht_rate);
         let wht = if entry.free_wht { 0.0 } else { (amt * wht_rate / 100.0 * 100.0).round() / 100.0 };
@@ -380,11 +384,15 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             .map_err(|e| e.to_string())?;
         sheet3.write_with_format(r3, 2, if entry.free_wht { "Yes" } else { "No" }, &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 3, vat, &val_fmt)
+        sheet3.write_with_format(r3, 3, entry.vat_rate.as_str(), &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 4, wht, &val_fmt)
+        sheet3.write_with_format(r3, 4, entry.wht_rate.as_str(), &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 5, total, &calc_fmt)
+        sheet3.write_with_format(r3, 5, vat, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 6, wht, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 7, total, &calc_fmt)
             .map_err(|e| e.to_string())?;
         r3 += 1;
     }
@@ -400,6 +408,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         ("Total WHT", computed.import_total_wht),
         ("Grand Total (Gross+VAT)", computed.import_grand_total),
         ("Grand Net (Gross+VAT-WHT)", computed.import_grand_net),
+        ("Temp Labour (Services × 0.45%)", computed.import_temp_labour),
     ];
     for (label, val) in &summary_items {
         let is_grand = label.starts_with("Grand ");
