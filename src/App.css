@@ -159,7 +159,7 @@ body {
   font-size: 12px;
   font-weight: 500;
   text-align: left;
-  transition: all 0.15s;
+  transition: none;
 }
 
 .sidebar-nav button:hover {
@@ -191,7 +191,7 @@ body {
   font-weight: 500;
   width: 100%;
   text-align: center;
-  transition: all 0.15s;
+  transition: none;
 }
 
 .sidebar-lang button:hover {
@@ -220,7 +220,7 @@ body {
   font-size: 11px;
   font-weight: 500;
   text-align: left;
-  transition: all 0.15s;
+  transition: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -241,6 +241,7 @@ body {
   flex-direction: column;
   gap: 12px;
   position: relative;
+  contain: layout style;
 }
 
 /* ── Doc Serial Row ── */
@@ -266,7 +267,8 @@ body {
   border-radius: var(--radius-lg);
   padding: 16px 20px;
   box-shadow: var(--shadow-sm);
-  transition: all 0.15s;
+  transition: box-shadow 0.15s;
+  contain: layout style paint;
 }
 
 .card:hover {
@@ -365,7 +367,7 @@ body {
   font-size: 12px;
   font-family: var(--font-mono);
   outline: none;
-  transition: all 0.15s;
+  transition: none;
   width: 100%;
 }
 
@@ -394,7 +396,7 @@ body {
   font-size: 12px;
   outline: none;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: none;
   width: 100%;
 }
 
@@ -477,7 +479,7 @@ body {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: none;
   align-self: flex-start;
 }
 
@@ -494,7 +496,7 @@ body {
   border-radius: 4px;
   font-size: 11px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: none;
   line-height: 1;
 }
 
@@ -662,7 +664,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: none;
 }
 
 .modal-close:hover {
@@ -689,7 +691,7 @@ body {
   border-radius: var(--radius);
   padding: 12px 16px;
   font-size: 12px;
-  transition: all 0.15s;
+  transition: none;
 }
 
 .history-item:hover {
@@ -730,7 +732,7 @@ body {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: none;
 }
 
 .history-actions .btn-load:hover {
@@ -747,7 +749,7 @@ body {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: none;
 }
 
 .history-actions .btn-delete:hover {
