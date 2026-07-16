@@ -406,16 +406,24 @@ function App() {
     </div>
   );
 
-  const Card5 = () => (
+  const Card5 = () => {
+    const importSum = data.import_entries.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+    const isAuto = importSum > 0;
+    return (
     <div className="card">
       <h3>{t("5. 临时工社保", "5. Temp. Labour Insurance")}</h3>
       <Input label={t("期初余额", "Initial balance")} value={data.val_5A} onChange={v => updateField("val_5A", v)} confidence={ocrConf("val_5A")} />
-      <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} />
+      {isAuto ? (
+        <div className="field"><label className="field-label">{t("临时工社保率", "Temp labour rate")}</label><div className="computed-value">0.45%</div></div>
+      ) : (
+        <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} />
+      )}
       <Computed label={t("本期应扣", "Current deductible")} value={computed.c_5B} />
       <Input label={t("本期返还", "Current return")} value={data.val_5C} onChange={v => updateField("val_5C", v)} confidence={ocrConf("val_5C")} />
       <Computed label={t("期末余额", "Ending balance")} value={computed.c_5D} highlight />
     </div>
-  );
+    );
+  };
 
   const Card6 = () => (
     <div className="card">
@@ -594,6 +602,7 @@ function App() {
         <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
           <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
+          <Select label={t("进口增值税率", "Import VAT Rate")} value={data.import_vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updateField("import_vat_rate", v)} />
           <h4 style={{marginTop:16,marginBottom:8,fontSize:13,color:'var(--text-secondary)',fontWeight:600}}>{t("成本拆分", "Cost Breakdown")}</h4>
           <Input label={t("成本 1", "Cost 1")} value={data.import_cost_1} onChange={v => updateField("import_cost_1", v)} />
           <Input label={t("成本 2", "Cost 2")} value={data.import_cost_2} onChange={v => updateField("import_cost_2", v)} />
