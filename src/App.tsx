@@ -281,12 +281,6 @@ function App() {
     })();
   }, []);
 
-  // Heartbeat to keep event loop alive
-  useEffect(() => {
-    const id = setInterval(() => { invoke("ping"); }, 4000);
-    return () => clearInterval(id);
-  }, []);
-
   // Listen for import progress updates
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-progress", (event) => {
