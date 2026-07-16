@@ -241,10 +241,6 @@ body {
   flex-direction: column;
   gap: 12px;
   position: relative;
-  /* WebKit hardware-accelerated scrolling optimization */
-  -webkit-overflow-scrolling: touch;
-  will-change: scroll-position, transform;
-  transform: translate3d(0, 0, 0);
 }
 
 /* ── Doc Serial Row ── */
@@ -271,9 +267,6 @@ body {
   padding: 16px 20px;
   box-shadow: var(--shadow-sm);
   transition: border-color 0.15s;
-  /* GPU layer promotion to prevent scroll repaint lag */
-  transform: translate3d(0, 0, 0);
-  will-change: transform;
 }
 
 .card:hover {
