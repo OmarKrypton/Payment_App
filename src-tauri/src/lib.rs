@@ -136,6 +136,12 @@ fn start_import_in_background(app: tauri::AppHandle, file_path: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    {
+        // Disable DMABUF renderer to prevent WebKitGTK freezes/crashes on Wayland/Hyprland
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
