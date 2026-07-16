@@ -156,6 +156,7 @@ pub struct ImportEntry {
     pub amount: String,
     pub free_wht: bool,
     pub wht_rate: String,
+    pub vat_rate: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +206,7 @@ pub struct CalcResult {
     pub import_total_wht: f64,
     pub import_grand_total: f64,
     pub import_grand_net: f64,
+    pub import_temp_labour: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

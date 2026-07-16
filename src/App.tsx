@@ -22,6 +22,7 @@ interface ImportEntry {
   amount: string;
   free_wht: boolean;
   wht_rate: string;
+  vat_rate: string;
 }
 
 interface InvoiceData {
@@ -45,7 +46,7 @@ interface FormData {
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
   import_commercial_amount: string; import_cost_1: string; import_cost_2: string; import_cost_3: string;
-  import_vat_rate: string; import_entries: ImportEntry[];
+  import_entries: ImportEntry[];
   ocr_meta: OcrFieldInfo[];
 }
 
@@ -65,6 +66,7 @@ interface CalcResult {
   import_total_costs: number; import_gross_amount: number;
   import_total_vat: number; import_total_wht: number;
   import_grand_total: number; import_grand_net: number;
+  import_temp_labour: number;
 }
 
 const DEFAULT_FORM: FormData = {
@@ -85,7 +87,7 @@ const DEFAULT_FORM: FormData = {
   oth_rows: [{ amount: "0.00", rate: "0%" }],
   soc_rows: [{ amount: "0.00", rate: "0%" }],
   import_commercial_amount: "0.00", import_cost_1: "0.00", import_cost_2: "0.00", import_cost_3: "0.00",
-  import_vat_rate: "14%", import_entries: [],
+  import_entries: [],
   ocr_meta: [],
 };
 
@@ -101,6 +103,7 @@ const EMPTY_CALC: CalcResult = {
   import_total_costs: 0, import_gross_amount: 0,
   import_total_vat: 0, import_total_wht: 0,
   import_grand_total: 0, import_grand_net: 0,
+  import_temp_labour: 0,
 };
 
 const fmt = (v: number) => `EGP ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -406,24 +409,16 @@ function App() {
     </div>
   );
 
-  const Card5 = () => {
-    const importSum = data.import_entries.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
-    const isAuto = importSum > 0;
-    return (
+  const Card5 = () => (
     <div className="card">
       <h3>{t("5. 临时工社保", "5. Temp. Labour Insurance")}</h3>
       <Input label={t("期初余额", "Initial balance")} value={data.val_5A} onChange={v => updateField("val_5A", v)} confidence={ocrConf("val_5A")} />
-      {isAuto ? (
-        <div className="field"><label className="field-label">{t("临时工社保率", "Temp labour rate")}</label><div className="computed-value">0.45%</div></div>
-      ) : (
-        <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} />
-      )}
+      <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} />
       <Computed label={t("本期应扣", "Current deductible")} value={computed.c_5B} />
       <Input label={t("本期返还", "Current return")} value={data.val_5C} onChange={v => updateField("val_5C", v)} confidence={ocrConf("val_5C")} />
       <Computed label={t("期末余额", "Ending balance")} value={computed.c_5D} highlight />
     </div>
-    );
-  };
+  );
 
   const Card6 = () => (
     <div className="card">
@@ -501,7 +496,7 @@ function App() {
   const delInv = (i: number) => delRow("invoices", i);
 
   const addImportEntry = () => {
-    const arr = [...data.import_entries, { service_name: "", amount: "0.00", free_wht: false, wht_rate: "0%" }];
+    const arr = [...data.import_entries, { service_name: "", amount: "0.00", free_wht: false, wht_rate: "0%", vat_rate: "14%" }];
     formRef.current = { ...formRef.current, import_entries: arr };
     recalc(formRef.current);
   };
@@ -602,7 +597,6 @@ function App() {
         <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
           <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
-          <Select label={t("进口增值税率", "Import VAT Rate")} value={data.import_vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updateField("import_vat_rate", v)} />
           <h4 style={{marginTop:16,marginBottom:8,fontSize:13,color:'var(--text-secondary)',fontWeight:600}}>{t("成本拆分", "Cost Breakdown")}</h4>
           <Input label={t("成本 1", "Cost 1")} value={data.import_cost_1} onChange={v => updateField("import_cost_1", v)} />
           <Input label={t("成本 2", "Cost 2")} value={data.import_cost_2} onChange={v => updateField("import_cost_2", v)} />
@@ -611,10 +605,11 @@ function App() {
         </div>
         <div className="card">
           <h3>{t("服务商", "Service Providers")}</h3>
-          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 80px 100px 100px 100px',gap:8,fontSize:11,fontWeight:600,marginBottom:8}}>
+          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 90px 90px 90px 90px 90px',gap:8,fontSize:11,fontWeight:600,marginBottom:8}}>
             <span>{t("服务名称", "Service")}</span>
             <span>{t("金额", "Amount")}</span>
             <span>{t("免WHT", "Free WHT")}</span>
+            <span>{t("VAT率", "VAT Rate")}</span>
             <span>{t("WHT率", "WHT Rate")}</span>
             <span>{t("VAT", "VAT")}</span>
             <span>{t("WHT", "WHT")}</span>
@@ -622,15 +617,16 @@ function App() {
           </div>
           {data.import_entries.map((e, i) => {
             const amt = parseFloat(e.amount) || 0;
-            const vatRate = parseFloat(data.import_vat_rate.replace('%', '')) || 0;
+            const vatRate = parseFloat(e.vat_rate.replace('%', '')) || 0;
             const vat = Math.round(amt * vatRate / 100 * 100) / 100;
             const whtRate = parseFloat(e.wht_rate.replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(amt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 80px 100px 100px 100px',gap:8}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 90px 90px 90px 90px 90px',gap:8}}>
                 <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} />
                 <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
+                <Select label="" value={e.vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updImportEntry(i, "vat_rate", v)} />
                 <Select label="" value={e.wht_rate} options={["0%","0.5%","3%","5%","10%"]} onChange={v => updImportEntry(i, "wht_rate", v)} />
                 <div className="computed-value" style={{fontSize:11}}>{fmt(vat)}</div>
                 <div className="computed-value" style={{fontSize:11}}>{fmt(wht)}</div>
@@ -648,6 +644,7 @@ function App() {
           <Computed label={t("WHT 合计", "Total WHT")} value={computed.import_total_wht} />
           <Computed label={t("总额 (毛额+VAT)", "Grand Total (Gross+VAT)")} value={computed.import_grand_total} highlight />
           <Computed label={t("净额 (毛额+VAT-WHT)", "Grand Net (Gross+VAT-WHT)")} value={computed.import_grand_net} highlight />
+          <Computed label={t("临时工社保 (服务金额 × 0.45%)", "Temp Labour (Services × 0.45%)")} value={computed.import_temp_labour} highlight />
         </div>
       </div>
     );

@@ -75,16 +75,7 @@ pub fn recalculate(data: &FormData) -> CalcResult {
 
     let temp_rate = gv("temp_rate");
     let c_5A = gv("val_5A");
-
-    // Temp labour deduction: if import entries exist, use sum of their amounts * 0.45%
-    let c_5B = if !data.import_entries.is_empty() {
-        let import_sum: f64 = data.import_entries.iter()
-            .map(|e| parse_amt(&e.amount))
-            .sum();
-        (import_sum * 0.45 / 100.0 * 100.0).round() / 100.0
-    } else {
-        (c_1B * temp_rate / 100.0 * 100.0).round() / 100.0
-    };
+    let c_5B = (c_1B * temp_rate / 100.0 * 100.0).round() / 100.0;
     let c_5C = gv("val_5C");
     let c_5D = c_5A + c_5B - c_5C;
 
@@ -123,7 +114,6 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let c_11B = c_11A + c_6C;
 
     // ── Import section ──
-    let import_vat_rate = parse_rate(&data.import_vat_rate);
     let import_commercial = parse_amt(&data.import_commercial_amount);
     let import_c1 = parse_amt(&data.import_cost_1);
     let import_c2 = parse_amt(&data.import_cost_2);
@@ -135,7 +125,7 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let mut import_total_wht = 0.0;
     for entry in &data.import_entries {
         let amt = parse_amt(&entry.amount);
-        let vat = (amt * import_vat_rate / 100.0 * 100.0).round() / 100.0;
+        let vat = (amt * parse_rate(&entry.vat_rate) / 100.0 * 100.0).round() / 100.0;
         let wht = if entry.free_wht {
             0.0
         } else {
@@ -150,6 +140,7 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     import_total_wht = (import_total_wht * 100.0).round() / 100.0;
     let import_grand_total = ((import_gross_amount + import_total_vat) * 100.0).round() / 100.0;
     let import_grand_net = ((import_gross_amount + import_total_vat - import_total_wht) * 100.0).round() / 100.0;
+    let import_temp_labour = (import_entry_sum * 0.45 / 100.0 * 100.0).round() / 100.0;
 
     CalcResult {
         c_1A,
@@ -196,5 +187,6 @@ pub fn recalculate(data: &FormData) -> CalcResult {
         import_total_wht,
         import_grand_total,
         import_grand_net,
+        import_temp_labour,
     }
 }
