@@ -33,7 +33,7 @@ interface FormData {
   soc_rate: string; val_12A: string;
   val_7A: string; val_10A: string; val_11A: string; val_11B: string;
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
-  check_cover: boolean; check_invoices: boolean; audit_notes: string;
+  check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
@@ -65,7 +65,7 @@ const DEFAULT_FORM: FormData = {
   soc_rate: "0%", val_12A: "0.00",
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
-  check_cover: false, check_invoices: false, audit_notes: "",
+  check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -546,6 +546,14 @@ function App() {
         <label className="check-row">
           <input type="checkbox" checked={data.check_invoices} onChange={e => updateField("check_invoices", e.target.checked)} />
           {t("发票金额核对", "Invoices Match Amount")}
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={data.check_company_name} onChange={e => updateField("check_company_name", e.target.checked)} />
+          {t("封面公司名与发票公司名一致", "Company Name on Cover Matches Invoices")}
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={data.check_wht_cert} onChange={e => updateField("check_wht_cert", e.target.checked)} />
+          {t("免WHT公司提供WHT证明", "WHT-Free Company Provided WHT Certificate")}
         </label>
       </div>
       <div className="card">
