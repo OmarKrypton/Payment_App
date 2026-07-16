@@ -288,7 +288,8 @@ function App() {
     const handler: EventListener = (e) => {
       const target = e.target as HTMLElement;
       if (target.closest('.modal-overlay, select, textarea')) return;
-      (el as HTMLElement).scrollTop += (e as WheelEvent).deltaY;
+      const el2 = el as HTMLElement;
+      el2.scrollTop = Math.max(0, Math.min(el2.scrollTop + (e as WheelEvent).deltaY, el2.scrollHeight - el2.clientHeight));
       e.preventDefault();
     };
     el.addEventListener('wheel', handler, { passive: false });
@@ -695,9 +696,9 @@ function App() {
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
               <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1.5fr 80px 70px 55px 75px 75px 55px 70px 70px 85px 85px 30px',gap:6}}>
-                <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} />
-                <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
-                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} />
+                <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
+                <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
+                <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
                 <Select label="" value={e.vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updImportEntry(i, "vat_rate", v)} />
                 <Select label="" value={e.wht_rate} options={["0%","0.5%","3%","5%","10%"]} onChange={v => updImportEntry(i, "wht_rate", v)} />
