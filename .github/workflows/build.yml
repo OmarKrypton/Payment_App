@@ -22,8 +22,8 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev
       - run: npm ci
-      - run: npm run build
-      - run: cargo build --release --manifest-path src-tauri/Cargo.toml
+      - name: Build app
+        run: npx tauri build
       - uses: actions/upload-artifact@v4
         with:
           name: cscec-payment-linux
@@ -40,8 +40,8 @@ jobs:
         with:
           toolchain: stable
       - run: npm ci
-      - run: npm run build
-      - run: cargo build --release --manifest-path src-tauri/Cargo.toml
+      - name: Build app
+        run: npx tauri build
       - uses: actions/upload-artifact@v4
         with:
           name: cscec-payment-windows
