@@ -178,10 +178,13 @@ pub struct RateRow {
 pub struct ImportEntry {
     pub service_name: String,
     pub amount: String,
+    #[serde(default)]
     pub rate: String,
     pub free_wht: bool,
     pub wht_rate: String,
+    #[serde(default)]
     pub vat_rate: String,
+    #[serde(default)]
     pub temp_labour: bool,
 }
 
