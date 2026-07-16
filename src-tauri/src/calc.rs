@@ -9,6 +9,11 @@ fn parse_rate(s: &str) -> f64 {
     s.trim_end_matches('%').parse::<f64>().unwrap_or(0.0)
 }
 
+fn parse_exchange_rate(s: &str) -> f64 {
+    let v = s.parse::<f64>().unwrap_or(0.0);
+    if v == 0.0 { 1.0 } else { v }
+}
+
 fn compute_rate_total(rows: &[RateRow]) -> f64 {
     let total: f64 = rows
         .iter()
@@ -123,8 +128,9 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let mut import_entry_sum = 0.0;
     let mut import_total_vat = 0.0;
     let mut import_total_wht = 0.0;
+    let mut import_temp_labour_sum = 0.0;
     for entry in &data.import_entries {
-        let amt = parse_amt(&entry.amount);
+        let amt = parse_amt(&entry.amount) * parse_exchange_rate(&entry.rate);
         let vat = (amt * parse_rate(&entry.vat_rate) / 100.0 * 100.0).round() / 100.0;
         let wht = if entry.free_wht {
             0.0
@@ -134,13 +140,16 @@ pub fn recalculate(data: &FormData) -> CalcResult {
         import_entry_sum += amt;
         import_total_vat += vat;
         import_total_wht += wht;
+        if entry.temp_labour {
+            import_temp_labour_sum += amt;
+        }
     }
     let import_gross_amount = ((import_commercial + import_total_costs + import_entry_sum) * 100.0).round() / 100.0;
     import_total_vat = (import_total_vat * 100.0).round() / 100.0;
     import_total_wht = (import_total_wht * 100.0).round() / 100.0;
     let import_grand_total = ((import_gross_amount + import_total_vat) * 100.0).round() / 100.0;
     let import_grand_net = ((import_gross_amount + import_total_vat - import_total_wht) * 100.0).round() / 100.0;
-    let import_temp_labour = (import_entry_sum * 0.45 / 100.0 * 100.0).round() / 100.0;
+    let import_temp_labour = (import_temp_labour_sum * 0.45 / 100.0 * 100.0).round() / 100.0;
 
     CalcResult {
         c_1A,

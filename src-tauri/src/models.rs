@@ -154,9 +154,11 @@ pub struct RateRow {
 pub struct ImportEntry {
     pub service_name: String,
     pub amount: String,
+    pub rate: String,
     pub free_wht: bool,
     pub wht_rate: String,
     pub vat_rate: String,
+    pub temp_labour: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

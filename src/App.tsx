@@ -20,9 +20,11 @@ interface RateRow {
 interface ImportEntry {
   service_name: string;
   amount: string;
+  rate: string;
   free_wht: boolean;
   wht_rate: string;
   vat_rate: string;
+  temp_labour: boolean;
 }
 
 interface InvoiceData {
@@ -496,7 +498,7 @@ function App() {
   const delInv = (i: number) => delRow("invoices", i);
 
   const addImportEntry = () => {
-    const arr = [...data.import_entries, { service_name: "", amount: "0.00", free_wht: false, wht_rate: "0%", vat_rate: "14%" }];
+    const arr = [...data.import_entries, { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
     formRef.current = { ...formRef.current, import_entries: arr };
     recalc(formRef.current);
   };
@@ -605,33 +607,41 @@ function App() {
         </div>
         <div className="card">
           <h3>{t("服务商", "Service Providers")}</h3>
-          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 90px 90px 90px 90px 90px',gap:8,fontSize:11,fontWeight:600,marginBottom:8}}>
+          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'1.5fr 80px 70px 55px 75px 75px 55px 70px 70px 85px 85px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
             <span>{t("服务名称", "Service")}</span>
             <span>{t("金额", "Amount")}</span>
-            <span>{t("免WHT", "Free WHT")}</span>
-            <span>{t("VAT率", "VAT Rate")}</span>
-            <span>{t("WHT率", "WHT Rate")}</span>
+            <span>{t("汇率", "Rate")}</span>
+            <span>{t("免WHT", "Free")}</span>
+            <span>{t("VAT率", "VAT")}</span>
+            <span>{t("WHT率", "WHT")}</span>
+            <span>{t("临时工", "Temp")}</span>
             <span>{t("VAT", "VAT")}</span>
             <span>{t("WHT", "WHT")}</span>
-            <span>{t("合计(含VAT)", "Total(+VAT)")}</span>
+            <span>{t("净额", "Net")}</span>
+            <span>{t("含税合计", "+VAT")}</span>
           </div>
           {data.import_entries.map((e, i) => {
             const amt = parseFloat(e.amount) || 0;
+            const r = parseFloat(e.rate) || 1;
+            const egpAmt = r ? amt * r : amt;
             const vatRate = parseFloat(e.vat_rate.replace('%', '')) || 0;
-            const vat = Math.round(amt * vatRate / 100 * 100) / 100;
+            const vat = Math.round(egpAmt * vatRate / 100 * 100) / 100;
             const whtRate = parseFloat(e.wht_rate.replace('%', '')) || 0;
-            const wht = e.free_wht ? 0 : Math.round(amt * whtRate / 100 * 100) / 100;
+            const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 90px 90px 90px 90px 90px',gap:8}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1.5fr 80px 70px 55px 75px 75px 55px 70px 70px 85px 85px 30px',gap:6}}>
                 <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} />
                 <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
+                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
                 <Select label="" value={e.vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updImportEntry(i, "vat_rate", v)} />
                 <Select label="" value={e.wht_rate} options={["0%","0.5%","3%","5%","10%"]} onChange={v => updImportEntry(i, "wht_rate", v)} />
+                <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
                 <div className="computed-value" style={{fontSize:11}}>{fmt(vat)}</div>
                 <div className="computed-value" style={{fontSize:11}}>{fmt(wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmt(amt + vat)}</div>
-                <button className="btn-danger" onClick={() => delImportEntry(i)} style={{gridColumn:'-2'}}>✕</button>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmt(egpAmt + vat - wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmt(egpAmt + vat)}</div>
+                <button className="btn-danger" onClick={() => delImportEntry(i)}>✕</button>
               </div>
             );
           })}
