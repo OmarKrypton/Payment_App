@@ -286,12 +286,23 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .write_with_format(r, 0, "Verification Checklist", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
-    let check_items: Vec<(&str, bool)> = vec![
-        ("Cover & Settlement Check", data.check_cover),
-        ("Invoices Match Amount", data.check_invoices),
-        ("Company Name on Cover Matches Invoices", data.check_company_name),
-        ("WHT-Free Company Provided WHT Certificate", data.check_wht_cert),
-    ];
+    let check_items: Vec<(&str, bool)> = if data.doc_type == "import" {
+        vec![
+            ("SAD Customs Declaration", data.check_sad),
+            ("Commercial Invoice", data.check_import_invoice),
+            ("Bill of Lading", data.check_bill_lading),
+            ("Packing List", data.check_packing_list),
+            ("Certificate of Origin", data.check_cert_origin),
+            ("Nafeza Paper", data.check_nafeza),
+        ]
+    } else {
+        vec![
+            ("Cover & Settlement Check", data.check_cover),
+            ("Invoices Match Amount", data.check_invoices),
+            ("Company Name on Cover Matches Invoices", data.check_company_name),
+            ("WHT-Free Company Provided WHT Certificate", data.check_wht_cert),
+        ]
+    };
     for (label, ok) in &check_items {
         sheet2
             .write_with_format(r, 0, *label, &normal_fmt)

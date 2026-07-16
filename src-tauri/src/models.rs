@@ -54,6 +54,18 @@ pub struct FormData {
     pub check_company_name: bool,
     #[serde(default)]
     pub check_wht_cert: bool,
+    #[serde(default)]
+    pub check_sad: bool,
+    #[serde(default)]
+    pub check_import_invoice: bool,
+    #[serde(default)]
+    pub check_bill_lading: bool,
+    #[serde(default)]
+    pub check_packing_list: bool,
+    #[serde(default)]
+    pub check_cert_origin: bool,
+    #[serde(default)]
+    pub check_nafeza: bool,
     pub audit_notes: String,
     pub vat_manual: bool,
     pub wht_manual: bool,
@@ -121,6 +133,12 @@ impl Default for FormData {
             check_invoices: false,
             check_company_name: false,
             check_wht_cert: false,
+            check_sad: false,
+            check_import_invoice: false,
+            check_bill_lading: false,
+            check_packing_list: false,
+            check_cert_origin: false,
+            check_nafeza: false,
             audit_notes: String::new(),
             vat_manual: false,
             wht_manual: false,
