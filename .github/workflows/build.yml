@@ -28,3 +28,21 @@ jobs:
         with:
           name: cscec-payment-linux
           path: src-tauri/target/release/cscec-payment
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - run: npm ci
+      - run: npm run build
+      - run: cargo build --release --manifest-path src-tauri/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cscec-payment-windows
+          path: src-tauri/target/release/cscec-payment.exe
