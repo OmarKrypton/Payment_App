@@ -44,6 +44,7 @@ interface FormData {
   val_7A: string; val_10A: string; val_11A: string; val_11B: string;
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
+  check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
@@ -84,6 +85,7 @@ const DEFAULT_FORM: FormData = {
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
+  check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false,
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -526,10 +528,22 @@ function App() {
     recalc(formRef.current);
   };
 
-  const AuditTab = () => (
+  const AuditTab = () => {
+    const isImport = data.doc_type === "import";
+    return (
     <div className="audit-tab">
       <div className="card">
         <h3>{t("文件信息", "Document Information")}</h3>
+        <div className="field"><label className="field-label">{t("文档类型", "Doc Type")}</label>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={() => updateField("doc_type", "bank")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="bank"?'var(--accent)':'transparent',color:data.doc_type==="bank"?'#fff':'inherit',cursor:'pointer'}}>
+              {t("银行", "Bank")}
+            </button>
+            <button onClick={() => updateField("doc_type", "import")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="import"?'var(--accent)':'transparent',color:data.doc_type==="import"?'#fff':'inherit',cursor:'pointer'}}>
+              {t("进口", "Import")}
+            </button>
+          </div>
+        </div>
         <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={v => updateField("doc_serial", v)} />
         {isSerialDuplicate && (
           <div className="field-warning" style={{color: 'var(--red)'}}>
@@ -537,16 +551,6 @@ function App() {
           </div>
         )}
         <div className="field"><label className="field-label">{t("日期", "Date")}</label><div className="computed-value">{new Date().toLocaleDateString()}</div></div>
-        <div className="field"><label className="field-label">{t("文档类型", "Doc Type")}</label>
-          <div style={{display:'flex',gap:8}}>
-            <button className={data.doc_type === "bank" ? "tab-active" : ""} onClick={() => updateField("doc_type", "bank")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="bank"?'var(--accent)':'transparent',color:data.doc_type==="bank"?'#fff':'inherit',cursor:'pointer'}}>
-              {t("银行", "Bank")}
-            </button>
-            <button className={data.doc_type === "import" ? "tab-active" : ""} onClick={() => updateField("doc_type", "import")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="import"?'var(--accent)':'transparent',color:data.doc_type==="import"?'#fff':'inherit',cursor:'pointer'}}>
-              {t("进口", "Import")}
-            </button>
-          </div>
-        </div>
         <Input label={t("买方税号", "Buyer TAX ID")} value={data.buyer_tax_id} onChange={v => updateField("buyer_tax_id", v)} />
         {data.buyer_tax_id && data.buyer_tax_id !== "100489095" && (
           <div className="field-warning">{t("警告: 买方税号不是 100489095!", "Warning: Buyer TAX ID is not 100489095!")}</div>
@@ -560,60 +564,101 @@ function App() {
         ))}
         <button className="btn-add" onClick={addSellerTaxId}>+ {t("添加卖方税号", "Add Seller TAX ID")}</button>
       </div>
-      <div className="card">
-        <h3>{t("发票", "Invoices")}</h3>
-        <div className="invoice-header">
-          <span>{t("发票号", "Invoice No")}</span><span>{t("金额", "Amount")}</span><span></span>
-        </div>
-        {data.invoices.map((inv, i) => (
-          <div key={i} className="invoice-row">
-            <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
-            <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
-            <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
+
+      {!isImport && (
+        <>
+          <div className="card">
+            <h3>{t("发票", "Invoices")}</h3>
+            <div className="invoice-header">
+              <span>{t("发票号", "Invoice No")}</span><span>{t("金额", "Amount")}</span><span></span>
+            </div>
+            {data.invoices.map((inv, i) => (
+              <div key={i} className="invoice-row">
+                <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
+                <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
+                <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
+              </div>
+            ))}
+            <button className="btn-add" onClick={addInvoice}>+ {t("添加发票", "Add Invoice")}</button>
           </div>
-        ))}
-        <button className="btn-add" onClick={addInvoice}>+ {t("添加发票", "Add Invoice")}</button>
-      </div>
-      <div className="card">
-        <h3>{t("计算值", "Computed Values")}</h3>
-        <Computed label={t("净应付金额 (9A)", "Net Amount Payable (9A)")} value={computed.c_9A} />
-        <Computed label={t("本期实付 (10A)", "Current Paid (10A)")} value={computed.c_10A} />
-        <Computed label={t("期末累计实付 (11A)", "Ending Accum. Paid (11A)")} value={computed.c_11A} />
-        <Computed label={t("期末已付合计 (11B)", "Ending Total Paid (11B)")} value={computed.c_11B} />
-      </div>
+          <div className="card">
+            <h3>{t("计算值", "Computed Values")}</h3>
+            <Computed label={t("净应付金额 (9A)", "Net Amount Payable (9A)")} value={computed.c_9A} />
+            <Computed label={t("本期实付 (10A)", "Current Paid (10A)")} value={computed.c_10A} />
+            <Computed label={t("期末累计实付 (11A)", "Ending Accum. Paid (11A)")} value={computed.c_11A} />
+            <Computed label={t("期末已付合计 (11B)", "Ending Total Paid (11B)")} value={computed.c_11B} />
+          </div>
+        </>
+      )}
+
       <div className="card">
         <h3>{t("核对清单", "Verification Checklist")}</h3>
-        <label className="check-row">
-          <input type="checkbox" checked={data.check_cover} onChange={e => updateField("check_cover", e.target.checked)} />
-          {t("封面及结算核对", "Cover & Settlement Check")}
-        </label>
-        <label className="check-row">
-          <input type="checkbox" checked={data.check_invoices} onChange={e => updateField("check_invoices", e.target.checked)} />
-          {t("发票金额核对", "Invoices Match Amount")}
-        </label>
-        <label className="check-row">
-          <input type="checkbox" checked={data.check_company_name} onChange={e => updateField("check_company_name", e.target.checked)} />
-          {t("封面公司名与发票公司名一致", "Company Name on Cover Matches Invoices")}
-        </label>
-        <label className="check-row">
-          <input type="checkbox" checked={data.check_wht_cert} onChange={e => updateField("check_wht_cert", e.target.checked)} />
-          {t("免WHT公司提供WHT证明", "WHT-Free Company Provided WHT Certificate")}
-        </label>
+        {isImport ? (
+          <>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_sad} onChange={e => updateField("check_sad", e.target.checked)} />
+              {t("SAD 报关单", "SAD Customs Declaration")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_import_invoice} onChange={e => updateField("check_import_invoice", e.target.checked)} />
+              {t("商业发票", "Commercial Invoice")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_bill_lading} onChange={e => updateField("check_bill_lading", e.target.checked)} />
+              {t("提单", "Bill of Lading")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_packing_list} onChange={e => updateField("check_packing_list", e.target.checked)} />
+              {t("装箱单", "Packing List")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_cert_origin} onChange={e => updateField("check_cert_origin", e.target.checked)} />
+              {t("原产地证明", "Certificate of Origin")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_nafeza} onChange={e => updateField("check_nafeza", e.target.checked)} />
+              {t("Nafeza 文件", "Nafeza Paper")}
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_cover} onChange={e => updateField("check_cover", e.target.checked)} />
+              {t("封面及结算核对", "Cover & Settlement Check")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_invoices} onChange={e => updateField("check_invoices", e.target.checked)} />
+              {t("发票金额核对", "Invoices Match Amount")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_company_name} onChange={e => updateField("check_company_name", e.target.checked)} />
+              {t("封面公司名与发票公司名一致", "Company Name on Cover Matches Invoices")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_wht_cert} onChange={e => updateField("check_wht_cert", e.target.checked)} />
+              {t("免WHT公司提供WHT证明", "WHT-Free Company Provided WHT Certificate")}
+            </label>
+          </>
+        )}
       </div>
       <div className="card">
         <h3>{t("审计备注", "Audit Notes")}</h3>
         <FastInput className="audit-notes" value={data.audit_notes} onChange={v => updateField("audit_notes", v)} rows={5} />
       </div>
     </div>
-  );
+    );
+  };
 
   const ImportTab = () => {
     return (
       <div className="import-tab">
         <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
-          <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
-          <Input label={t("商业发票汇率", "Commercial Invoice Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
+          <div style={{display:'grid',gridTemplateColumns:'1fr 80px 120px',gap:8,alignItems:'end'}}>
+            <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
+            <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
+            <Computed label={t("总额 (EGP)", "Total (EGP)")} value={(parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1)} />
+          </div>
           {data.import_commercial_rate && data.import_entries.some(e => e.rate && e.rate !== data.import_commercial_rate) && (
             <div className="field-warning" style={{color:'var(--red)'}}>
               {t("警告: 汇率与其他发票不一致!", "Warning: Rate differs from other invoices!")}
