@@ -270,14 +270,14 @@ body {
   border-radius: var(--radius-lg);
   padding: 16px 20px;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.15s;
+  transition: border-color 0.15s;
   /* GPU layer promotion to prevent scroll repaint lag */
   transform: translate3d(0, 0, 0);
   will-change: transform;
 }
 
 .card:hover {
-  box-shadow: var(--shadow-md);
+  border-color: var(--accent);
 }
 
 .card h3 {
