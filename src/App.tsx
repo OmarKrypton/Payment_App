@@ -281,6 +281,14 @@ function App() {
     })();
   }, []);
 
+  // Periodic noop to keep WebKit event loop alive on Linux
+  useEffect(() => {
+    const ping = () => { invoke("ping"); };
+    ping();
+    const id = setInterval(ping, 4000);
+    return () => clearInterval(id);
+  }, []);
+
   // Listen for import progress updates
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-progress", (event) => {
