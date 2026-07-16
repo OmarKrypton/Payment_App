@@ -48,7 +48,9 @@ interface FormData {
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
   import_commercial_amount: string; import_cost_1: string; import_cost_2: string; import_cost_3: string;
+  import_commercial_rate: string;
   import_entries: ImportEntry[];
+  doc_type: string;
   ocr_meta: OcrFieldInfo[];
 }
 
@@ -89,7 +91,9 @@ const DEFAULT_FORM: FormData = {
   oth_rows: [{ amount: "0.00", rate: "0%" }],
   soc_rows: [{ amount: "0.00", rate: "0%" }],
   import_commercial_amount: "0.00", import_cost_1: "0.00", import_cost_2: "0.00", import_cost_3: "0.00",
+  import_commercial_rate: "",
   import_entries: [],
+  doc_type: "bank",
   ocr_meta: [],
 };
 
@@ -533,6 +537,16 @@ function App() {
           </div>
         )}
         <div className="field"><label className="field-label">{t("日期", "Date")}</label><div className="computed-value">{new Date().toLocaleDateString()}</div></div>
+        <div className="field"><label className="field-label">{t("文档类型", "Doc Type")}</label>
+          <div style={{display:'flex',gap:8}}>
+            <button className={data.doc_type === "bank" ? "tab-active" : ""} onClick={() => updateField("doc_type", "bank")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="bank"?'var(--accent)':'transparent',color:data.doc_type==="bank"?'#fff':'inherit',cursor:'pointer'}}>
+              {t("银行", "Bank")}
+            </button>
+            <button className={data.doc_type === "import" ? "tab-active" : ""} onClick={() => updateField("doc_type", "import")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="import"?'var(--accent)':'transparent',color:data.doc_type==="import"?'#fff':'inherit',cursor:'pointer'}}>
+              {t("进口", "Import")}
+            </button>
+          </div>
+        </div>
         <Input label={t("买方税号", "Buyer TAX ID")} value={data.buyer_tax_id} onChange={v => updateField("buyer_tax_id", v)} />
         {data.buyer_tax_id && data.buyer_tax_id !== "100489095" && (
           <div className="field-warning">{t("警告: 买方税号不是 100489095!", "Warning: Buyer TAX ID is not 100489095!")}</div>
@@ -599,6 +613,12 @@ function App() {
         <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
           <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
+          <Input label={t("商业发票汇率", "Commercial Invoice Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
+          {data.import_commercial_rate && data.import_entries.some(e => e.rate && e.rate !== data.import_commercial_rate) && (
+            <div className="field-warning" style={{color:'var(--red)'}}>
+              {t("警告: 汇率与其他发票不一致!", "Warning: Rate differs from other invoices!")}
+            </div>
+          )}
           <h4 style={{marginTop:16,marginBottom:8,fontSize:13,color:'var(--text-secondary)',fontWeight:600}}>{t("成本拆分", "Cost Breakdown")}</h4>
           <Input label={t("成本 1", "Cost 1")} value={data.import_cost_1} onChange={v => updateField("import_cost_1", v)} />
           <Input label={t("成本 2", "Cost 2")} value={data.import_cost_2} onChange={v => updateField("import_cost_2", v)} />
@@ -810,8 +830,8 @@ function App() {
         </div>
         <nav className="sidebar-nav">
           <button className={tab === "bank" ? "active" : ""} onClick={() => setTab("bank")}>{t("银行", "Bank")}</button>
-          <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
           <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>{t("进口", "Import")}</button>
+          <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
         </nav>
         <div className="sidebar-lang">
           <button onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
@@ -843,10 +863,10 @@ function App() {
             </div>
             {Card11()}
           </>
-        ) : tab === "final_decision" ? (
-          AuditTab()
-        ) : (
+        ) : tab === "import" ? (
           ImportTab()
+        ) : (
+          AuditTab()
         )}
       </main>
 

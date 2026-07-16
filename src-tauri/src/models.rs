@@ -46,6 +46,8 @@ pub struct FormData {
     pub seller_tax_id: String,
     #[serde(default)]
     pub seller_tax_ids: Vec<String>,
+    #[serde(default)]
+    pub doc_type: String,
     pub check_cover: bool,
     pub check_invoices: bool,
     #[serde(default)]
@@ -64,6 +66,8 @@ pub struct FormData {
     pub soc_rows: Vec<RateRow>,
     #[serde(default)]
     pub import_commercial_amount: String,
+    #[serde(default)]
+    pub import_commercial_rate: String,
     #[serde(default)]
     pub import_cost_1: String,
     #[serde(default)]
@@ -112,6 +116,7 @@ impl Default for FormData {
             buyer_tax_id: String::new(),
             seller_tax_id: String::new(),
             seller_tax_ids: vec![],
+            doc_type: "bank".into(),
             check_cover: false,
             check_invoices: false,
             check_company_name: false,
@@ -127,6 +132,7 @@ impl Default for FormData {
             oth_rows: vec![],
             soc_rows: vec![],
             import_commercial_amount: "0.00".into(),
+            import_commercial_rate: String::new(),
             import_cost_1: "0.00".into(),
             import_cost_2: "0.00".into(),
             import_cost_3: "0.00".into(),
