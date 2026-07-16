@@ -75,7 +75,16 @@ pub fn recalculate(data: &FormData) -> CalcResult {
 
     let temp_rate = gv("temp_rate");
     let c_5A = gv("val_5A");
-    let c_5B = (c_1B * temp_rate / 100.0 * 100.0).round() / 100.0;
+
+    // Temp labour deduction: if import entries exist, use sum of their amounts * 0.45%
+    let c_5B = if !data.import_entries.is_empty() {
+        let import_sum: f64 = data.import_entries.iter()
+            .map(|e| parse_amt(&e.amount))
+            .sum();
+        (import_sum * 0.45 / 100.0 * 100.0).round() / 100.0
+    } else {
+        (c_1B * temp_rate / 100.0 * 100.0).round() / 100.0
+    };
     let c_5C = gv("val_5C");
     let c_5D = c_5A + c_5B - c_5C;
 
