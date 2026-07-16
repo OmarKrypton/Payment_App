@@ -5,6 +5,31 @@ use std::collections::BTreeSet;
 pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Result<(), String> {
     let mut workbook = Workbook::new();
 
+    // ── Shared formats ──
+    let title_fmt = Format::new()
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(0x00529B))
+        .set_bold()
+        .set_font_size(14);
+    let label_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin);
+    let val_fmt = Format::new()
+        .set_font_size(10)
+        .set_num_format("#,##0.00")
+        .set_border(FormatBorder::Thin);
+    let section_fmt = Format::new()
+        .set_bold()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin)
+        .set_background_color(Color::RGB(0xD9E2F3));
+    let calc_fmt = Format::new()
+        .set_font_size(10)
+        .set_num_format("#,##0.00")
+        .set_background_color(Color::RGB(0xE2EFDA))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
+
     // ── Sheet 1: Settlement Report ──
     let sheet1 = workbook.add_worksheet();
     sheet1.set_name("Settlement Report").map_err(|e| e.to_string())?;
@@ -12,24 +37,14 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     sheet1.set_column_width(1, 55).map_err(|e| e.to_string())?;
     sheet1.set_column_width(2, 25).map_err(|e| e.to_string())?;
 
-    let header_fmt = Format::new()
-        .set_font_color(Color::White)
-        .set_background_color(Color::RGB(0x00529B))
-        .set_bold()
-        .set_font_size(12);
-    sheet1
-        .write_with_format(0, 1, "CSCEC - Payment Voucher Settlement", &header_fmt)
+    // Title row
+    sheet1.merge_range(0, 0, 0, 2, "CSCEC - Payment Voucher Settlement", &title_fmt)
         .map_err(|e| e.to_string())?;
 
-    let label_fmt = Format::new().set_font_size(10);
-    let val_fmt = Format::new()
-        .set_font_size(10)
-        .set_num_format("#,##0.00");
-    let calc_fmt = Format::new()
-        .set_font_size(10)
-        .set_num_format("#,##0.00")
-        .set_background_color(Color::RGB(0xE2EFDA));
-    let section_fmt = Format::new().set_bold().set_font_size(10);
+    // Document info rows
+    let info_fmt = Format::new().set_font_size(10).set_italic();
+    sheet1.write_with_format(1, 1, format!("Doc: {}  |  Buyer TAX ID: {}  |  Seller TAX IDs: {}", data.doc_serial, data.buyer_tax_id, data.seller_tax_ids.join(", ")), &info_fmt)
+        .map_err(|e| e.to_string())?;
 
     let sections: Vec<(String, String, &str)> = vec![
         ("1".into(), "Initial accumulative supplier settlement amount".into(), "1A"),
@@ -121,11 +136,13 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     };
 
     for (i, (sec, desc, key)) in sections.iter().enumerate() {
-        let row = (i + 2) as u32;
+        let row = (i + 3) as u32;
         if !sec.is_empty() {
             sheet1
                 .write_with_format(row, 0, sec.parse::<i32>().unwrap_or(0), &section_fmt)
                 .map_err(|e| e.to_string())?;
+        } else {
+            sheet1.write_with_format(row, 0, "", &label_fmt).map_err(|e| e.to_string())?;
         }
         sheet1
             .write_with_format(row, 1, desc.as_str(), &label_fmt)
@@ -141,51 +158,65 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     // ── Sheet 2: Audit Checklist ──
     let sheet2 = workbook.add_worksheet();
     sheet2.set_name("Audit Checklist").map_err(|e| e.to_string())?;
-    sheet2.set_column_width(0, 30).map_err(|e| e.to_string())?;
-    sheet2.set_column_width(1, 50).map_err(|e| e.to_string())?;
+    sheet2.set_column_width(0, 35).map_err(|e| e.to_string())?;
+    sheet2.set_column_width(1, 55).map_err(|e| e.to_string())?;
 
-    let bold_fmt = Format::new().set_bold().set_font_size(11);
-    let normal_fmt = Format::new().set_font_size(10);
+    let section2_fmt = Format::new()
+        .set_bold()
+        .set_font_size(11)
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(0x00529B))
+        .set_border(FormatBorder::Thin);
+    let bold_fmt = Format::new()
+        .set_bold()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin);
+    let normal_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin);
     let pass_fmt = Format::new()
         .set_font_size(10)
-        .set_font_color(Color::RGB(0x00B050));
+        .set_font_color(Color::RGB(0x00B050))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
     let pending_fmt = Format::new()
         .set_font_size(10)
-        .set_font_color(Color::RGB(0xED7D31));
+        .set_font_color(Color::RGB(0xED7D31))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
 
     let mut r = 0u32;
 
     // Section 1: Document Info
     sheet2
-        .write_with_format(r, 0, "Document Information", &bold_fmt)
+        .write_with_format(r, 0, "Document Information", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
+    let today_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let doc_items: Vec<(&str, &str)> = vec![
+        ("Document Serial Number", data.doc_serial.as_str()),
+        ("Date", &today_str),
+        ("Buyer TAX ID", data.buyer_tax_id.as_str()),
+    ];
+    for (label, val) in &doc_items {
+        sheet2
+            .write_with_format(r, 0, *label, &bold_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet2
+            .write_with_format(r, 1, *val, &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        r += 1;
+    }
+    // Seller TAX IDs
     sheet2
-        .write_with_format(r, 0, "Document Serial Number", &normal_fmt)
-        .map_err(|e| e.to_string())?;
-    sheet2
-        .write_with_format(r, 1, &data.doc_serial, &normal_fmt)
-        .map_err(|e| e.to_string())?;
-    r += 1;
-    sheet2
-        .write_with_format(r, 0, "Date", &normal_fmt)
-        .map_err(|e| e.to_string())?;
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    sheet2
-        .write_with_format(r, 1, &today, &normal_fmt)
-        .map_err(|e| e.to_string())?;
-    r += 1;
-    sheet2
-        .write_with_format(r, 0, "Buyer TAX ID", &normal_fmt)
-        .map_err(|e| e.to_string())?;
-    sheet2
-        .write_with_format(r, 1, &data.buyer_tax_id, &normal_fmt)
-        .map_err(|e| e.to_string())?;
-    r += 1;
-    sheet2
-        .write_with_format(r, 0, "Seller TAX ID(s)", &normal_fmt)
+        .write_with_format(r, 0, "Seller TAX ID(s)", &bold_fmt)
         .map_err(|e| e.to_string())?;
     let mut tax_ids: BTreeSet<&str> = BTreeSet::new();
+    for tid in &data.seller_tax_ids {
+        if !tid.is_empty() {
+            tax_ids.insert(tid.as_str());
+        }
+    }
     for inv in &data.invoices {
         if !inv.seller_tax_id.is_empty() {
             tax_ids.insert(&inv.seller_tax_id);
@@ -199,7 +230,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
 
     // Section 2: Computed Values
     sheet2
-        .write_with_format(r, 0, "Computed Values", &bold_fmt)
+        .write_with_format(r, 0, "Computed Values", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
     let computed_items: Vec<(&str, f64)> = vec![
@@ -210,7 +241,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     ];
     for (label, val) in &computed_items {
         sheet2
-            .write_with_format(r, 0, *label, &normal_fmt)
+            .write_with_format(r, 0, *label, &bold_fmt)
             .map_err(|e| e.to_string())?;
         sheet2
             .write_with_format(r, 1, *val, &normal_fmt)
@@ -221,7 +252,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
 
     // Section 3: Invoice Details
     sheet2
-        .write_with_format(r, 0, "Invoice Details", &bold_fmt)
+        .write_with_format(r, 0, "Invoice Details", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
     sheet2
@@ -249,20 +280,22 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     }
     r += 1;
 
-    // Section 4: Verification
+    // Section 4: Verification Checklist
     sheet2
-        .write_with_format(r, 0, "Verification Checklist", &bold_fmt)
+        .write_with_format(r, 0, "Verification Checklist", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
     let check_items: Vec<(&str, bool)> = vec![
         ("Cover & Settlement Check", data.check_cover),
         ("Invoices Match Amount", data.check_invoices),
+        ("Company Name on Cover Matches Invoices", data.check_company_name),
+        ("WHT-Free Company Provided WHT Certificate", data.check_wht_cert),
     ];
     for (label, ok) in &check_items {
         sheet2
             .write_with_format(r, 0, *label, &normal_fmt)
             .map_err(|e| e.to_string())?;
-        let status = if *ok { "✅ Passed" } else { "⏳ Pending" };
+        let status = if *ok { "✓ Passed" } else { "⏳ Pending" };
         let fmt: &Format = if *ok { &pass_fmt } else { &pending_fmt };
         sheet2
             .write_with_format(r, 1, status, fmt)
@@ -273,7 +306,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
 
     // Section 5: Audit Notes
     sheet2
-        .write_with_format(r, 0, "Audit Notes", &bold_fmt)
+        .write_with_format(r, 0, "Audit Notes", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
     sheet2
