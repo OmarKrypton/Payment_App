@@ -316,20 +316,22 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     // ── Sheet 3: Import Calculation ──
     let sheet3 = workbook.add_worksheet();
     sheet3.set_name("Import Calculation").map_err(|e| e.to_string())?;
-    sheet3.set_column_width(0, 35).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(1, 25).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(2, 18).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(2, 18).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(3, 18).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(4, 18).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(5, 18).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(6, 18).map_err(|e| e.to_string())?;
-    sheet3.set_column_width(7, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(0, 30).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(1, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(2, 12).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(3, 14).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(4, 14).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(5, 14).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(6, 16).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(7, 16).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(8, 16).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(9, 16).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(10, 14).map_err(|e| e.to_string())?;
 
     let mut r3 = 0u32;
 
     // Title
-    sheet3.merge_range(r3, 0, r3, 7, "CSCEC - Import Calculation", &title_fmt)
+    sheet3.merge_range(r3, 0, r3, 10, "CSCEC - Import Calculation", &title_fmt)
         .map_err(|e| e.to_string())?;
     r3 += 1;
 
@@ -364,7 +366,8 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .map_err(|e| e.to_string())?;
     r3 += 1;
     // Header
-    let headers_import = ["Service", "Amount", "Free WHT", "VAT Rate", "WHT Rate", "VAT", "WHT", "Total (+VAT)"];
+    let headers_import = ["Service", "Amount", "Rate", "Free WHT", "VAT Rate", "WHT Rate", "Temp Lab",
+                          "VAT", "WHT", "Net (+VAT-WHT)", "Total (+VAT)"];
     for (ci, h) in headers_import.iter().enumerate() {
         sheet3.write_with_format(r3, ci as u16, *h, &bold_fmt)
             .map_err(|e| e.to_string())?;
@@ -373,26 +376,35 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
 
     for entry in &data.import_entries {
         let amt: f64 = parse_amt(&entry.amount);
+        let rate: f64 = parse_exchange_rate(&entry.rate);
+        let egp_amt = amt * rate;
         let vat_rate: f64 = parse_rate(&entry.vat_rate);
-        let vat = (amt * vat_rate / 100.0 * 100.0).round() / 100.0;
+        let vat = (egp_amt * vat_rate / 100.0 * 100.0).round() / 100.0;
         let wht_rate: f64 = parse_rate(&entry.wht_rate);
-        let wht = if entry.free_wht { 0.0 } else { (amt * wht_rate / 100.0 * 100.0).round() / 100.0 };
-        let total = amt + vat;
+        let wht = if entry.free_wht { 0.0 } else { (egp_amt * wht_rate / 100.0 * 100.0).round() / 100.0 };
+        let net = ((egp_amt + vat - wht) * 100.0).round() / 100.0;
+        let total = egp_amt + vat;
         sheet3.write_with_format(r3, 0, &entry.service_name, &normal_fmt)
             .map_err(|e| e.to_string())?;
         sheet3.write_with_format(r3, 1, amt, &val_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 2, if entry.free_wht { "Yes" } else { "No" }, &normal_fmt)
+        sheet3.write_with_format(r3, 2, if rate == 1.0 && entry.rate.is_empty() { "" } else { &entry.rate }, &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 3, entry.vat_rate.as_str(), &normal_fmt)
+        sheet3.write_with_format(r3, 3, if entry.free_wht { "Yes" } else { "No" }, &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 4, entry.wht_rate.as_str(), &normal_fmt)
+        sheet3.write_with_format(r3, 4, entry.vat_rate.as_str(), &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 5, vat, &val_fmt)
+        sheet3.write_with_format(r3, 5, entry.wht_rate.as_str(), &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 6, wht, &val_fmt)
+        sheet3.write_with_format(r3, 6, if entry.temp_labour { "Yes" } else { "" }, &normal_fmt)
             .map_err(|e| e.to_string())?;
-        sheet3.write_with_format(r3, 7, total, &calc_fmt)
+        sheet3.write_with_format(r3, 7, vat, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 8, wht, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 9, net, &calc_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 10, total, &calc_fmt)
             .map_err(|e| e.to_string())?;
         r3 += 1;
     }
@@ -429,4 +441,9 @@ fn parse_amt(s: &str) -> f64 {
 
 fn parse_rate(s: &str) -> f64 {
     s.replace('%', "").parse().unwrap_or(0.0)
+}
+
+fn parse_exchange_rate(s: &str) -> f64 {
+    let v = s.parse::<f64>().unwrap_or(0.0);
+    if v == 0.0 { 1.0 } else { v }
 }
