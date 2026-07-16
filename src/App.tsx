@@ -17,6 +17,13 @@ interface RateRow {
   rate: string;
 }
 
+interface ImportEntry {
+  service_name: string;
+  amount: string;
+  free_wht: boolean;
+  wht_rate: string;
+}
+
 interface InvoiceData {
   invoice_no: string;
   seller_tax_id: string;
@@ -37,6 +44,8 @@ interface FormData {
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
+  import_commercial_amount: string; import_cost_1: string; import_cost_2: string; import_cost_3: string;
+  import_vat_rate: string; import_entries: ImportEntry[];
   ocr_meta: OcrFieldInfo[];
 }
 
@@ -53,6 +62,9 @@ interface CalcResult {
   total_deductions: number;
   c_7A: number; c_7B: number; c_9A: number;
   c_10A: number; c_11A: number; c_11B: number;
+  import_total_costs: number; import_gross_amount: number;
+  import_total_vat: number; import_total_wht: number;
+  import_grand_total: number; import_grand_net: number;
 }
 
 const DEFAULT_FORM: FormData = {
@@ -72,6 +84,8 @@ const DEFAULT_FORM: FormData = {
   wht_rows: [{ amount: "0.00", rate: "0%" }],
   oth_rows: [{ amount: "0.00", rate: "0%" }],
   soc_rows: [{ amount: "0.00", rate: "0%" }],
+  import_commercial_amount: "0.00", import_cost_1: "0.00", import_cost_2: "0.00", import_cost_3: "0.00",
+  import_vat_rate: "14%", import_entries: [],
   ocr_meta: [],
 };
 
@@ -84,6 +98,9 @@ const EMPTY_CALC: CalcResult = {
   c_8A: 0, c_8B: 0, c_8C: 0,
   c_12A: 0, c_12B: 0, c_12C: 0, total_deductions: 0,
   c_7A: 0, c_7B: 0, c_9A: 0, c_10A: 0, c_11A: 0, c_11B: 0,
+  import_total_costs: 0, import_gross_amount: 0,
+  import_total_vat: 0, import_total_wht: 0,
+  import_grand_total: 0, import_grand_net: 0,
 };
 
 const fmt = (v: number) => `EGP ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -172,7 +189,7 @@ interface HistoryEntry {
 }
 
 function App() {
-  const [tab, setTab] = useState<"settlement" | "audit">("settlement");
+  const [tab, setTab] = useState<"bank" | "final_decision" | "import">("bank");
   const [lang, setLang] = useState<"zh" | "en">("zh");
   const t = useCallback((zh: string, en: string) => lang === "zh" ? zh : en, [lang]);
   const formRef = useRef<FormData>(DEFAULT_FORM);
@@ -475,6 +492,14 @@ function App() {
   const updInv = (i: number, k: string, v: string) => updateNested("invoices", i, k, v);
   const delInv = (i: number) => delRow("invoices", i);
 
+  const addImportEntry = () => {
+    const arr = [...data.import_entries, { service_name: "", amount: "0.00", free_wht: false, wht_rate: "0%" }];
+    formRef.current = { ...formRef.current, import_entries: arr };
+    recalc(formRef.current);
+  };
+  const updImportEntry = (i: number, k: string, v: any) => updateNested("import_entries", i, k, v);
+  const delImportEntry = (i: number) => delRow("import_entries", i);
+
   const addSellerTaxId = () => {
     const arr = [...data.seller_tax_ids, ""];
     formRef.current = { ...formRef.current, seller_tax_ids: arr };
@@ -562,6 +587,62 @@ function App() {
       </div>
     </div>
   );
+
+  const ImportTab = () => {
+    return (
+      <div className="import-tab">
+        <div className="card">
+          <h3>{t("进口文件信息", "Import Document Info")}</h3>
+          <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
+          <h4 style={{marginTop:16,marginBottom:8,fontSize:13,color:'var(--text-secondary)',fontWeight:600}}>{t("成本拆分", "Cost Breakdown")}</h4>
+          <Input label={t("成本 1", "Cost 1")} value={data.import_cost_1} onChange={v => updateField("import_cost_1", v)} />
+          <Input label={t("成本 2", "Cost 2")} value={data.import_cost_2} onChange={v => updateField("import_cost_2", v)} />
+          <Input label={t("成本 3", "Cost 3")} value={data.import_cost_3} onChange={v => updateField("import_cost_3", v)} />
+          <Computed label={t("成本合计", "Total Costs")} value={computed.import_total_costs} highlight />
+        </div>
+        <div className="card">
+          <h3>{t("服务商", "Service Providers")}</h3>
+          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 80px 100px 100px 100px',gap:8,fontSize:11,fontWeight:600,marginBottom:8}}>
+            <span>{t("服务名称", "Service")}</span>
+            <span>{t("金额", "Amount")}</span>
+            <span>{t("免WHT", "Free WHT")}</span>
+            <span>{t("WHT率", "WHT Rate")}</span>
+            <span>{t("VAT", "VAT")}</span>
+            <span>{t("WHT", "WHT")}</span>
+            <span>{t("合计(含VAT)", "Total(+VAT)")}</span>
+          </div>
+          {data.import_entries.map((e, i) => {
+            const amt = parseFloat(e.amount) || 0;
+            const vatRate = parseFloat(data.import_vat_rate.replace('%', '')) || 0;
+            const vat = Math.round(amt * vatRate / 100 * 100) / 100;
+            const whtRate = parseFloat(e.wht_rate.replace('%', '')) || 0;
+            const wht = e.free_wht ? 0 : Math.round(amt * whtRate / 100 * 100) / 100;
+            return (
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'2fr 1fr 80px 80px 100px 100px 100px',gap:8}}>
+                <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} />
+                <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
+                <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
+                <Select label="" value={e.wht_rate} options={["0%","0.5%","3%","5%","10%"]} onChange={v => updImportEntry(i, "wht_rate", v)} />
+                <div className="computed-value" style={{fontSize:11}}>{fmt(vat)}</div>
+                <div className="computed-value" style={{fontSize:11}}>{fmt(wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmt(amt + vat)}</div>
+                <button className="btn-danger" onClick={() => delImportEntry(i)} style={{gridColumn:'-2'}}>✕</button>
+              </div>
+            );
+          })}
+          <button className="btn-add" onClick={addImportEntry} style={{marginTop:8}}>+ {t("添加服务商", "Add Provider")}</button>
+        </div>
+        <div className="card">
+          <h3>{t("进口汇总", "Import Summary")}</h3>
+          <Computed label={t("毛额 (商业发票+成本+服务)", "Gross (Invoice+Costs+Services)")} value={computed.import_gross_amount} />
+          <Computed label={t("VAT 合计", "Total VAT")} value={computed.import_total_vat} />
+          <Computed label={t("WHT 合计", "Total WHT")} value={computed.import_total_wht} />
+          <Computed label={t("总额 (毛额+VAT)", "Grand Total (Gross+VAT)")} value={computed.import_grand_total} highlight />
+          <Computed label={t("净额 (毛额+VAT-WHT)", "Grand Net (Gross+VAT-WHT)")} value={computed.import_grand_net} highlight />
+        </div>
+      </div>
+    );
+  };
 
   const exportExcel = async () => {
     const path = await save({ defaultPath: `${data.doc_serial || "CSCEC_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
@@ -712,8 +793,9 @@ function App() {
           </div>
         </div>
         <nav className="sidebar-nav">
-          <button className={tab === "settlement" ? "active" : ""} onClick={() => setTab("settlement")}>{t("结算", "Settlement")}</button>
-          <button className={tab === "audit" ? "active" : ""} onClick={() => setTab("audit")}>{t("审计", "Audit")}</button>
+          <button className={tab === "bank" ? "active" : ""} onClick={() => setTab("bank")}>{t("银行", "Bank")}</button>
+          <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
+          <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>{t("进口", "Import")}</button>
         </nav>
         <div className="sidebar-lang">
           <button onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
@@ -728,7 +810,7 @@ function App() {
         </div>
       </aside>
       <main className="content">
-        {tab === "settlement" ? (
+        {tab === "bank" ? (
           <>
             {Card1()}
             <div className="card-row">
@@ -745,8 +827,10 @@ function App() {
             </div>
             {Card11()}
           </>
-        ) : (
+        ) : tab === "final_decision" ? (
           AuditTab()
+        ) : (
+          ImportTab()
         )}
       </main>
 

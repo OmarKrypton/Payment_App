@@ -113,6 +113,35 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let c_11A = c_7A + c_10A + c_2A;
     let c_11B = c_11A + c_6C;
 
+    // ── Import section ──
+    let import_vat_rate = parse_rate(&data.import_vat_rate);
+    let import_commercial = parse_amt(&data.import_commercial_amount);
+    let import_c1 = parse_amt(&data.import_cost_1);
+    let import_c2 = parse_amt(&data.import_cost_2);
+    let import_c3 = parse_amt(&data.import_cost_3);
+    let import_total_costs = (import_c1 + import_c2 + import_c3) * 100.0 / 100.0;
+
+    let mut import_entry_sum = 0.0;
+    let mut import_total_vat = 0.0;
+    let mut import_total_wht = 0.0;
+    for entry in &data.import_entries {
+        let amt = parse_amt(&entry.amount);
+        let vat = (amt * import_vat_rate / 100.0 * 100.0).round() / 100.0;
+        let wht = if entry.free_wht {
+            0.0
+        } else {
+            (amt * parse_rate(&entry.wht_rate) / 100.0 * 100.0).round() / 100.0
+        };
+        import_entry_sum += amt;
+        import_total_vat += vat;
+        import_total_wht += wht;
+    }
+    let import_gross_amount = ((import_commercial + import_total_costs + import_entry_sum) * 100.0).round() / 100.0;
+    import_total_vat = (import_total_vat * 100.0).round() / 100.0;
+    import_total_wht = (import_total_wht * 100.0).round() / 100.0;
+    let import_grand_total = ((import_gross_amount + import_total_vat) * 100.0).round() / 100.0;
+    let import_grand_net = ((import_gross_amount + import_total_vat - import_total_wht) * 100.0).round() / 100.0;
+
     CalcResult {
         c_1A,
         c_1B,
@@ -152,5 +181,11 @@ pub fn recalculate(data: &FormData) -> CalcResult {
         c_10A,
         c_11A,
         c_11B,
+        import_total_costs,
+        import_gross_amount,
+        import_total_vat,
+        import_total_wht,
+        import_grand_total,
+        import_grand_net,
     }
 }
