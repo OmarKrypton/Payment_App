@@ -193,17 +193,18 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .map_err(|e| e.to_string())?;
     r += 1;
     let today_str = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let doc_items: Vec<(&str, &str)> = vec![
-        ("Document Serial Number", data.doc_serial.as_str()),
-        ("Date", &today_str),
-        ("Buyer TAX ID", data.buyer_tax_id.as_str()),
+    let doc_items: Vec<(&str, String)> = vec![
+        ("Document Serial Number", data.doc_serial.clone()),
+        ("Date", today_str),
+        ("Doc Type", if data.doc_type == "import" { "Import".into() } else { "Bank".into() }),
+        ("Buyer TAX ID", data.buyer_tax_id.clone()),
     ];
     for (label, val) in &doc_items {
         sheet2
             .write_with_format(r, 0, *label, &bold_fmt)
             .map_err(|e| e.to_string())?;
         sheet2
-            .write_with_format(r, 1, *val, &normal_fmt)
+            .write_with_format(r, 1, val.as_str(), &normal_fmt)
             .map_err(|e| e.to_string())?;
         r += 1;
     }
@@ -336,7 +337,8 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     r3 += 1;
 
     // Document info
-    sheet3.write_with_format(r3, 0, format!("Doc: {}", data.doc_serial), &info_fmt)
+    let doc_type_label = if data.doc_type == "import" { "Import" } else { "Bank" };
+    sheet3.write_with_format(r3, 0, format!("Doc: {}  |  Type: {}", data.doc_serial, doc_type_label), &info_fmt)
         .map_err(|e| e.to_string())?;
     r3 += 2;
 
@@ -356,6 +358,14 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet3.write_with_format(r3, 0, *label, if is_total { &bold_fmt } else { &normal_fmt })
             .map_err(|e| e.to_string())?;
         sheet3.write_with_format(r3, 1, *val, if is_total { &calc_fmt } else { &val_fmt })
+            .map_err(|e| e.to_string())?;
+        r3 += 1;
+    }
+    // Rate row
+    if !data.import_commercial_rate.is_empty() {
+        sheet3.write_with_format(r3, 0, "Commercial Invoice Rate", &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 1, data.import_commercial_rate.as_str(), &normal_fmt)
             .map_err(|e| e.to_string())?;
         r3 += 1;
     }
