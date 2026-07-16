@@ -236,7 +236,7 @@ body {
 .content {
   flex: 1;
   padding: 20px 24px;
-  overflow-y: scroll;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;

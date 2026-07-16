@@ -281,20 +281,10 @@ function App() {
     })();
   }, []);
 
-  // Manual wheel handler + heartbeat to keep event loop alive
+  // Heartbeat to keep event loop alive
   useEffect(() => {
-    const el = document.querySelector('.content');
-    if (!el) return;
-    const handler: EventListener = (e) => {
-      const target = e.target as HTMLElement;
-      if (target.closest('.modal-overlay, select, textarea')) return;
-      const el2 = el as HTMLElement;
-      el2.scrollTop = Math.max(0, Math.min(el2.scrollTop + (e as WheelEvent).deltaY, el2.scrollHeight - el2.clientHeight));
-      e.preventDefault();
-    };
-    el.addEventListener('wheel', handler, { passive: false });
     const id = setInterval(() => { invoke("ping"); }, 4000);
-    return () => { el.removeEventListener('wheel', handler); clearInterval(id); };
+    return () => clearInterval(id);
   }, []);
 
   // Listen for import progress updates
