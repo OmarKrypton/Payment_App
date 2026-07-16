@@ -654,10 +654,14 @@ function App() {
   };
 
   const loadSnapshot = async (id: number) => {
-    const dataJson = await invoke<string>("load_history", { id });
-    const parsed = JSON.parse(dataJson);
-    formRef.current = parsed;
-    recalc(parsed);
+    try {
+      const dataJson = await invoke<string>("load_history", { id });
+      const parsed = JSON.parse(dataJson);
+      formRef.current = parsed;
+      await recalc(parsed);
+    } catch (e) {
+      console.error("loadSnapshot failed", e);
+    }
     hideHistoryModal();
   };
 
