@@ -140,10 +140,6 @@ pub fn run() {
     {
         // Disable DMABUF renderer to prevent WebKitGTK freezes/crashes on Wayland/Hyprland
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        // Disable accelerated compositing to fall back to smooth software rendering
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        // Force the app to run via XWayland to solve Wayland-specific scroll lag/stutters
-        std::env::set_var("GDK_BACKEND", "x11");
     }
 
     tauri::Builder::default()
