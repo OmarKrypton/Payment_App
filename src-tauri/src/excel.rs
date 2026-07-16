@@ -313,6 +313,111 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .write_with_format(r, 0, &data.audit_notes, &normal_fmt)
         .map_err(|e| e.to_string())?;
 
+    // ── Sheet 3: Import Calculation ──
+    let sheet3 = workbook.add_worksheet();
+    sheet3.set_name("Import Calculation").map_err(|e| e.to_string())?;
+    sheet3.set_column_width(0, 35).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(1, 25).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(2, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(3, 18).map_err(|e| e.to_string())?;
+    sheet3.set_column_width(4, 18).map_err(|e| e.to_string())?;
+
+    let mut r3 = 0u32;
+
+    // Title
+    sheet3.merge_range(r3, 0, r3, 4, "CSCEC - Import Calculation", &title_fmt)
+        .map_err(|e| e.to_string())?;
+    r3 += 1;
+
+    // Document info
+    sheet3.write_with_format(r3, 0, format!("Doc: {}", data.doc_serial), &info_fmt)
+        .map_err(|e| e.to_string())?;
+    r3 += 2;
+
+    // Section 1: Cost Breakdown
+    sheet3.write_with_format(r3, 0, "Cost Breakdown", &section_fmt)
+        .map_err(|e| e.to_string())?;
+    r3 += 1;
+    let cost_items: Vec<(&str, f64)> = vec![
+        ("Commercial Invoice Amount", parse_amt(&data.import_commercial_amount)),
+        ("Cost 1", parse_amt(&data.import_cost_1)),
+        ("Cost 2", parse_amt(&data.import_cost_2)),
+        ("Cost 3", parse_amt(&data.import_cost_3)),
+        ("Total Costs", computed.import_total_costs),
+    ];
+    for (label, val) in &cost_items {
+        let is_total = *label == "Total Costs";
+        sheet3.write_with_format(r3, 0, *label, if is_total { &bold_fmt } else { &normal_fmt })
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 1, *val, if is_total { &calc_fmt } else { &val_fmt })
+            .map_err(|e| e.to_string())?;
+        r3 += 1;
+    }
+    r3 += 1;
+
+    // Section 2: Service Providers
+    sheet3.write_with_format(r3, 0, "Service Providers", &section_fmt)
+        .map_err(|e| e.to_string())?;
+    r3 += 1;
+    // Header
+    let headers_import = ["Service", "Amount", "Free WHT", "VAT", "WHT", "Total (+VAT)"];
+    for (ci, h) in headers_import.iter().enumerate() {
+        sheet3.write_with_format(r3, ci as u16, *h, &bold_fmt)
+            .map_err(|e| e.to_string())?;
+    }
+    r3 += 1;
+
+    let vat_rate: f64 = parse_rate(&data.import_vat_rate);
+    for entry in &data.import_entries {
+        let amt: f64 = parse_amt(&entry.amount);
+        let vat = (amt * vat_rate / 100.0 * 100.0).round() / 100.0;
+        let wht_rate: f64 = parse_rate(&entry.wht_rate);
+        let wht = if entry.free_wht { 0.0 } else { (amt * wht_rate / 100.0 * 100.0).round() / 100.0 };
+        let total = amt + vat;
+        sheet3.write_with_format(r3, 0, &entry.service_name, &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 1, amt, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 2, if entry.free_wht { "Yes" } else { "No" }, &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 3, vat, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 4, wht, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 5, total, &calc_fmt)
+            .map_err(|e| e.to_string())?;
+        r3 += 1;
+    }
+    r3 += 1;
+
+    // Section 3: Summary
+    sheet3.write_with_format(r3, 0, "Summary", &section_fmt)
+        .map_err(|e| e.to_string())?;
+    r3 += 1;
+    let summary_items: Vec<(&str, f64)> = vec![
+        ("Gross (Invoice+Costs+Services)", computed.import_gross_amount),
+        ("Total VAT", computed.import_total_vat),
+        ("Total WHT", computed.import_total_wht),
+        ("Grand Total (Gross+VAT)", computed.import_grand_total),
+        ("Grand Net (Gross+VAT-WHT)", computed.import_grand_net),
+    ];
+    for (label, val) in &summary_items {
+        let is_grand = label.starts_with("Grand ");
+        sheet3.write_with_format(r3, 0, *label, if is_grand { &bold_fmt } else { &normal_fmt })
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 1, *val, if is_grand { &calc_fmt } else { &val_fmt })
+            .map_err(|e| e.to_string())?;
+        r3 += 1;
+    }
+
     workbook.save(path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn parse_amt(s: &str) -> f64 {
+    s.replace(',', "").parse().unwrap_or(0.0)
+}
+
+fn parse_rate(s: &str) -> f64 {
+    s.replace('%', "").parse().unwrap_or(0.0)
 }

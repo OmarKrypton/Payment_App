@@ -62,6 +62,18 @@ pub struct FormData {
     pub wht_rows: Vec<RateRow>,
     pub oth_rows: Vec<RateRow>,
     pub soc_rows: Vec<RateRow>,
+    #[serde(default)]
+    pub import_commercial_amount: String,
+    #[serde(default)]
+    pub import_cost_1: String,
+    #[serde(default)]
+    pub import_cost_2: String,
+    #[serde(default)]
+    pub import_cost_3: String,
+    #[serde(default)]
+    pub import_vat_rate: String,
+    #[serde(default)]
+    pub import_entries: Vec<ImportEntry>,
     pub ocr_meta: Vec<OcrFieldInfo>,
 }
 
@@ -114,6 +126,12 @@ impl Default for FormData {
             wht_rows: vec![],
             oth_rows: vec![],
             soc_rows: vec![],
+            import_commercial_amount: "0.00".into(),
+            import_cost_1: "0.00".into(),
+            import_cost_2: "0.00".into(),
+            import_cost_3: "0.00".into(),
+            import_vat_rate: "14%".into(),
+            import_entries: vec![],
             ocr_meta: vec![],
         }
     }
@@ -130,6 +148,14 @@ pub struct InvoiceData {
 pub struct RateRow {
     pub amount: String,
     pub rate: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportEntry {
+    pub service_name: String,
+    pub amount: String,
+    pub free_wht: bool,
+    pub wht_rate: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +199,12 @@ pub struct CalcResult {
     pub c_10A: f64,
     pub c_11A: f64,
     pub c_11B: f64,
+    pub import_total_costs: f64,
+    pub import_gross_amount: f64,
+    pub import_total_vat: f64,
+    pub import_total_wht: f64,
+    pub import_grand_total: f64,
+    pub import_grand_net: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
