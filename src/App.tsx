@@ -296,10 +296,11 @@ function App() {
     let max = el.scrollHeight - el.clientHeight;
     const ro = new ResizeObserver(() => { max = (el as HTMLElement).scrollHeight - (el as HTMLElement).clientHeight; });
     ro.observe(el);
-    const handler = (e: WheelEvent) => {
+    const handler: EventListener = (e) => {
+      const we = e as WheelEvent;
       const t = e.target as HTMLElement;
       if (t.closest('.modal, select, textarea, .history-list')) return;
-      el.scrollTop = Math.max(0, Math.min(el.scrollTop + e.deltaY, max));
+      el.scrollTop = Math.max(0, Math.min(el.scrollTop + we.deltaY, max));
       e.preventDefault();
     };
     el.addEventListener('wheel', handler, { passive: false });
