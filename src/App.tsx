@@ -289,6 +289,23 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
+  // Manual wheel handler to bypass WebKitGTK's sluggish native scroll
+  useEffect(() => {
+    const el = document.querySelector('.content');
+    if (!el) return;
+    let max = el.scrollHeight - el.clientHeight;
+    const ro = new ResizeObserver(() => { max = (el as HTMLElement).scrollHeight - (el as HTMLElement).clientHeight; });
+    ro.observe(el);
+    const handler = (e: WheelEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('.modal, select, textarea, .history-list')) return;
+      el.scrollTop = Math.max(0, Math.min(el.scrollTop + e.deltaY, max));
+      e.preventDefault();
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => { el.removeEventListener('wheel', handler); ro.disconnect(); };
+  }, []);
+
   // Listen for import progress updates
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-progress", (event) => {

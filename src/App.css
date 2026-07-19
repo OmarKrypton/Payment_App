@@ -242,9 +242,7 @@ body {
   gap: 12px;
   position: relative;
   contain: layout style;
-  -webkit-overflow-scrolling: touch;
-  will-change: scroll-position, transform;
-  transform: translate3d(0, 0, 0);
+  overflow-y: scroll;
 }
 
 /* ── Doc Serial Row ── */
