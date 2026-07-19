@@ -37,7 +37,6 @@ body {
   background: var(--bg-body);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
   height: 100vh;
 }
 
@@ -241,8 +240,7 @@ body {
   flex-direction: column;
   gap: 12px;
   position: relative;
-  contain: layout style;
-  overflow-y: scroll;
+  will-change: scroll-position;
 }
 
 /* ── Doc Serial Row ── */
