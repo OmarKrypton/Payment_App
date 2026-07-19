@@ -242,6 +242,9 @@ body {
   gap: 12px;
   position: relative;
   contain: layout style;
+  -webkit-overflow-scrolling: touch;
+  will-change: scroll-position, transform;
+  transform: translate3d(0, 0, 0);
 }
 
 /* ── Doc Serial Row ── */
@@ -269,6 +272,8 @@ body {
   box-shadow: var(--shadow-sm);
   transition: box-shadow 0.15s;
   contain: layout style paint;
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
 }
 
 .card:hover {

@@ -289,20 +289,6 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // Manual wheel scroll handler to bypass WebKitGTK's laggy native wheel translating on Linux
-  useEffect(() => {
-    const el = document.querySelector('.content');
-    if (!el) return;
-    const handler = (e: WheelEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest('.modal, select, textarea, .history-list')) return;
-      el.scrollTop = Math.max(0, Math.min(el.scrollTop + e.deltaY, el.scrollHeight - el.clientHeight));
-      e.preventDefault();
-    };
-    el.addEventListener('wheel', handler as any, { passive: false });
-    return () => el.removeEventListener('wheel', handler as any);
-  }, []);
-
   // Listen for import progress updates
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-progress", (event) => {
