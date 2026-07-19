@@ -33,6 +33,11 @@ interface InvoiceData {
   amount: string;
 }
 
+interface ImportCostRow {
+  name: string;
+  amount: string;
+}
+
 interface FormData {
   val_1A: string; val_1B: string; val_1C: string; val_1D: string;
   vat_rate: string; val_2A: string; val_2B: string; val_2C: string;
@@ -51,6 +56,7 @@ interface FormData {
   import_commercial_amount: string; import_cost_1: string; import_cost_2: string; import_cost_3: string;
   import_commercial_rate: string;
   import_entries: ImportEntry[];
+  import_costs: ImportCostRow[];
   doc_type: string;
   ocr_meta: OcrFieldInfo[];
 }
@@ -95,6 +101,7 @@ const DEFAULT_FORM: FormData = {
   import_commercial_amount: "0.00", import_cost_1: "0.00", import_cost_2: "0.00", import_cost_3: "0.00",
   import_commercial_rate: "",
   import_entries: [],
+  import_costs: [{ name: "Foreign Cost", amount: "0.00" }, { name: "Domestic Cost", amount: "0.00" }, { name: "Nafeza Paper", amount: "0.00" }],
   doc_type: "bank",
   ocr_meta: [],
 };
@@ -504,6 +511,13 @@ function App() {
   };
   const updImportEntry = (i: number, k: string, v: any) => updateNested("import_entries", i, k, v);
   const delImportEntry = (i: number) => delRow("import_entries", i);
+  const addCostRow = () => {
+    const arr = [...(data.import_costs ?? []), { name: "", amount: "0.00" }];
+    formRef.current = { ...formRef.current, import_costs: arr };
+    recalc(formRef.current);
+  };
+  const updCostRow = (i: number, k: string, v: any) => updateNested("import_costs", i, k, v);
+  const delCostRow = (i: number) => delRow("import_costs", i);
 
   const addSellerTaxId = () => {
     const arr = [...data.seller_tax_ids, ""];
@@ -652,10 +666,13 @@ function App() {
       <div className="import-tab">
         <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
-          <div style={{display:'grid',gridTemplateColumns:'120px 80px 120px',gap:8,alignItems:'end'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 80px 120px',gap:8,alignItems:'end'}}>
             <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
             <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
-            <Computed label={t("总额 (EGP)", "Total (EGP)")} value={(parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1)} />
+            <div className="field">
+              <label className="field-label">{t("总额 (EGP)", "Total (EGP)")}</label>
+              <div className="computed-value" style={{overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis',minWidth:0}}>{fmt((parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1))}</div>
+            </div>
           </div>
           {data.import_commercial_rate && (data.import_entries ?? []).some((e: any) => e.rate && e.rate !== data.import_commercial_rate) && (
             <div className="field-warning" style={{color:'var(--red)'}}>
@@ -663,14 +680,19 @@ function App() {
             </div>
           )}
           <h4 style={{marginTop:16,marginBottom:8,fontSize:13,color:'var(--text-secondary)',fontWeight:600}}>{t("成本拆分", "Cost Breakdown")}</h4>
-          <Input label={t("成本 1", "Cost 1")} value={data.import_cost_1} onChange={v => updateField("import_cost_1", v)} />
-          <Input label={t("成本 2", "Cost 2")} value={data.import_cost_2} onChange={v => updateField("import_cost_2", v)} />
-          <Input label={t("成本 3", "Cost 3")} value={data.import_cost_3} onChange={v => updateField("import_cost_3", v)} />
+          {(data.import_costs ?? [{name:"",amount:"0.00"}]).map((c: any, i: number) => (
+            <div key={i} className="rate-row" style={{display:'flex',gap:8,alignItems:'end'}}>
+              <div style={{flex:1}}><Input label={c.name ? "" : " "} value={c.name} onChange={v => updCostRow(i, "name", v)} /></div>
+              <div style={{width:130}}><Input label="" value={c.amount} onChange={v => updCostRow(i, "amount", v)} /></div>
+              {(data.import_costs ?? []).length > 1 && <button className="btn-danger" onClick={() => delCostRow(i)} style={{marginBottom:4}}>✕</button>}
+            </div>
+          ))}
+          <button className="btn-add" style={{marginTop:4}} onClick={addCostRow}>+ {t("添加费用", "Add Cost")}</button>
           <Computed label={t("成本合计", "Total Costs")} value={computed.import_total_costs} highlight />
         </div>
           <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(60px,90px) 100px 65px 50px 70px 70px 50px 85px 85px 100px 100px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'1fr 100px 65px 50px 70px 70px 50px 85px 85px 100px 100px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
             <span style={{paddingTop:14}}>{t("服务名称", "Service")}</span>
             <span style={{paddingTop:14}}>{t("金额", "Amount")}</span>
             <span style={{paddingTop:14}}>{t("汇率", "Rate")}</span>
@@ -692,7 +714,7 @@ function App() {
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(60px,90px) 100px 65px 50px 70px 70px 50px 85px 85px 100px 100px 30px',gap:6}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1fr 100px 65px 50px 70px 70px 50px 85px 85px 100px 100px 30px',gap:6}}>
                 <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
@@ -817,6 +839,14 @@ function App() {
     try {
       const dataJson = await invoke<string>("load_history", { id });
       const parsed = JSON.parse(dataJson);
+      if (!parsed.import_costs && (parsed.import_cost_1 !== undefined)) {
+        parsed.import_costs = [
+          { name: parsed.import_cost_1_label || "Foreign Cost", amount: parsed.import_cost_1 || "0.00" },
+          { name: parsed.import_cost_2_label || "Domestic Cost", amount: parsed.import_cost_2 || "0.00" },
+          { name: parsed.import_cost_3_label || "Nafeza Paper", amount: parsed.import_cost_3 || "0.00" },
+        ];
+      }
+      if (!parsed.import_costs) parsed.import_costs = [...DEFAULT_FORM.import_costs];
       formRef.current = parsed;
       await recalc(parsed);
     } catch (e) {
