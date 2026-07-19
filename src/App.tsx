@@ -666,7 +666,7 @@ function App() {
       <div className="import-tab">
         <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
-          <div style={{display:'grid',gridTemplateColumns:'minmax(120px,250px) 80px 120px',gap:8,alignItems:'end'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 80px 140px',gap:8,alignItems:'end'}}>
             <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
             <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
             <div className="field">
@@ -692,7 +692,7 @@ function App() {
         </div>
           <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(100px,200px) 100px 65px 50px 80px 80px 50px 100px 100px 100px 100px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'1fr 100px 65px 50px 80px 80px 50px 120px 120px 120px 120px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
             <span style={{paddingTop:14}}>{t("服务名称", "Service")}</span>
             <span style={{paddingTop:14}}>{t("金额", "Amount")}</span>
             <span style={{paddingTop:14}}>{t("汇率", "Rate")}</span>
@@ -714,7 +714,7 @@ function App() {
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(100px,200px) 100px 65px 50px 80px 80px 50px 100px 100px 100px 100px 30px',gap:6}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1fr 100px 65px 50px 80px 80px 50px 120px 120px 120px 120px 30px',gap:6}}>
                 <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
