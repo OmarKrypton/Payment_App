@@ -138,9 +138,6 @@ fn start_import_in_background(app: tauri::AppHandle, file_path: String) {
 pub fn run() {
     #[cfg(target_os = "linux")]
     {
-        // Disable DMABUF renderer to prevent WebKitGTK freezes/crashes on Wayland/Hyprland
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        // Force XWayland to avoid Wayland-specific scroll lag/stutters
         std::env::set_var("GDK_BACKEND", "x11");
     }
 
