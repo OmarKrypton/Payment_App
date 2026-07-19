@@ -366,6 +366,9 @@ body {
   font-size: 12px;
   font-family: var(--font-mono);
   outline: none;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   transition: all 0.15s;
   width: 100%;
   overflow: hidden;
