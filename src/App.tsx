@@ -671,7 +671,7 @@ function App() {
             <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
             <div className="field">
               <label className="field-label">{t("总额 (EGP)", "Total (EGP)")}</label>
-              <div className="computed-value" style={{overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis',minWidth:0}}>{fmt((parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1))}</div>
+              <div className="computed-value">{fmt((parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1))}</div>
             </div>
           </div>
           {data.import_commercial_rate && (data.import_entries ?? []).some((e: any) => e.rate && e.rate !== data.import_commercial_rate) && (
