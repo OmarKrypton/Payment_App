@@ -366,8 +366,9 @@ body {
   font-size: 12px;
   font-family: var(--font-mono);
   outline: none;
-  transition: none;
+  transition: all 0.15s;
   width: 100%;
+  overflow: hidden;
 }
 
 .field-input:focus {

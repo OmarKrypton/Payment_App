@@ -115,6 +115,7 @@ const EMPTY_CALC: CalcResult = {
 };
 
 const fmt = (v: number) => `EGP ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtShort = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function focusNext(current: HTMLElement) {
   const fields = document.querySelectorAll<HTMLElement>('.field-input, .field-select, button, textarea');
@@ -651,7 +652,7 @@ function App() {
       <div className="import-tab">
         <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 80px 120px',gap:8,alignItems:'end'}}>
+          <div style={{display:'grid',gridTemplateColumns:'120px 80px 120px',gap:8,alignItems:'end'}}>
             <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
             <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
             <Computed label={t("总额 (EGP)", "Total (EGP)")} value={(parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1)} />
@@ -669,18 +670,18 @@ function App() {
         </div>
         <div className="card">
           <h3>{t("服务商", "Service Providers")}</h3>
-          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'1.5fr 80px 70px 55px 75px 75px 55px 70px 70px 85px 85px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
-            <span>{t("服务名称", "Service")}</span>
-            <span>{t("金额", "Amount")}</span>
-            <span>{t("汇率", "Rate")}</span>
-            <span>{t("免WHT", "Free")}</span>
-            <span>{t("VAT率", "VAT")}</span>
-            <span>{t("WHT率", "WHT")}</span>
-            <span>{t("临时工", "Temp")}</span>
-            <span>{t("VAT", "VAT")}</span>
-            <span>{t("WHT", "WHT")}</span>
-            <span>{t("净额", "Net")}</span>
-            <span>{t("含税合计", "+VAT")}</span>
+          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'1fr 95px 65px 50px 70px 70px 50px 80px 80px 100px 100px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <span style={{paddingTop:14}}>{t("服务名称", "Service")}</span>
+            <span style={{paddingTop:14}}>{t("金额", "Amount")}</span>
+            <span style={{paddingTop:14}}>{t("汇率", "Rate")}</span>
+            <span style={{paddingTop:14}}>{t("免WHT", "Free")}</span>
+            <span style={{paddingTop:14}}>{t("VAT率", "VAT")}</span>
+            <span style={{paddingTop:14}}>{t("WHT率", "WHT")}</span>
+            <span style={{paddingTop:14}}>{t("临时工", "Temp")}</span>
+            <span style={{paddingTop:14}}>{t("VAT", "VAT")}</span>
+            <span style={{paddingTop:14}}>{t("WHT", "WHT")}</span>
+            <span style={{paddingTop:14}}>{t("净额", "Net")}</span>
+            <span style={{paddingTop:14}}>{t("含税合计", "+VAT")}</span>
           </div>
           {data.import_entries.map((e, i) => {
             const amt = parseFloat(e.amount) || 0;
@@ -691,7 +692,7 @@ function App() {
             const whtRate = parseFloat(e.wht_rate.replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1.5fr 80px 70px 55px 75px 75px 55px 70px 70px 85px 85px 30px',gap:6}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1fr 95px 65px 50px 70px 70px 50px 80px 80px 100px 100px 30px',gap:6}}>
                 <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
@@ -699,10 +700,10 @@ function App() {
                 <Select label="" value={e.vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updImportEntry(i, "vat_rate", v)} />
                 <Select label="" value={e.wht_rate} options={["0%","0.5%","3%","5%","10%"]} onChange={v => updImportEntry(i, "wht_rate", v)} />
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
-                <div className="computed-value" style={{fontSize:11}}>{fmt(vat)}</div>
-                <div className="computed-value" style={{fontSize:11}}>{fmt(wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmt(egpAmt + vat - wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmt(egpAmt + vat)}</div>
+                <div className="computed-value" style={{fontSize:11,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(vat)}</div>
+                <div className="computed-value" style={{fontSize:11,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(egpAmt + vat - wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(egpAmt + vat)}</div>
                 <button className="btn-danger" onClick={() => delImportEntry(i)}>✕</button>
               </div>
             );
