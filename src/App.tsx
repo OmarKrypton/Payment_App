@@ -722,10 +722,10 @@ function App() {
                 <Select label="" value={e.vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updImportEntry(i, "vat_rate", v)} />
                 <Select label="" value={e.wht_rate} options={["0%","0.5%","3%","5%","10%"]} onChange={v => updImportEntry(i, "wht_rate", v)} />
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
-                <div className="computed-value" style={{fontSize:11,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(vat)}</div>
-                <div className="computed-value" style={{fontSize:11,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(egpAmt + vat - wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{fmtShort(egpAmt + vat)}</div>
+                <div className="computed-value" style={{fontSize:11}}>{fmtShort(vat)}</div>
+                <div className="computed-value" style={{fontSize:11}}>{fmtShort(wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmtShort(egpAmt + vat - wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600}}>{fmtShort(egpAmt + vat)}</div>
                 <button className="btn-danger" onClick={() => delImportEntry(i)}>✕</button>
               </div>
             );
