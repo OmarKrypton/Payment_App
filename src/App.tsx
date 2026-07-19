@@ -498,7 +498,7 @@ function App() {
   const delInv = (i: number) => delRow("invoices", i);
 
   const addImportEntry = () => {
-    const arr = [...data.import_entries, { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
+    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
     formRef.current = { ...formRef.current, import_entries: arr };
     recalc(formRef.current);
   };
@@ -657,7 +657,7 @@ function App() {
             <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
             <Computed label={t("总额 (EGP)", "Total (EGP)")} value={(parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1)} />
           </div>
-          {data.import_commercial_rate && data.import_entries.some(e => e.rate && e.rate !== data.import_commercial_rate) && (
+          {data.import_commercial_rate && (data.import_entries ?? []).some((e: any) => e.rate && e.rate !== data.import_commercial_rate) && (
             <div className="field-warning" style={{color:'var(--red)'}}>
               {t("警告: 汇率与其他发票不一致!", "Warning: Rate differs from other invoices!")}
             </div>
@@ -668,9 +668,9 @@ function App() {
           <Input label={t("成本 3", "Cost 3")} value={data.import_cost_3} onChange={v => updateField("import_cost_3", v)} />
           <Computed label={t("成本合计", "Total Costs")} value={computed.import_total_costs} highlight />
         </div>
-        <div className="card">
+          <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'1fr 95px 65px 50px 70px 70px 50px 80px 80px 100px 100px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+          <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(60px,90px) 100px 65px 50px 70px 70px 50px 85px 85px 100px 100px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
             <span style={{paddingTop:14}}>{t("服务名称", "Service")}</span>
             <span style={{paddingTop:14}}>{t("金额", "Amount")}</span>
             <span style={{paddingTop:14}}>{t("汇率", "Rate")}</span>
@@ -683,16 +683,16 @@ function App() {
             <span style={{paddingTop:14}}>{t("净额", "Net")}</span>
             <span style={{paddingTop:14}}>{t("含税合计", "+VAT")}</span>
           </div>
-          {data.import_entries.map((e, i) => {
+          {(data.import_entries ?? []).map((e: any, i: number) => {
             const amt = parseFloat(e.amount) || 0;
             const r = parseFloat(e.rate) || 1;
             const egpAmt = r ? amt * r : amt;
-            const vatRate = parseFloat(e.vat_rate.replace('%', '')) || 0;
+            const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
             const vat = Math.round(egpAmt * vatRate / 100 * 100) / 100;
-            const whtRate = parseFloat(e.wht_rate.replace('%', '')) || 0;
+            const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1fr 95px 65px 50px 70px 70px 50px 80px 80px 100px 100px 30px',gap:6}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(60px,90px) 100px 65px 50px 70px 70px 50px 85px 85px 100px 100px 30px',gap:6}}>
                 <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
