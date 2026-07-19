@@ -90,6 +90,8 @@ pub struct FormData {
     pub import_vat_rate: String,
     #[serde(default)]
     pub import_entries: Vec<ImportEntry>,
+    #[serde(default)]
+    pub import_costs: Vec<ImportCostRow>,
     pub ocr_meta: Vec<OcrFieldInfo>,
 }
 
@@ -156,6 +158,11 @@ impl Default for FormData {
             import_cost_3: "0.00".into(),
             import_vat_rate: "14%".into(),
             import_entries: vec![],
+            import_costs: vec![
+                ImportCostRow { name: "Foreign Cost".into(), amount: "0.00".into() },
+                ImportCostRow { name: "Domestic Cost".into(), amount: "0.00".into() },
+                ImportCostRow { name: "Nafeza Paper".into(), amount: "0.00".into() },
+            ],
             ocr_meta: vec![],
         }
     }
@@ -172,6 +179,12 @@ pub struct InvoiceData {
 pub struct RateRow {
     pub amount: String,
     pub rate: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportCostRow {
+    pub name: String,
+    pub amount: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

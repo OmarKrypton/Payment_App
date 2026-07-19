@@ -357,16 +357,16 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     sheet3.write_with_format(r3, 0, "Cost Breakdown", &section_fmt)
         .map_err(|e| e.to_string())?;
     r3 += 1;
-    let cost_items: Vec<(&str, f64)> = vec![
-        ("Commercial Invoice Amount", parse_amt(&data.import_commercial_amount)),
-        ("Cost 1", parse_amt(&data.import_cost_1)),
-        ("Cost 2", parse_amt(&data.import_cost_2)),
-        ("Cost 3", parse_amt(&data.import_cost_3)),
-        ("Total Costs", computed.import_total_costs),
+    let mut cost_items: Vec<(String, f64)> = vec![
+        ("Commercial Invoice Amount".to_string(), parse_amt(&data.import_commercial_amount)),
     ];
+    for c in &data.import_costs {
+        cost_items.push((if c.name.is_empty() { "Cost".to_string() } else { c.name.clone() }, parse_amt(&c.amount)));
+    }
+    cost_items.push(("Total Costs".to_string(), computed.import_total_costs));
     for (label, val) in &cost_items {
-        let is_total = *label == "Total Costs";
-        sheet3.write_with_format(r3, 0, *label, if is_total { &bold_fmt } else { &normal_fmt })
+        let is_total = label == "Total Costs";
+        sheet3.write_with_format(r3, 0, label.as_str(), if is_total { &bold_fmt } else { &normal_fmt })
             .map_err(|e| e.to_string())?;
         sheet3.write_with_format(r3, 1, *val, if is_total { &calc_fmt } else { &val_fmt })
             .map_err(|e| e.to_string())?;

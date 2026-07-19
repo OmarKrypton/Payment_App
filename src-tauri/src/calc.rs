@@ -120,10 +120,7 @@ pub fn recalculate(data: &FormData) -> CalcResult {
 
     // ── Import section ──
     let import_commercial = parse_amt(&data.import_commercial_amount);
-    let import_c1 = parse_amt(&data.import_cost_1);
-    let import_c2 = parse_amt(&data.import_cost_2);
-    let import_c3 = parse_amt(&data.import_cost_3);
-    let import_total_costs = (import_c1 + import_c2 + import_c3) * 100.0 / 100.0;
+    let import_total_costs = (data.import_costs.iter().map(|c| parse_amt(&c.amount)).sum::<f64>() * 100.0).round() / 100.0;
 
     let mut import_entry_sum = 0.0;
     let mut import_total_vat = 0.0;
