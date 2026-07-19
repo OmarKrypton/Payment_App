@@ -692,7 +692,7 @@ function App() {
         </div>
           <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(120px,200px) 100px 65px 50px 80px 80px 50px 140px 140px 140px 140px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px,1fr) 100px 65px 50px 80px 80px 50px 140px 140px 140px 140px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
             <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
             <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
             <div style={{paddingTop:14,paddingLeft:10}}>{t("汇率", "Rate")}</div>
@@ -714,7 +714,7 @@ function App() {
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(120px,200px) 100px 65px 50px 80px 80px 50px 140px 140px 140px 140px 30px',gap:6,alignItems:'end'}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px,1fr) 100px 65px 50px 80px 80px 50px 140px 140px 140px 140px 30px',gap:6,alignItems:'end'}}>
                 <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
