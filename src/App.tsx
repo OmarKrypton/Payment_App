@@ -693,17 +693,17 @@ function App() {
           <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
             <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'1fr 100px 65px 50px 80px 80px 50px 120px 120px 120px 120px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
-            <span style={{paddingTop:14}}>{t("服务名称", "Service")}</span>
-            <span style={{paddingTop:14}}>{t("金额", "Amount")}</span>
-            <span style={{paddingTop:14}}>{t("汇率", "Rate")}</span>
-            <span style={{paddingTop:14}}>{t("免WHT", "Free")}</span>
-            <span style={{paddingTop:14}}>{t("VAT率", "VAT")}</span>
-            <span style={{paddingTop:14}}>{t("WHT率", "WHT")}</span>
-            <span style={{paddingTop:14}}>{t("临时工", "Temp")}</span>
-            <span style={{paddingTop:14}}>{t("VAT", "VAT")}</span>
-            <span style={{paddingTop:14}}>{t("WHT", "WHT")}</span>
-            <span style={{paddingTop:14}}>{t("净额", "Net")}</span>
-            <span style={{paddingTop:14}}>{t("含税合计", "+VAT")}</span>
+            <div style={{paddingTop:14}}>{t("服务名称", "Service")}</div>
+            <div style={{paddingTop:14}}>{t("金额", "Amount")}</div>
+            <div style={{paddingTop:14}}>{t("汇率", "Rate")}</div>
+            <div style={{paddingTop:14,textAlign:'center'}}>{t("免WHT", "Free")}</div>
+            <div style={{paddingTop:14}}>{t("VAT率", "VAT")}</div>
+            <div style={{paddingTop:14}}>{t("WHT率", "WHT")}</div>
+            <div style={{paddingTop:14,textAlign:'center'}}>{t("临时工", "Temp")}</div>
+            <div style={{paddingTop:14}}>{t("VAT", "VAT")}</div>
+            <div style={{paddingTop:14}}>{t("WHT", "WHT")}</div>
+            <div style={{paddingTop:14}}>{t("净额", "Net")}</div>
+            <div style={{paddingTop:14}}>{t("含税合计", "+VAT")}</div>
           </div>
           {(data.import_entries ?? []).map((e: any, i: number) => {
             const amt = parseFloat(e.amount) || 0;
@@ -714,7 +714,7 @@ function App() {
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1fr 100px 65px 50px 80px 80px 50px 120px 120px 120px 120px 30px',gap:6}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'1fr 100px 65px 50px 80px 80px 50px 120px 120px 120px 120px 30px',gap:6,alignItems:'end'}}>
                 <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
                 <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
