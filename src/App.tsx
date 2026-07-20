@@ -692,20 +692,20 @@ function App() {
         </div>
           <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(150px,200px) 1fr 100px 65px 50px 80px 80px 50px 140px 140px 140px 140px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
-            <div></div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("汇率", "Rate")}</div>
-            <div style={{paddingTop:14,textAlign:'center'}}>{t("免WHT", "Free")}</div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT率", "VAT")}</div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT率", "WHT")}</div>
-            <div style={{paddingTop:14,textAlign:'center'}}>{t("临时工", "Temp")}</div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT", "VAT")}</div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT", "WHT")}</div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("净额", "Net")}</div>
-            <div style={{paddingTop:14,paddingLeft:10}}>{t("含税合计", "+VAT")}</div>
-          </div>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(140px, 1.8fr) 110px 80px 50px 70px 70px 50px 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("汇率", "Rate")}</div>
+              <div style={{paddingTop:14,textAlign:'center'}}>{t("免WHT", "Free")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT率", "VAT")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT率", "WHT")}</div>
+              <div style={{paddingTop:14,textAlign:'center'}}>{t("临时工", "Temp")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT", "VAT")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT", "WHT")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("净额", "Net")}</div>
+              <div style={{paddingTop:14,paddingLeft:10}}>{t("含税合计", "+VAT")}</div>
+              <div></div>
+            </div>
           {(data.import_entries ?? []).map((e: any, i: number) => {
             const amt = parseFloat(e.amount) || 0;
             const r = parseFloat(e.rate) || 1;
@@ -715,19 +715,23 @@ function App() {
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(150px,200px) 1fr 100px 65px 50px 80px 80px 50px 140px 140px 140px 140px 30px',gap:6,alignItems:'end'}}>
-                <div className="field"><label className="field-label"></label><FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} /></div>
-                <div className="field"><label className="field-label"></label><FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} /></div>
-                <div className="field"><label className="field-label"></label><FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} /></div>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(140px, 1.8fr) 110px 80px 50px 70px 70px 50px 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
+                <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} />
+                <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
+                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
-                <Select label="" value={e.vat_rate} options={["0%","5%","9%","10%","14%"]} onChange={v => updImportEntry(i, "vat_rate", v)} />
-                <Select label="" value={e.wht_rate} options={["0%","0.5%","3%","5%","10%"]} onChange={v => updImportEntry(i, "wht_rate", v)} />
+                <select className="field-select" style={{padding:'7px 10px'}} value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
+                  {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <select className="field-select" style={{padding:'7px 10px'}} value={e.wht_rate} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
+                  {["0%","0.5%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
-                <div className="computed-value" style={{fontSize:11,overflow:'hidden'}}>{fmtShort(vat)}</div>
-                <div className="computed-value" style={{fontSize:11,overflow:'hidden'}}>{fmtShort(wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden'}}>{fmtShort(egpAmt + vat - wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden'}}>{fmtShort(egpAmt + vat)}</div>
-                <button className="btn-danger" onClick={() => delImportEntry(i)}>✕</button>
+                <div className="computed-value" style={{fontSize:11,overflow:'hidden',padding:'7px 10px'}}>{fmtShort(vat)}</div>
+                <div className="computed-value" style={{fontSize:11,overflow:'hidden',padding:'7px 10px'}}>{fmtShort(wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden',padding:'7px 10px'}}>{fmtShort(egpAmt + vat - wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600,overflow:'hidden',padding:'7px 10px'}}>{fmtShort(egpAmt + vat)}</div>
+                <button className="btn-danger" style={{padding:'7px 10px'}} onClick={() => delImportEntry(i)}>✕</button>
               </div>
             );
           })}
