@@ -193,11 +193,29 @@ function FastInput({ value, onChange, className, type, rows }: {
   value: string; onChange: (v: string) => void; className?: string; type?: string; rows?: number;
 }) {
   const [local, setLocal] = useState(value);
-  useEffect(() => setLocal(value), [value]);
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setLocal(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (rows && ref.current) {
+      ref.current.style.height = 'auto';
+      ref.current.style.height = ref.current.scrollHeight + 'px';
+    }
+  }, [local, rows]);
+
   if (rows) {
-    return <textarea className={className || "field-input"} value={local} rows={rows}
+    return <textarea
+      ref={ref}
+      className={className || "field-input"}
+      value={local}
+      rows={rows}
+      style={{ resize: 'none', overflowY: 'hidden', minHeight: '32px' }}
       onChange={e => { setLocal(e.target.value); onChange(e.target.value); }}
-      onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }} />;
+      onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
+    />;
   }
   return <input className={className || "field-input"} type={type || "text"} value={local}
     onChange={e => { setLocal(e.target.value); onChange(e.target.value); }} />;
@@ -683,10 +701,10 @@ function App() {
           <h4 style={{marginTop:16,marginBottom:8,fontSize:13,color:'var(--text-secondary)',fontWeight:600}}>{t("成本拆分", "Cost Breakdown")}</h4>
           {(data.import_costs ?? [{name:"",amount:"0.00"}]).map((c: any, i: number) => (
             <div key={i} style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
-              <div style={{width:240}}><Input label="" value={c.name} onChange={v => updCostRow(i, "name", v)} /></div>
-              <div style={{width:130}}><Input label="" value={c.amount} onChange={v => updCostRow(i, "amount", v)} /></div>
+              <div style={{width:240}}><FastInput value={c.name} onChange={v => updCostRow(i, "name", v)} rows={1} /></div>
+              <div style={{width:130}}><FastInput value={c.amount} onChange={v => updCostRow(i, "amount", v)} /></div>
               {(data.import_costs ?? []).length > 1 ? (
-                <button className="btn-danger" style={{padding:'7px 10px',height:32,marginTop:2}} onClick={() => delCostRow(i)}>✕</button>
+                <button className="btn-danger" style={{padding:'7px 10px',height:32}} onClick={() => delCostRow(i)}>✕</button>
               ) : (
                 <div style={{width:30}}></div>
               )}
@@ -699,7 +717,7 @@ function App() {
         </div>
           <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'200px 110px 80px 50px 70px 70px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 70px 70px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("汇率", "Rate")}</div>
@@ -723,8 +741,8 @@ function App() {
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'200px 110px 80px 50px 70px 70px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
-                <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} />
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 70px 70px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
+                <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
                 <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
                 <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
