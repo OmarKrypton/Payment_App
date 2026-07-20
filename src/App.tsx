@@ -693,7 +693,7 @@ function App() {
             </div>
             <div className="field" style={{alignSelf:'end'}}>
               <label className="field-label" style={{color:'var(--accent)',fontWeight:700}}>{t("总额 (EGP)", "Total (EGP)")}</label>
-              <div className="computed-value highlight" style={{fontSize:14,fontWeight:700,padding:'9px 12px'}}>{fmt((parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1))}</div>
+              <div className="computed-value highlight" style={{fontSize:14,fontWeight:700,padding:'9px 12px',wordBreak:'break-word',overflowWrap:'anywhere',whiteSpace:'normal',minWidth:0}}>{fmt((parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1))}</div>
             </div>
           </div>
 
@@ -725,9 +725,9 @@ function App() {
             </div>
           </div>
         </div>
-          <div className="card" style={{overflowX:'auto'}}>
+          <div className="card" style={{overflowX:'auto',background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 70px 70px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("汇率", "Rate")}</div>
@@ -751,15 +751,15 @@ function App() {
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 70px 70px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
                 <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
                 <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
                 <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
-                <select className="field-select" style={{padding:'7px 10px'}} value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
+                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
                   {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
-                <select className="field-select" style={{padding:'7px 10px'}} value={e.wht_rate} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
+                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.wht_rate} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
                   {["0%","0.5%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
@@ -774,7 +774,7 @@ function App() {
           })}
           <button className="btn-add" onClick={addImportEntry} style={{marginTop:8}}>+ {t("添加服务商", "Add Provider")}</button>
         </div>
-        <div className="card">
+        <div className="card" style={{background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
           <h3>{t("进口汇总", "Import Summary")}</h3>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))',gap:16,marginTop:12}}>
             <Computed label={t("毛额 (商业发票+成本+服务)", "Gross (Invoice+Costs+Services)")} value={computed.import_gross_amount} />
