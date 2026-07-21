@@ -80,3 +80,8 @@ export async function deleteSnapshotRemote(id: number): Promise<void> {
     .eq("id", id);
   if (error) throw error;
 }
+
+export async function changePassword(newPassword: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw error;
+}
