@@ -49,7 +49,7 @@ interface FormData {
   val_7A: string; val_10A: string; val_11A: string; val_11B: string;
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
-  check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean;
+  check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
@@ -91,7 +91,7 @@ const EMPTY_FORM: FormData = {
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
-  check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false,
+  check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -117,7 +117,7 @@ const DEFAULT_FORM: FormData = {
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
-  check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false,
+  check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -674,6 +674,10 @@ function App() {
             <label className="check-row">
               <input type="checkbox" checked={data.check_nafeza} onChange={e => updateField("check_nafeza", e.target.checked)} />
               {t("Nafeza 文件", "Nafeza Paper")}
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={data.check_form_4_6} onChange={e => updateField("check_form_4_6", e.target.checked)} />
+              {t("Form 4 或 6", "Form 4 or 6")}
             </label>
           </>
         ) : (

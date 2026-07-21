@@ -66,6 +66,8 @@ pub struct FormData {
     pub check_cert_origin: bool,
     #[serde(default)]
     pub check_nafeza: bool,
+    #[serde(default)]
+    pub check_form_4_6: bool,
     pub audit_notes: String,
     pub vat_manual: bool,
     pub wht_manual: bool,
@@ -141,6 +143,7 @@ impl Default for FormData {
             check_packing_list: false,
             check_cert_origin: false,
             check_nafeza: false,
+            check_form_4_6: false,
             audit_notes: String::new(),
             vat_manual: false,
             wht_manual: false,
