@@ -259,6 +259,9 @@ function App() {
   const [computed, setComputed] = useState<CalcResult>(EMPTY_CALC);
   const overlayRef = useRef<HTMLDivElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
+  const [modalMsg, setModalMsg] = useState<string | null>(null);
+
+  const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
   const recalc = useCallback(async (data: FormData) => {
     const result = await invoke<CalcResult>("recalculate", { data });
@@ -357,7 +360,7 @@ function App() {
       recalc(parsed);
       saveConfig();
       hideOverlay();
-      alert(t("PDF导入成功", "PDF imported successfully"));
+      showAlert(t("PDF导入成功", "PDF imported successfully"));
     });
     return () => { unlisten.then(f => f()); };
   }, [recalc, t, saveConfig, hideOverlay]);
@@ -366,7 +369,7 @@ function App() {
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-error", (event) => {
       hideOverlay();
-      alert(`${t("导入失败", "Import failed")}: ${event.payload.message}`);
+      showAlert(`${t("导入失败", "Import failed")}: ${event.payload.message}`);
     });
     return () => { unlisten.then(f => f()); };
   }, [t, hideOverlay]);
@@ -830,7 +833,7 @@ function App() {
     const path = await save({ defaultPath: `${data.doc_serial || "CSCEC_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
     if (path) {
       await invoke("export_excel", { data, computed, filePath: path });
-      alert(t("导出成功", "Export successful"));
+      showAlert(t("导出成功", "Export successful"));
     }
   };
 
@@ -906,14 +909,14 @@ function App() {
     if (serial) {
       const exists = await invoke<boolean>("check_serial_exists", { serial });
       if (exists) {
-        alert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
+        showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
         return;
       }
     }
     const label = serial || `Snapshot-${new Date().toLocaleDateString()}`;
     const dataJson = JSON.stringify(data);
     await invoke("save_history", { label, notes: "", dataJson });
-    alert(`${t("快照已保存", "Snapshot saved")} (${label})`);
+    showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
   };
 
   const loadSnapshot = async (id: number) => {
@@ -956,6 +959,27 @@ function App() {
           <p className="loading-message">{progressMsg || t("正在导入PDF，请稍候...", "Importing PDF, please wait...")}</p>
         </div>
       </div>
+      {modalMsg !== null && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 10000,
+        }} onClick={() => setModalMsg(null)}>
+          <div style={{
+            background: 'var(--bg-card, #fff)', borderRadius: 12, padding: '28px 36px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 280,
+            textAlign: 'center', fontSize: 15, color: 'var(--text-primary, #222)',
+            border: '1px solid var(--border, #e0e0e0)',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ marginBottom: 20, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{modalMsg}</div>
+            <button style={{
+              padding: '8px 32px', borderRadius: 6, border: 'none',
+              background: 'var(--accent, #00529B)', color: '#fff', fontWeight: 600,
+              cursor: 'pointer', fontSize: 14,
+            }} onClick={() => setModalMsg(null)}>OK</button>
+          </div>
+        </div>
+      )}
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="brand">
