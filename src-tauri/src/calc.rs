@@ -120,11 +120,16 @@ pub fn recalculate(data: &FormData) -> CalcResult {
 
     // ── Import section ──
     let import_commercial = parse_amt(&data.import_commercial_amount);
-    let import_total_costs = (data.import_costs.iter().map(|c| parse_amt(&c.amount)).sum::<f64>() * 100.0).round() / 100.0;
+    let import_commercial_rate = parse_exchange_rate(&data.import_commercial_rate);
+    let import_commercial_egp = import_commercial * import_commercial_rate;
+    let import_cost_breakdown_sum = (data.import_costs.iter().map(|c| parse_amt(&c.amount)).sum::<f64>() * 100.0).round() / 100.0;
+    // Total Costs = cost breakdown + commercial invoice total (EGP)
+    let import_total_costs = ((import_cost_breakdown_sum + import_commercial_egp) * 100.0).round() / 100.0;
 
     let mut import_entry_sum = 0.0;
     let mut import_total_vat = 0.0;
     let mut import_total_wht = 0.0;
+    let mut import_table_amount_plus_vat = 0.0;
     let mut import_temp_labour_sum = 0.0;
     for entry in &data.import_entries {
         let amt = parse_amt(&entry.amount) * parse_exchange_rate(&entry.rate);
@@ -137,6 +142,7 @@ pub fn recalculate(data: &FormData) -> CalcResult {
         import_entry_sum += amt;
         import_total_vat += vat;
         import_total_wht += wht;
+        import_table_amount_plus_vat += amt + vat;
         if entry.temp_labour {
             import_temp_labour_sum += amt;
         }
@@ -144,8 +150,9 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let import_gross_amount = ((import_commercial + import_total_costs + import_entry_sum) * 100.0).round() / 100.0;
     import_total_vat = (import_total_vat * 100.0).round() / 100.0;
     import_total_wht = (import_total_wht * 100.0).round() / 100.0;
-    let import_grand_total = ((import_gross_amount + import_total_vat) * 100.0).round() / 100.0;
-    let import_grand_net = ((import_gross_amount + import_total_vat - import_total_wht) * 100.0).round() / 100.0;
+    // Grand Total = sum of (amount + VAT) from the table's "+VAT" column
+    let import_grand_total = (import_table_amount_plus_vat * 100.0).round() / 100.0;
+    let import_grand_net = ((import_grand_total - import_total_wht) * 100.0).round() / 100.0;
     let import_temp_labour = (import_temp_labour_sum * 0.45 / 100.0 * 100.0).round() / 100.0;
 
     CalcResult {
