@@ -323,9 +323,13 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .write_with_format(r, 0, "Audit Notes", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
-    sheet2
-        .write_with_format(r, 0, &data.audit_notes, &normal_fmt)
+    let notes_wrap_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin)
+        .set_text_wrap();
+    sheet2.merge_range(r, 0, r, 1, &data.audit_notes, &notes_wrap_fmt)
         .map_err(|e| e.to_string())?;
+    sheet2.set_row_height(r, 80).map_err(|e| e.to_string())?;
 
     // ── Sheet: Import Calculation (import type only) ──
     if is_import {
