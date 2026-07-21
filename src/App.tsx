@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote, changePassword } from "./supabase";
 
 interface OcrFieldInfo {
   field: string;
@@ -263,6 +263,8 @@ function App() {
   const [modalMsg, setModalMsg] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [showChangePw, setShowChangePw] = useState(false);
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
   const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
   const [synced, setSynced] = useState(false);
@@ -1109,23 +1111,47 @@ function App() {
         </nav>
         <div className="sidebar-sync" style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4}}>
           {authUser ? (
-            <div style={{display:'flex',alignItems:'center',gap:10}}>
-              <div style={{width:32,height:32,borderRadius:'50%',background:'var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'#fff'}}>
-                {authUser.charAt(0).toUpperCase()}
-              </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:'flex',alignItems:'center',gap:5}}>
-                  <span style={{width:7,height:7,borderRadius:'50%',background:synced?'var(--green)':'var(--red)',display:'inline-block',boxShadow:synced?'0 0 4px var(--green)':'none'}} />
-                  <span style={{fontSize:12,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{authUser}</span>
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <div style={{width:32,height:32,borderRadius:'50%',background:'var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'#fff'}}>
+                  {authUser.charAt(0).toUpperCase()}
                 </div>
-                <span style={{fontSize:10,color:synced?'var(--green)':'var(--red)',opacity:0.8}}>{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:5}}>
+                    <span style={{width:7,height:7,borderRadius:'50%',background:synced?'var(--green)':'var(--red)',display:'inline-block',boxShadow:synced?'0 0 4px var(--green)':'none'}} />
+                    <span style={{fontSize:12,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{authUser}</span>
+                  </div>
+                  <span style={{fontSize:10,color:synced?'var(--green)':'var(--red)',opacity:0.8}}>{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</span>
+                </div>
+                <button style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'1px solid rgba(255,255,255,0.15)',background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.7)',cursor:'pointer',transition:'all 0.15s'}} onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); }}
+                  onMouseEnter={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.1)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.9)'}}
+                  onMouseLeave={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.05)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.7)'}}
+                >
+                  {t("登出", "Logout")}
+                </button>
               </div>
-              <button style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'1px solid rgba(255,255,255,0.15)',background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.7)',cursor:'pointer',transition:'all 0.15s'}} onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); }}
-                onMouseEnter={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.1)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.9)'}}
-                onMouseLeave={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.05)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.7)'}}
-              >
-                {t("登出", "Logout")}
-              </button>
+              {!showChangePw && (
+                <button style={{fontSize:10,padding:'3px 0',border:'none',background:'transparent',color:'rgba(255,255,255,0.35)',cursor:'pointer',marginTop:6,width:'100%',textAlign:'center'}} onClick={() => setShowChangePw(true)}>
+                  {t("修改密码", "Change password")}
+                </button>
+              )}
+              {showChangePw && (
+                <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:8}}>
+                  <input style={{fontSize:11,padding:'6px 10px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.06)',color:'rgba(255,255,255,0.85)',width:'100%',outline:'none'}}
+                    type="password"
+                    placeholder={t("新密码", "New password")}
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)} />
+                  <div style={{display:'flex',gap:6}}>
+                    <button style={{fontSize:11,padding:'5px 0',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,flex:1}} onClick={async () => {
+                      try { await changePassword(newPassword); setNewPassword(""); setShowChangePw(false); showAlert(t("密码已修改", "Password changed")); } catch (e: any) { showAlert(`${t("修改失败", "Change failed")}: ${e.message || e}`); }
+                    }}>{t("确认", "Confirm")}</button>
+                    <button style={{fontSize:11,padding:'5px 0',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'transparent',color:'rgba(255,255,255,0.5)',cursor:'pointer',flex:1}} onClick={() => { setShowChangePw(false); setNewPassword(""); }}>
+                      {t("取消", "Cancel")}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div style={{display:'flex',flexDirection:'column',gap:10}}>
