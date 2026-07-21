@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signUp, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote } from "./supabase";
 
 interface OcrFieldInfo {
   field: string;
@@ -1126,14 +1126,10 @@ function App() {
               </div>
               <input style={{fontSize:11,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:4,background:'var(--bg-input, #fff)',width:'100%'}} placeholder={t("邮箱", "Email")} value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
               <input style={{fontSize:11,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:4,background:'var(--bg-input, #fff)',width:'100%'}} type="password" placeholder={t("密码", "Password")} value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
-              <div style={{display:'flex',gap:6}}>
-                <button style={{fontSize:11,padding:'4px 10px',border:'none',borderRadius:4,background:'var(--accent)',color:'#fff',cursor:'pointer',flex:1}} onClick={async () => {
-                  try { await signIn(authEmail, authPassword); setAuthPassword(""); } catch (e: any) { showAlert(`${t("登录失败", "Login failed")}: ${e.message || e}`); }
-                }}>{t("登录", "Sign In")}</button>
-                <button style={{fontSize:11,padding:'4px 10px',border:'1px solid var(--border)',borderRadius:4,background:'transparent',color:'inherit',cursor:'pointer',flex:1}} onClick={async () => {
-                  try { await signUp(authEmail, authPassword); showAlert(t("注册成功，请查收邮件确认", "Signed up! Check email to confirm")); setAuthPassword(""); } catch (e: any) { showAlert(`${t("注册失败", "Sign up failed")}: ${e.message || e}`); }
-                }}>{t("注册", "Sign Up")}</button>
-              </div>
+              <button style={{fontSize:11,padding:'4px 10px',border:'none',borderRadius:4,background:'var(--accent)',color:'#fff',cursor:'pointer'}} onClick={async () => {
+                try { await signIn(authEmail, authPassword); setAuthPassword(""); } catch (e: any) { showAlert(`${t("登录失败", "Login failed")}: ${e.message || e}`); }
+              }}>{t("登录", "Sign In")}</button>
+              <span style={{fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>{t("账号由管理员创建", "Accounts created by admin")}</span>
             </div>
           )}
         </div>
