@@ -1107,29 +1107,53 @@ function App() {
           <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>{t("进口", "Import")}</button>
           <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
         </nav>
-        <div className="sidebar-sync" style={{padding:'8px 12px',borderTop:'1px solid var(--border)',marginTop:4}}>
+        <div className="sidebar-sync" style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4}}>
           {authUser ? (
-            <div style={{display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{width:8,height:8,borderRadius:'50%',background:synced?'var(--green)':'var(--red)',display:'inline-block'}} />
-                <span style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:120}}>{authUser}</span>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <div style={{width:32,height:32,borderRadius:'50%',background:'var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'#fff'}}>
+                {authUser.charAt(0).toUpperCase()}
               </div>
-              <button style={{fontSize:11,padding:'3px 10px',border:'1px solid var(--border)',borderRadius:4,background:'transparent',color:'inherit',cursor:'pointer'}} onClick={async () => { await signOut(); setAuthUser(null); setSynced(false); }}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:5}}>
+                  <span style={{width:7,height:7,borderRadius:'50%',background:synced?'var(--green)':'var(--red)',display:'inline-block',boxShadow:synced?'0 0 4px var(--green)':'none'}} />
+                  <span style={{fontSize:12,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{authUser}</span>
+                </div>
+                <span style={{fontSize:10,color:synced?'var(--green)':'var(--red)',opacity:0.8}}>{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</span>
+              </div>
+              <button style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'1px solid rgba(255,255,255,0.15)',background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.7)',cursor:'pointer',transition:'all 0.15s'}} onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); }}
+                onMouseEnter={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.1)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.9)'}}
+                onMouseLeave={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.05)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.7)'}}
+              >
                 {t("登出", "Logout")}
               </button>
             </div>
           ) : (
-            <div style={{display:'flex',flexDirection:'column',gap:6}}>
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{width:8,height:8,borderRadius:'50%',background:'var(--red)',display:'inline-block'}} />
-                <span style={{fontSize:11,color:'var(--text-muted)'}}>{t("未登录 · 本地模式", "Offline · Local only")}</span>
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              <div style={{textAlign:'center',marginBottom:2}}>
+                <div style={{width:40,height:40,borderRadius:'50%',background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,color:'rgba(255,255,255,0.4)',margin:'0 auto 8px'}}>🔒</div>
+                <div style={{fontSize:13,fontWeight:600,color:'rgba(255,255,255,0.85)',marginBottom:2}}>{t("登录以同步", "Sign in to sync")}</div>
+                <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',lineHeight:1.4}}>{t("跨设备共享快照数据", "Share snapshots across devices")}</div>
               </div>
-              <input style={{fontSize:11,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:4,background:'var(--bg-input, #fff)',width:'100%'}} placeholder={t("邮箱", "Email")} value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
-              <input style={{fontSize:11,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:4,background:'var(--bg-input, #fff)',width:'100%'}} type="password" placeholder={t("密码", "Password")} value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
-              <button style={{fontSize:11,padding:'4px 10px',border:'none',borderRadius:4,background:'var(--accent)',color:'#fff',cursor:'pointer'}} onClick={async () => {
+              <input style={{fontSize:12,padding:'8px 10px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.06)',color:'rgba(255,255,255,0.85)',width:'100%',outline:'none',transition:'border 0.15s'}}
+                placeholder={t("邮箱", "Email")}
+                value={authEmail}
+                onChange={e => setAuthEmail(e.target.value)}
+                onFocus={e => {(e.target as HTMLElement).style.borderColor='var(--accent)'}}
+                onBlur={e => {(e.target as HTMLElement).style.borderColor='rgba(255,255,255,0.12)'}} />
+              <input style={{fontSize:12,padding:'8px 10px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.06)',color:'rgba(255,255,255,0.85)',width:'100%',outline:'none',transition:'border 0.15s'}}
+                type="password"
+                placeholder={t("密码", "Password")}
+                value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+                onFocus={e => {(e.target as HTMLElement).style.borderColor='var(--accent)'}}
+                onBlur={e => {(e.target as HTMLElement).style.borderColor='rgba(255,255,255,0.12)'}} />
+              <button style={{fontSize:12,padding:'8px 0',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,transition:'background 0.15s'}} onClick={async () => {
                 try { await signIn(authEmail, authPassword); setAuthPassword(""); } catch (e: any) { showAlert(`${t("登录失败", "Login failed")}: ${e.message || e}`); }
-              }}>{t("登录", "Sign In")}</button>
-              <span style={{fontSize:10,color:'var(--text-muted)',textAlign:'center'}}>{t("账号由管理员创建", "Accounts created by admin")}</span>
+              }}
+                onMouseEnter={e => {(e.target as HTMLElement).style.background='var(--accent-hover)'}}
+                onMouseLeave={e => {(e.target as HTMLElement).style.background='var(--accent)'}}
+              >{t("登录", "Sign In")}</button>
+              <span style={{fontSize:10,color:'rgba(255,255,255,0.3)',textAlign:'center',marginTop:2}}>{t("账号由管理员创建", "Accounts created by admin")}</span>
             </div>
           )}
         </div>
