@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
+import { supabase, signUp, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote, SnapshotRow } from "./supabase";
 
 interface OcrFieldInfo {
   field: string;
@@ -248,7 +249,7 @@ function FastInput({ value, onChange, className, type, rows }: {
 }
 
 interface HistoryEntry {
-  id: number; label: string; notes: string; created_at: string;
+  id: number; label: string; notes: string; created_at: string; owner?: string;
 }
 
 function App() {
@@ -260,6 +261,11 @@ function App() {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
   const [modalMsg, setModalMsg] = useState<string | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
+  const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
+  const [synced, setSynced] = useState(false);
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
@@ -323,7 +329,7 @@ function App() {
     if (overlayRef.current) overlayRef.current.style.display = 'none';
   }, []);
 
-  // Init
+  // Init: load local config and restore Supabase session
   useEffect(() => {
     (async () => {
       try {
@@ -333,7 +339,32 @@ function App() {
       } catch (e) {
         console.error("load_config failed", e);
       }
+      // Restore Supabase session
+      try {
+        const session = await getSession();
+        if (session?.user?.email) {
+          setAuthUser(session.user.email);
+          setAuthUserId(session.user.id);
+          setSynced(true);
+        }
+      } catch {}
     })();
+  }, []);
+
+  // Listen for Supabase auth changes
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email) {
+        setAuthUser(session.user.email);
+        setAuthUserId(session.user.id);
+        setSynced(true);
+      } else {
+        setAuthUser(null);
+        setAuthUserId(null);
+        setSynced(false);
+      }
+    });
+    return () => { subscription.unsubscribe(); };
   }, []);
 
   // Periodic noop to keep WebKit event loop alive on Linux
@@ -879,12 +910,34 @@ function App() {
 
   const loadHistoryList = async (search = "") => {
     setHistoryLoading(true);
-    try {
-      const list = await invoke<HistoryEntry[]>("list_history", { search });
-      setHistoryList(list);
-    } catch (e) {
-      console.error("list_history failed", e);
-      setHistoryList([]);
+    if (authUser) {
+      try {
+        const rows = await listSnapshotsRemote(search);
+        setHistoryList(rows.map(r => ({
+          id: r.id,
+          label: r.label,
+          notes: r.notes,
+          created_at: new Date(r.created_at).toLocaleString(),
+          owner: r.user_id,
+        })));
+      } catch (e) {
+        console.error("listSnapshotsRemote failed", e);
+        try {
+          const list = await invoke<HistoryEntry[]>("list_history", { search });
+          setHistoryList(list);
+        } catch (e2) {
+          console.error("list_history fallback failed", e2);
+          setHistoryList([]);
+        }
+      }
+    } else {
+      try {
+        const list = await invoke<HistoryEntry[]>("list_history", { search });
+        setHistoryList(list);
+      } catch (e) {
+        console.error("list_history failed", e);
+        setHistoryList([]);
+      }
     }
     setHistoryLoading(false);
   };
@@ -906,22 +959,49 @@ function App() {
 
   const saveSnapshot = async () => {
     const serial = data.doc_serial;
-    if (serial) {
-      const exists = await invoke<boolean>("check_serial_exists", { serial });
-      if (exists) {
-        showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
-        return;
-      }
-    }
     const label = serial || `Snapshot-${new Date().toLocaleDateString()}`;
     const dataJson = JSON.stringify(data);
-    await invoke("save_history", { label, notes: "", dataJson });
-    showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
+    if (authUser) {
+      try {
+        await saveSnapshotRemote(label, "", dataJson);
+        setSynced(true);
+        showAlert(`${t("快照已保存并同步", "Snapshot saved & synced")} (${label})`);
+      } catch (e: any) {
+        console.error("saveSnapshotRemote failed", e);
+        try {
+          await invoke("save_history", { label, notes: "", dataJson });
+          setSynced(false);
+          showAlert(`${t("快照已保存(本地)", "Snapshot saved (local)")} (${label})`);
+        } catch (e2) {
+          console.error("save_history fallback failed", e2);
+        }
+      }
+    } else {
+      if (serial) {
+        const exists = await invoke<boolean>("check_serial_exists", { serial });
+        if (exists) {
+          showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
+          return;
+        }
+      }
+      await invoke("save_history", { label, notes: "", dataJson });
+      showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
+    }
   };
 
   const loadSnapshot = async (id: number) => {
     try {
-      const dataJson = await invoke<string>("load_history", { id });
+      let dataJson: string;
+      if (authUser) {
+        try {
+          dataJson = await loadSnapshotRemote(id);
+        } catch (e) {
+          console.error("loadSnapshotRemote failed, falling back", e);
+          dataJson = await invoke<string>("load_history", { id });
+        }
+      } else {
+        dataJson = await invoke<string>("load_history", { id });
+      }
       const parsed = JSON.parse(dataJson);
       if (!parsed.import_costs && (parsed.import_cost_1 !== undefined)) {
         parsed.import_costs = [
@@ -931,6 +1011,8 @@ function App() {
         ];
       }
       if (!parsed.import_costs) parsed.import_costs = [...DEFAULT_FORM.import_costs];
+      if (!parsed.check_form_4_6) parsed.check_form_4_6 = false;
+      if (!parsed.seller_tax_ids) parsed.seller_tax_ids = [];
       formRef.current = parsed;
       await recalc(parsed);
     } catch (e) {
@@ -947,7 +1029,21 @@ function App() {
   };
 
   const deleteSnapshot = async (id: number) => {
-    await invoke("delete_history", { id });
+    if (authUser) {
+      const entry = historyList.find(h => h.id === id);
+      if (entry?.owner && entry.owner !== authUserId) {
+        showAlert(t("只能删除自己的快照", "You can only delete your own snapshots"));
+        return;
+      }
+      try {
+        await deleteSnapshotRemote(id);
+      } catch (e) {
+        console.error("deleteSnapshotRemote failed, falling back", e);
+        try { await invoke("delete_history", { id }); } catch {}
+      }
+    } else {
+      await invoke("delete_history", { id });
+    }
     loadHistoryList(historySearch);
   };
 
@@ -1011,6 +1107,36 @@ function App() {
           <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>{t("进口", "Import")}</button>
           <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
         </nav>
+        <div className="sidebar-sync" style={{padding:'8px 12px',borderTop:'1px solid var(--border)',marginTop:4}}>
+          {authUser ? (
+            <div style={{display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:synced?'var(--green)':'var(--red)',display:'inline-block'}} />
+                <span style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:120}}>{authUser}</span>
+              </div>
+              <button style={{fontSize:11,padding:'3px 10px',border:'1px solid var(--border)',borderRadius:4,background:'transparent',color:'inherit',cursor:'pointer'}} onClick={async () => { await signOut(); setAuthUser(null); setSynced(false); }}>
+                {t("登出", "Logout")}
+              </button>
+            </div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:'var(--red)',display:'inline-block'}} />
+                <span style={{fontSize:11,color:'var(--text-muted)'}}>{t("未登录 · 本地模式", "Offline · Local only")}</span>
+              </div>
+              <input style={{fontSize:11,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:4,background:'var(--bg-input, #fff)',width:'100%'}} placeholder={t("邮箱", "Email")} value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+              <input style={{fontSize:11,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:4,background:'var(--bg-input, #fff)',width:'100%'}} type="password" placeholder={t("密码", "Password")} value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
+              <div style={{display:'flex',gap:6}}>
+                <button style={{fontSize:11,padding:'4px 10px',border:'none',borderRadius:4,background:'var(--accent)',color:'#fff',cursor:'pointer',flex:1}} onClick={async () => {
+                  try { await signIn(authEmail, authPassword); setAuthPassword(""); } catch (e: any) { showAlert(`${t("登录失败", "Login failed")}: ${e.message || e}`); }
+                }}>{t("登录", "Sign In")}</button>
+                <button style={{fontSize:11,padding:'4px 10px',border:'1px solid var(--border)',borderRadius:4,background:'transparent',color:'inherit',cursor:'pointer',flex:1}} onClick={async () => {
+                  try { await signUp(authEmail, authPassword); showAlert(t("注册成功，请查收邮件确认", "Signed up! Check email to confirm")); setAuthPassword(""); } catch (e: any) { showAlert(`${t("注册失败", "Sign up failed")}: ${e.message || e}`); }
+                }}>{t("注册", "Sign Up")}</button>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="sidebar-lang">
           <button onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
             {lang === "zh" ? "English" : "中文"}
@@ -1061,18 +1187,21 @@ function App() {
           <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
             {historyLoading ? (
               <div className="history-empty">{t("加载中...", "Loading...")}</div>
-            ) : historyList.map(h => (
+            ) : historyList.map(h => {
+              const isOwn = !h.owner || h.owner === authUserId;
+              return (
               <div key={h.id} className="history-item">
                 <div>
                   <strong>{h.label}</strong>
-                  <p><small>{h.created_at}</small></p>
+                  <p><small>{h.created_at}{h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}</small></p>
                 </div>
                 <div className="history-actions">
                   <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
-                  <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
+                  {isOwn && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
                 </div>
               </div>
-            ))}
+              );
+            })}
             {historyList.length === 0 && <div className="history-empty">{t("未找到快照", "No snapshots found")}</div>}
           </div>
         </div>
