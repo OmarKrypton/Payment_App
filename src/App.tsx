@@ -80,6 +80,32 @@ interface CalcResult {
   import_temp_labour: number;
 }
 
+const EMPTY_FORM: FormData = {
+  val_1A: "0.00", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00",
+  vat_rate: "14%", val_2A: "0.00", val_2B: "0.00", val_2C: "0.00",
+  ret_rate: "0%", val_4A: "0.00", val_4B: "0.00", val_4C: "0.00",
+  temp_rate: "0%", val_5A: "0.00", val_5B: "0.00", val_5C: "0.00",
+  wht_rate: "0%", val_6A: "0.00", val_6B: "0.00", val_6C: "0.00",
+  oth_rate: "0%", val_8A: "0.00",
+  soc_rate: "0%", val_12A: "0.00",
+  val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
+  doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
+  check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
+  check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false,
+  vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
+  invoices: [],
+  vat_rows: [{ amount: "0.00", rate: "0%" }],
+  wht_rows: [{ amount: "0.00", rate: "0%" }],
+  oth_rows: [{ amount: "0.00", rate: "0%" }],
+  soc_rows: [{ amount: "0.00", rate: "0%" }],
+  import_commercial_amount: "0.00", import_cost_1: "0.00", import_cost_2: "0.00", import_cost_3: "0.00",
+  import_commercial_rate: "",
+  import_entries: [],
+  import_costs: [{ name: "Foreign Cost", amount: "0.00" }, { name: "Domestic Cost", amount: "0.00" }, { name: "Nafeza Paper", amount: "0.00" }],
+  doc_type: "bank",
+  ocr_meta: [],
+};
+
 const DEFAULT_FORM: FormData = {
   val_1A: "0.00", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00",
   vat_rate: "14%", val_2A: "0.00", val_2B: "0.00", val_2C: "0.00",
@@ -777,9 +803,6 @@ function App() {
         <div className="card" style={{background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
           <h3>{t("进口汇总", "Import Summary")}</h3>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))',gap:16,marginTop:12}}>
-            <Computed label={t("毛额 (商业发票+成本+服务)", "Gross (Invoice+Costs+Services)")} value={computed.import_gross_amount} />
-            <Computed label={t("VAT 合计", "Total VAT")} value={computed.import_total_vat} />
-            <Computed label={t("WHT 合计", "Total WHT")} value={computed.import_total_wht} />
             <Computed label={t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")} value={computed.import_grand_total} highlight />
             <Computed label={t("净额 (总额-WHT)", "Grand Net (Total-WHT)")} value={computed.import_grand_net} highlight />
             <Computed label={t("临时工社保 (服务金额 × 0.45%)", "Temp Labour (Services × 0.45%)")} value={computed.import_temp_labour} highlight />
@@ -788,6 +811,16 @@ function App() {
       </div>
     );
   };
+
+  const newSession = useCallback(async () => {
+    const confirmed = window.confirm(t("确定要开始新会话吗？当前未保存的更改将丢失。", "Start a new session? Any unsaved changes will be lost."));
+    if (!confirmed) return;
+    formRef.current = { ...EMPTY_FORM };
+    setComputed(EMPTY_CALC);
+    setTab("bank");
+    await recalc(formRef.current);
+    try { await invoke("save_config", { data: formRef.current }); } catch {}
+  }, [t, recalc]);
 
   const exportExcel = async () => {
     const path = await save({ defaultPath: `${data.doc_serial || "CSCEC_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
@@ -956,6 +989,7 @@ function App() {
           </button>
         </div>
         <div className="sidebar-actions">
+          <button onClick={newSession}>{t("🆕 新会话", "🆕 New Session")}</button>
           <button onClick={saveSnapshot}>{t("💾 保存快照", "💾 Save Snapshot")}</button>
           <button onClick={exportExcel}>{t("📥 导出Excel", "📥 Export Excel")}</button>
           <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
