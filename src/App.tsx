@@ -780,8 +780,8 @@ function App() {
             <Computed label={t("毛额 (商业发票+成本+服务)", "Gross (Invoice+Costs+Services)")} value={computed.import_gross_amount} />
             <Computed label={t("VAT 合计", "Total VAT")} value={computed.import_total_vat} />
             <Computed label={t("WHT 合计", "Total WHT")} value={computed.import_total_wht} />
-            <Computed label={t("总额 (毛额+VAT)", "Grand Total (Gross+VAT)")} value={computed.import_grand_total} highlight />
-            <Computed label={t("净额 (毛额+VAT-WHT)", "Grand Net (Gross+VAT-WHT)")} value={computed.import_grand_net} highlight />
+            <Computed label={t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")} value={computed.import_grand_total} highlight />
+            <Computed label={t("净额 (总额-WHT)", "Grand Net (Total-WHT)")} value={computed.import_grand_net} highlight />
             <Computed label={t("临时工社保 (服务金额 × 0.45%)", "Temp Labour (Services × 0.45%)")} value={computed.import_temp_labour} highlight />
           </div>
         </div>
