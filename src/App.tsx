@@ -862,32 +862,6 @@ function App() {
     try { await invoke("save_config", { data: formRef.current }); } catch {}
   }, [t, recalc]);
 
-  const syncLocalToCloud = async () => {
-    if (!authUser) return;
-    try {
-      const localList = await invoke<HistoryEntry[]>("list_history", { search: "" });
-      if (localList.length === 0) {
-        showAlert(t("没有本地数据需要同步", "No local data to sync"));
-        return;
-      }
-      let synced = 0;
-      for (const entry of localList) {
-        try {
-          const dataJson = await invoke<string>("load_history", { id: entry.id });
-          await saveSnapshotRemote(entry.label, entry.notes || "", dataJson);
-          synced++;
-        } catch (e) {
-          console.error("Failed to sync entry", entry.id, e);
-        }
-      }
-      showAlert(`${t("已同步", "Synced")} ${synced}/${localList.length} ${t("条快照到云端", "snapshots to cloud")}`);
-      loadHistoryList("");
-    } catch (e) {
-      console.error("syncLocalToCloud failed", e);
-      showAlert(t("同步失败", "Sync failed"));
-    }
-  };
-
   const exportExcel = async () => {
     const path = await save({ defaultPath: `${data.doc_serial || "CSCEC_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
     if (path) {
@@ -919,11 +893,37 @@ function App() {
   const [isSerialDuplicate, setIsSerialDuplicate] = useState(false);
   const historyOverlayRef = useRef<HTMLDivElement>(null);
 
-  const showHistoryModal = () => {
+  const showHistoryModal = async () => {
     if (historyOverlayRef.current) {
       historyOverlayRef.current.style.visibility = 'visible';
       historyOverlayRef.current.style.opacity = '1';
       historyOverlayRef.current.style.pointerEvents = 'auto';
+    }
+    // Auto-sync local snapshots to cloud when logged in
+    if (authUser) {
+      try {
+        const localList = await invoke<HistoryEntry[]>("list_history", { search: "" });
+        if (localList.length > 0) {
+          const remoteRows = await listSnapshotsRemote("");
+          const remoteLabels = new Set(remoteRows.map(r => r.label));
+          let synced = 0;
+          for (const entry of localList) {
+            if (remoteLabels.has(entry.label)) continue; // skip duplicates
+            try {
+              const dataJson = await invoke<string>("load_history", { id: entry.id });
+              await saveSnapshotRemote(entry.label, entry.notes || "", dataJson);
+              synced++;
+            } catch (e) {
+              console.error("Failed to sync entry", entry.id, e);
+            }
+          }
+          if (synced > 0) {
+            console.log(`Auto-synced ${synced} local snapshots to cloud`);
+          }
+        }
+      } catch (e) {
+        console.error("Auto-sync failed", e);
+      }
     }
     loadHistoryList("");
   };
@@ -1217,7 +1217,6 @@ function App() {
         <div className="sidebar-actions">
           <button onClick={newSession}>{t("🆕 新会话", "🆕 New Session")}</button>
           <button onClick={saveSnapshot}>{t("💾 保存快照", "💾 Save Snapshot")}</button>
-          {authUser && <button onClick={syncLocalToCloud}>{t("☁️ 本地→云端", "☁️ Local→Cloud")}</button>}
           <button onClick={exportExcel}>{t("📥 导出Excel", "📥 Export Excel")}</button>
           <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
           <button onClick={showHistoryModal}>{t("📂 历史记录", "📂 History")}</button>
