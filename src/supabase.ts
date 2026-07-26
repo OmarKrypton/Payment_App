@@ -12,6 +12,8 @@ export interface SnapshotRow {
   data_json: string;
   created_at: string;
   user_id: string;
+  delete_requested_at: string | null;
+  delete_requested_by: string | null;
 }
 
 export async function signUp(email: string, password: string): Promise<User | null> {
@@ -53,7 +55,7 @@ export async function listSnapshotsRemote(search?: string): Promise<SnapshotRow[
   if (!session) throw new Error("Not authenticated");
   let query = supabase
     .from("snapshots")
-    .select("id, label, notes, data_json, created_at, user_id")
+    .select("id, label, notes, data_json, created_at, user_id, delete_requested_at, delete_requested_by")
     .order("created_at", { ascending: false });
   if (search) {
     query = query.ilike("label", `%${search}%`);
@@ -83,5 +85,34 @@ export async function deleteSnapshotRemote(id: number): Promise<void> {
 
 export async function changePassword(newPassword: string): Promise<void> {
   const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw error;
+}
+
+export async function isAdmin(): Promise<boolean> {
+  const session = await getSession();
+  if (!session) return false;
+  const role = session.user.app_metadata?.role ?? "";
+  return role === "admin";
+}
+
+export async function requestDeleteSnapshot(id: number): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("snapshots")
+    .update({ delete_requested_at: new Date().toISOString(), delete_requested_by: session.user.id })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function approveDeleteSnapshot(id: number): Promise<void> {
+  await deleteSnapshotRemote(id);
+}
+
+export async function rejectDeleteSnapshot(id: number): Promise<void> {
+  const { error } = await supabase
+    .from("snapshots")
+    .update({ delete_requested_at: null, delete_requested_by: null })
+    .eq("id", id);
   if (error) throw error;
 }

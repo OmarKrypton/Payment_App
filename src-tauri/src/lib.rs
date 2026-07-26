@@ -6,6 +6,7 @@ mod importer;
 mod models;
 
 use models::{CalcResult, FormData, HistoryEntry};
+use excel::InvoiceSummaryRow;
 use rusqlite::Connection;
 use std::sync::Mutex;
 use tauri::{Emitter, Listener, Manager};
@@ -81,6 +82,11 @@ fn delete_history(state: tauri::State<'_, DbState>, id: i64) -> Result<(), Strin
 #[tauri::command]
 fn export_excel(data: FormData, computed: CalcResult, file_path: String) -> Result<(), String> {
     excel::export_excel(&data, &computed, &file_path)
+}
+
+#[tauri::command]
+fn export_invoice_summary(invoices: Vec<InvoiceSummaryRow>, period: String, date: String, file_path: String) -> Result<(), String> {
+    excel::export_invoice_summary(&invoices, &period, &date, &file_path)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -180,6 +186,7 @@ pub fn run() {
             delete_history,
             check_serial_exists,
             export_excel,
+            export_invoice_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
