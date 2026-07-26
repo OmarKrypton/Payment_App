@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote, changePassword } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot } from "./supabase";
 
 interface OcrFieldInfo {
   field: string;
@@ -250,6 +250,7 @@ function FastInput({ value, onChange, className, type, rows }: {
 
 interface HistoryEntry {
   id: number; label: string; notes: string; created_at: string; owner?: string;
+  delete_requested_at?: string | null; delete_requested_by?: string | null;
 }
 
 function App() {
@@ -265,8 +266,12 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
+  const [showInvoiceExport, setShowInvoiceExport] = useState(false);
+  const [invoiceExportPeriod, setInvoiceExportPeriod] = useState<"day" | "week" | "month">("month");
+  const [invoiceExportDate, setInvoiceExportDate] = useState(new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
   const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
+  const [isAdminUser, setIsAdminUser] = useState(false);
   const [synced, setSynced] = useState(false);
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
@@ -347,6 +352,7 @@ function App() {
         if (session?.user?.email) {
           setAuthUser(session.user.email);
           setAuthUserId(session.user.id);
+          setIsAdminUser(session.user.app_metadata?.role === "admin");
           setSynced(true);
         }
       } catch {}
@@ -359,10 +365,12 @@ function App() {
       if (session?.user?.email) {
         setAuthUser(session.user.email);
         setAuthUserId(session.user.id);
+        setIsAdminUser(session.user.app_metadata?.role === "admin");
         setSynced(true);
       } else {
         setAuthUser(null);
         setAuthUserId(null);
+        setIsAdminUser(false);
         setSynced(false);
       }
     });
@@ -826,7 +834,7 @@ function App() {
                   {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.wht_rate} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
-                  {["0%","0.5%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
+                  {["0%","1%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
                 <div></div> {/* Spacer cell */}
@@ -867,6 +875,120 @@ function App() {
     if (path) {
       await invoke("export_excel", { data, computed, filePath: path });
       showAlert(t("导出成功", "Export successful"));
+    }
+  };
+
+  const exportInvoiceSummary = async () => {
+    // Collect invoice data from snapshots within the selected period
+    const targetDate = new Date(invoiceExportDate);
+    const startDate = new Date(targetDate);
+    if (invoiceExportPeriod === "day") {
+      // Same day
+    } else if (invoiceExportPeriod === "week") {
+      startDate.setDate(startDate.getDate() - 7);
+    } else {
+      startDate.setMonth(startDate.getMonth() - 1);
+    }
+    const startStr = startDate.toISOString();
+    const endStr = targetDate.toISOString();
+
+    let allInvoices: { serial: string; invoice_no: string; seller_tax_id: string; amount: number; doc_type: string }[] = [];
+
+    // If logged in, query Supabase
+    if (authUser) {
+      try {
+        const rows = await listSnapshotsRemote("");
+        for (const r of rows) {
+          if (r.created_at >= startStr && r.created_at <= endStr) {
+            try {
+              const parsed = JSON.parse(r.data_json);
+              const serial = parsed.doc_serial || r.label;
+              const invs = parsed.invoices || [];
+              const dt = parsed.doc_type || "bank";
+              for (const inv of invs) {
+                allInvoices.push({
+                  serial,
+                  invoice_no: inv.invoice_no || "",
+                  seller_tax_id: inv.seller_tax_id || "",
+                  amount: parseFloat(inv.amount) || 0,
+                  doc_type: dt,
+                });
+              }
+              // For import entries, also include them
+              const entries = parsed.import_entries || [];
+              if (entries.length > 0 && dt === "import") {
+                for (const e of entries) {
+                  allInvoices.push({
+                    serial,
+                    invoice_no: e.service_name || "",
+                    seller_tax_id: "",
+                    amount: parseFloat(e.amount) || 0,
+                    doc_type: "import",
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+      } catch (e) {
+        console.error("Supabase invoice query failed", e);
+      }
+    }
+
+    // Also query local SQLite for any data not in cloud
+    try {
+      const localList = await invoke<HistoryEntry[]>("list_history", { search: "" });
+      for (const entry of localList) {
+        try {
+          const dataJson = await invoke<string>("load_history", { id: entry.id });
+          const parsed = JSON.parse(dataJson);
+          // Parse the date from the label or created_at
+          const entryDate = new Date(entry.created_at);
+          if (entryDate >= startDate && entryDate <= targetDate) {
+            // Check if already in Supabase (avoid duplicates)
+            if (authUser && allInvoices.some(i => i.serial === (parsed.doc_serial || entry.label))) continue;
+            const serial = parsed.doc_serial || entry.label;
+            const invs = parsed.invoices || [];
+            const dt = parsed.doc_type || "bank";
+            for (const inv of invs) {
+              allInvoices.push({
+                serial,
+                invoice_no: inv.invoice_no || "",
+                seller_tax_id: inv.seller_tax_id || "",
+                amount: parseFloat(inv.amount) || 0,
+                doc_type: dt,
+              });
+            }
+            const entries = parsed.import_entries || [];
+            if (entries.length > 0 && dt === "import") {
+              for (const e of entries) {
+                allInvoices.push({
+                  serial,
+                  invoice_no: e.service_name || "",
+                  seller_tax_id: "",
+                  amount: parseFloat(e.amount) || 0,
+                  doc_type: "import",
+                });
+              }
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+
+    if (allInvoices.length === 0) {
+      showAlert(t("没有找到该时间段内的发票数据", "No invoice data found for this period"));
+      return;
+    }
+
+    const filePath = await save({
+      defaultPath: `Invoice_Summary_${invoiceExportPeriod}_${invoiceExportDate}.xlsx`,
+      filters: [{ name: "Excel", extensions: ["xlsx"] }],
+    });
+    if (filePath) {
+      await invoke("export_invoice_summary", { invoices: allInvoices, period: invoiceExportPeriod, date: invoiceExportDate, filePath });
+      showAlert(t("发票汇总导出成功", "Invoice summary exported successfully"));
+      setShowInvoiceExport(false);
     }
   };
 
@@ -947,6 +1069,8 @@ function App() {
           notes: r.notes,
           created_at: new Date(r.created_at).toLocaleString(),
           owner: r.user_id,
+          delete_requested_at: r.delete_requested_at,
+          delete_requested_by: r.delete_requested_by,
         })));
       } catch (e) {
         console.error("listSnapshotsRemote failed", e);
@@ -1058,19 +1182,45 @@ function App() {
 
   const deleteSnapshot = async (id: number) => {
     if (authUser) {
-      const entry = historyList.find(h => h.id === id);
-      if (entry?.owner && entry.owner !== authUserId) {
-        showAlert(t("只能删除自己的快照", "You can only delete your own snapshots"));
-        return;
-      }
-      try {
-        await deleteSnapshotRemote(id);
-      } catch (e) {
-        console.error("deleteSnapshotRemote failed, falling back", e);
-        try { await invoke("delete_history", { id }); } catch {}
+      // Admin: delete freely
+      if (isAdminUser) {
+        try {
+          await deleteSnapshotRemote(id);
+        } catch (e) {
+          console.error("deleteSnapshotRemote failed, falling back", e);
+          try { await invoke("delete_history", { id }); } catch {}
+        }
+      } else {
+        // Normal user: request deletion
+        try {
+          await requestDeleteSnapshot(id);
+          showAlert(t("删除请求已提交，等待管理员确认", "Delete request submitted, awaiting admin approval"));
+        } catch (e: any) {
+          showAlert(`${t("请求失败", "Request failed")}: ${e.message || e}`);
+        }
       }
     } else {
       await invoke("delete_history", { id });
+    }
+    loadHistoryList(historySearch);
+  };
+
+  const approveDelete = async (id: number) => {
+    try {
+      await approveDeleteSnapshot(id);
+      showAlert(t("快照已删除", "Snapshot deleted"));
+    } catch (e: any) {
+      showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
+    }
+    loadHistoryList(historySearch);
+  };
+
+  const rejectDelete = async (id: number) => {
+    try {
+      await rejectDeleteSnapshot(id);
+      showAlert(t("删除请求已拒绝", "Delete request rejected"));
+    } catch (e: any) {
+      showAlert(`${t("拒绝失败", "Reject failed")}: ${e.message || e}`);
     }
     loadHistoryList(historySearch);
   };
@@ -1218,6 +1368,7 @@ function App() {
           <button onClick={newSession}>{t("🆕 新会话", "🆕 New Session")}</button>
           <button onClick={saveSnapshot}>{t("💾 保存快照", "💾 Save Snapshot")}</button>
           <button onClick={exportExcel}>{t("📥 导出Excel", "📥 Export Excel")}</button>
+          <button onClick={() => setShowInvoiceExport(true)}>{t("📋 发票汇总", "📋 Invoice Summary")}</button>
           <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
           <button onClick={showHistoryModal}>{t("📂 历史记录", "📂 History")}</button>
         </div>
@@ -1261,15 +1412,32 @@ function App() {
               <div className="history-empty">{t("加载中...", "Loading...")}</div>
             ) : historyList.map(h => {
               const isOwn = !h.owner || h.owner === authUserId;
+              const pendingDelete = h.delete_requested_at != null;
               return (
-              <div key={h.id} className="history-item">
+              <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}>
                 <div>
                   <strong>{h.label}</strong>
-                  <p><small>{h.created_at}{h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}</small></p>
+                  <p><small>
+                    {h.created_at}
+                    {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
+                    {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
+                  </small></p>
                 </div>
                 <div className="history-actions">
                   <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
-                  {isOwn && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
+                  {isAdminUser && pendingDelete && (
+                    <>
+                      <button className="btn-load" style={{background:'#16a34a',color:'#fff'}} onClick={() => approveDelete(h.id)}>✓</button>
+                      <button className="btn-delete" style={{background:'#dc2626',color:'#fff'}} onClick={() => rejectDelete(h.id)}>✗</button>
+                    </>
+                  )}
+                  {isAdminUser && !pendingDelete && (
+                    <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
+                  )}
+                  {!isAdminUser && authUser && !pendingDelete && (
+                    <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
+                  )}
+                  {!authUser && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
                 </div>
               </div>
               );
@@ -1278,6 +1446,49 @@ function App() {
           </div>
         </div>
       </div>
+
+      {showInvoiceExport && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999,
+        }} onClick={() => setShowInvoiceExport(false)}>
+          <div style={{
+            background: 'var(--bg-card, #fff)', borderRadius: 12, padding: '28px 36px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 320,
+            border: '1px solid var(--border, #e0e0e0)',
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{marginBottom:20,fontSize:16}}>{t("发票汇总导出", "Invoice Summary Export")}</h3>
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("时间段", "Period")}</label>
+              <div style={{display:'flex',gap:8}}>
+                <button style={{padding:'6px 14px',borderRadius:6,border:'1px solid var(--border)',background:invoiceExportPeriod==='day'?'var(--accent)':'transparent',color:invoiceExportPeriod==='day'?'#fff':'inherit',cursor:'pointer',fontSize:13}}
+                  onClick={() => setInvoiceExportPeriod("day")}>{t("一天", "Day")}</button>
+                <button style={{padding:'6px 14px',borderRadius:6,border:'1px solid var(--border)',background:invoiceExportPeriod==='week'?'var(--accent)':'transparent',color:invoiceExportPeriod==='week'?'#fff':'inherit',cursor:'pointer',fontSize:13}}
+                  onClick={() => setInvoiceExportPeriod("week")}>{t("一周", "Week")}</button>
+                <button style={{padding:'6px 14px',borderRadius:6,border:'1px solid var(--border)',background:invoiceExportPeriod==='month'?'var(--accent)':'transparent',color:invoiceExportPeriod==='month'?'#fff':'inherit',cursor:'pointer',fontSize:13}}
+                  onClick={() => setInvoiceExportPeriod("month")}>{t("一月", "Month")}</button>
+              </div>
+            </div>
+            <div style={{marginBottom:20}}>
+              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("目标日期", "Target date")}</label>
+              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
+                value={invoiceExportDate} onChange={e => setInvoiceExportDate(e.target.value)} />
+            </div>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16,lineHeight:1.5}}>
+              {invoiceExportPeriod === "day" && t("将导出目标日期当天的数据", "Will export data for the selected day")}
+              {invoiceExportPeriod === "week" && t("将导出目标日期前7天的数据", "Will export data for 7 days before the target date")}
+              {invoiceExportPeriod === "month" && t("将导出目标日期前30天的数据", "Will export data for 30 days before the target date")}
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}
+                onClick={exportInvoiceSummary}>{t("导出", "Export")}</button>
+              <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
+                onClick={() => setShowInvoiceExport(false)}>{t("取消", "Cancel")}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

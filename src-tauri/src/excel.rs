@@ -1,6 +1,16 @@
 use crate::models::{CalcResult, FormData};
 use rust_xlsxwriter::*;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvoiceSummaryRow {
+    pub serial: String,
+    pub invoice_no: String,
+    pub seller_tax_id: String,
+    pub amount: f64,
+    pub doc_type: String,
+}
 
 pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Result<(), String> {
     let mut workbook = Workbook::new();
@@ -470,4 +480,115 @@ fn parse_rate(s: &str) -> f64 {
 fn parse_exchange_rate(s: &str) -> f64 {
     let v = s.parse::<f64>().unwrap_or(0.0);
     if v == 0.0 { 1.0 } else { v }
+}
+
+pub fn export_invoice_summary(
+    invoices: &[InvoiceSummaryRow],
+    period: &str,
+    date: &str,
+    path: &str,
+) -> Result<(), String> {
+    let mut workbook = Workbook::new();
+
+    let title_fmt = Format::new()
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(0x00529B))
+        .set_bold()
+        .set_font_size(14);
+    let section_fmt = Format::new()
+        .set_bold()
+        .set_font_size(11)
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(0x00529B))
+        .set_border(FormatBorder::Thin);
+    let bold_fmt = Format::new()
+        .set_bold()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin);
+    let val_fmt = Format::new()
+        .set_font_size(10)
+        .set_num_format("#,##0.00")
+        .set_border(FormatBorder::Thin);
+    let normal_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin);
+    let calc_fmt = Format::new()
+        .set_font_size(10)
+        .set_num_format("#,##0.00")
+        .set_background_color(Color::RGB(0xE2EFDA))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
+
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("Invoice Summary").map_err(|e| e.to_string())?;
+    sheet.set_column_width(0, 35).map_err(|e| e.to_string())?;
+    sheet.set_column_width(1, 30).map_err(|e| e.to_string())?;
+    sheet.set_column_width(2, 25).map_err(|e| e.to_string())?;
+    sheet.set_column_width(3, 18).map_err(|e| e.to_string())?;
+    sheet.set_column_width(4, 12).map_err(|e| e.to_string())?;
+
+    // Title
+    sheet.merge_range(0, 0, 0, 4, "CSCEC - Invoice Summary", &title_fmt)
+        .map_err(|e| e.to_string())?;
+
+    // Period info
+    let info_fmt = Format::new().set_font_size(10).set_italic();
+    let period_label = match period {
+        "day" => "Day",
+        "week" => "Week",
+        _ => "Month",
+    };
+    sheet.write_with_format(1, 0, format!("Period: {} ending {}", period_label, date), &info_fmt)
+        .map_err(|e| e.to_string())?;
+
+    // Header row
+    let mut r = 3u32;
+    let headers = ["Serial No", "Invoice No / Service", "Seller TAX ID", "Amount", "Type"];
+    for (ci, h) in headers.iter().enumerate() {
+        sheet.write_with_format(r, ci as u16, *h, &section_fmt)
+            .map_err(|e| e.to_string())?;
+    }
+    r += 1;
+
+    // Data rows
+    let mut total_bank = 0.0;
+    let mut total_import = 0.0;
+    for inv in invoices {
+        sheet.write_with_format(r, 0, &inv.serial, &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 1, &inv.invoice_no, &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 2, &inv.seller_tax_id, &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 3, inv.amount, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 4, &inv.doc_type, &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        if inv.doc_type == "import" {
+            total_import += inv.amount;
+        } else {
+            total_bank += inv.amount;
+        }
+        r += 1;
+    }
+    r += 1;
+
+    // Totals
+    sheet.write_with_format(r, 0, "Total (Bank)", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    sheet.write_with_format(r, 3, total_bank, &calc_fmt)
+        .map_err(|e| e.to_string())?;
+    r += 1;
+    sheet.write_with_format(r, 0, "Total (Import)", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    sheet.write_with_format(r, 3, total_import, &calc_fmt)
+        .map_err(|e| e.to_string())?;
+    r += 1;
+    sheet.write_with_format(r, 0, "Grand Total", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    sheet.write_with_format(r, 3, total_bank + total_import, &calc_fmt)
+        .map_err(|e| e.to_string())?;
+
+    workbook.save(path).map_err(|e| e.to_string())?;
+    Ok(())
 }
