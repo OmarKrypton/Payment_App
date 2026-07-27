@@ -484,8 +484,8 @@ fn parse_exchange_rate(s: &str) -> f64 {
 
 pub fn export_invoice_summary(
     invoices: &[InvoiceSummaryRow],
-    period: &str,
-    date: &str,
+    date_from: &str,
+    date_to: &str,
     path: &str,
 ) -> Result<(), String> {
     let mut workbook = Workbook::new();
@@ -533,12 +533,7 @@ pub fn export_invoice_summary(
 
     // Period info
     let info_fmt = Format::new().set_font_size(10).set_italic();
-    let period_label = match period {
-        "day" => "Day",
-        "week" => "Week",
-        _ => "Month",
-    };
-    sheet.write_with_format(1, 0, format!("Period: {} ending {}", period_label, date), &info_fmt)
+    sheet.write_with_format(1, 0, format!("Period: {} to {}", date_from, date_to), &info_fmt)
         .map_err(|e| e.to_string())?;
 
     // Header row
