@@ -505,10 +505,6 @@ pub fn export_invoice_summary(
         .set_bold()
         .set_font_size(10)
         .set_border(FormatBorder::Thin);
-    let val_fmt = Format::new()
-        .set_font_size(10)
-        .set_num_format("#,##0.00")
-        .set_border(FormatBorder::Thin);
     let normal_fmt = Format::new()
         .set_font_size(10)
         .set_border(FormatBorder::Thin);
