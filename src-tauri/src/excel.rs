@@ -545,26 +545,66 @@ pub fn export_invoice_summary(
     }
     r += 1;
 
-    // Data rows
+    // Sort invoices by serial number
+    let mut sorted_invoices = invoices.to_vec();
+    sorted_invoices.sort_by(|a, b| a.serial.cmp(&b.serial));
+
+    // Wrap text format for invoice/service column
+    let wrap_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin)
+        .set_text_wrap();
+    let wrap_val_fmt = Format::new()
+        .set_font_size(10)
+        .set_num_format("#,##0.00")
+        .set_border(FormatBorder::Thin)
+        .set_text_wrap();
+
+    // Data rows — merge serial number cells for repeated serials
     let mut total_bank = 0.0;
     let mut total_import = 0.0;
-    for inv in invoices {
-        sheet.write_with_format(r, 0, &inv.serial, &normal_fmt)
-            .map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 1, &inv.invoice_no, &normal_fmt)
-            .map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 2, &inv.seller_tax_id, &normal_fmt)
-            .map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 3, inv.amount, &val_fmt)
-            .map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 4, &inv.doc_type, &normal_fmt)
-            .map_err(|e| e.to_string())?;
-        if inv.doc_type == "import" {
-            total_import += inv.amount;
-        } else {
-            total_bank += inv.amount;
+    let mut i = 0;
+    while i < sorted_invoices.len() {
+        let serial = &sorted_invoices[i].serial;
+        let start_row = r;
+        // Find how many rows share this serial
+        let mut count = 1;
+        while i + count < sorted_invoices.len() && sorted_invoices[i + count].serial == *serial {
+            count += 1;
         }
-        r += 1;
+
+        // Write each invoice row
+        for j in 0..count {
+            let inv = &sorted_invoices[i + j];
+            // Only write serial on first row (merged range will cover the rest)
+            if j == 0 {
+                if count == 1 {
+                    sheet.write_with_format(r, 0, serial, &normal_fmt)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    sheet.merge_range(start_row, 0, start_row + count as u32 - 1, 0, serial, &normal_fmt)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            sheet.write_with_format(r, 1, &inv.invoice_no, &wrap_fmt)
+                .map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 2, &inv.seller_tax_id, &normal_fmt)
+                .map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 3, inv.amount, &wrap_val_fmt)
+                .map_err(|e| e.to_string())?;
+            // Only write doc_type on first row of group
+            if j == 0 {
+                sheet.write_with_format(r, 4, &inv.doc_type, &normal_fmt)
+                    .map_err(|e| e.to_string())?;
+            }
+            if inv.doc_type == "import" {
+                total_import += inv.amount;
+            } else {
+                total_bank += inv.amount;
+            }
+            r += 1;
+        }
+        i += count;
     }
     r += 1;
 
