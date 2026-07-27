@@ -1104,6 +1104,28 @@ function App() {
 
   const saveSnapshot = async () => {
     const serial = data.doc_serial;
+    if (serial) {
+      // Check for duplicate serial number in Supabase
+      if (authUser) {
+        try {
+          const remoteRows = await listSnapshotsRemote(serial);
+          if (remoteRows.some(r => r.label === serial)) {
+            showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
+            return;
+          }
+        } catch (e) {
+          console.error("Supabase serial check failed", e);
+        }
+      }
+      // Also check local SQLite
+      try {
+        const localExists = await invoke<boolean>("check_serial_exists", { serial });
+        if (localExists) {
+          showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
+          return;
+        }
+      } catch {}
+    }
     const label = serial || `Snapshot-${new Date().toLocaleDateString()}`;
     const dataJson = JSON.stringify(data);
     if (authUser) {
@@ -1122,13 +1144,6 @@ function App() {
         }
       }
     } else {
-      if (serial) {
-        const exists = await invoke<boolean>("check_serial_exists", { serial });
-        if (exists) {
-          showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
-          return;
-        }
-      }
       await invoke("save_history", { label, notes: "", dataJson });
       showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
     }
@@ -1351,19 +1366,21 @@ function App() {
               <span style={{fontSize:10,color:'rgba(255,255,255,0.3)',textAlign:'center',marginTop:2}}>{t("账号由管理员创建", "Accounts created by admin")}</span>
             </div>
           )}
-        </div>
-        <div className="sidebar-lang">
-          <button onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
-            {lang === "zh" ? "English" : "中文"}
-          </button>
+          <div style={{marginTop:10,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.06)',textAlign:'center'}}>
+            <button style={{fontSize:10,padding:'4px 12px',borderRadius:6,border:'1px solid rgba(255,255,255,0.12)',background:'transparent',color:'rgba(255,255,255,0.4)',cursor:'pointer'}} onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
+              {lang === "zh" ? "English" : "中文"}
+            </button>
+          </div>
         </div>
         <div className="sidebar-actions">
+          <button onClick={saveSnapshot} style={{background:'var(--accent)',color:'#fff',fontWeight:600}}>{t("💾 保存", "💾 Save")}</button>
+          <button onClick={showHistoryModal}>{t("📂 历史记录", "📂 History")}</button>
+          <div className="sidebar-actions-divider" />
           <button onClick={newSession}>{t("🆕 新会话", "🆕 New Session")}</button>
-          <button onClick={saveSnapshot}>{t("💾 保存快照", "💾 Save Snapshot")}</button>
+          <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
+          <div className="sidebar-actions-divider" />
           <button onClick={exportExcel}>{t("📥 导出Excel", "📥 Export Excel")}</button>
           <button onClick={() => setShowInvoiceExport(true)}>{t("📋 发票汇总", "📋 Invoice Summary")}</button>
-          <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
-          <button onClick={showHistoryModal}>{t("📂 历史记录", "📂 History")}</button>
         </div>
       </aside>
       <main className="content">
