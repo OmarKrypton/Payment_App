@@ -1402,7 +1402,7 @@ function App() {
           <div className="sidebar-actions-divider" />
           <div className="sidebar-export-group">
             <button onClick={() => setShowExportMenu(!showExportMenu)} style={{width:'100%'}}>
-              <IconExport /> {t("导出", "Export")} <IconChevronDown size={12} style={{marginLeft:'auto'}} />
+              <IconExport /> {t("导出", "Export")} <IconChevronDown size={12} style={{marginLeft:'auto', transition:'transform 0.2s', transform: showExportMenu ? 'rotate(0deg)' : 'rotate(180deg)'}} />
             </button>
             {showExportMenu && (
               <div className="sidebar-export-dropdown">
