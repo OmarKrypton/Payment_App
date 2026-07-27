@@ -267,8 +267,8 @@ function App() {
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
-  const [invoiceExportPeriod, setInvoiceExportPeriod] = useState<"day" | "week" | "month">("month");
-  const [invoiceExportDate, setInvoiceExportDate] = useState(new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
+  const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
+  const [invoiceExportTo, setInvoiceExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
   const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
   const [isAdminUser, setIsAdminUser] = useState(false);
@@ -879,18 +879,12 @@ function App() {
   };
 
   const exportInvoiceSummary = async () => {
-    // Collect invoice data from snapshots within the selected period
-    const targetDate = new Date(invoiceExportDate);
-    const startDate = new Date(targetDate);
-    if (invoiceExportPeriod === "day") {
-      // Same day
-    } else if (invoiceExportPeriod === "week") {
-      startDate.setDate(startDate.getDate() - 7);
-    } else {
-      startDate.setMonth(startDate.getMonth() - 1);
-    }
+    const startDate = new Date(invoiceExportFrom);
+    const endDate = new Date(invoiceExportTo);
+    // Set endDate to end of that day
+    endDate.setHours(23, 59, 59, 999);
     const startStr = startDate.toISOString();
-    const endStr = targetDate.toISOString();
+    const endStr = endDate.toISOString();
 
     let allInvoices: { serial: string; invoice_no: string; seller_tax_id: string; amount: number; doc_type: string }[] = [];
 
@@ -942,9 +936,8 @@ function App() {
         try {
           const dataJson = await invoke<string>("load_history", { id: entry.id });
           const parsed = JSON.parse(dataJson);
-          // Parse the date from the label or created_at
           const entryDate = new Date(entry.created_at);
-          if (entryDate >= startDate && entryDate <= targetDate) {
+          if (entryDate >= startDate && entryDate <= endDate) {
             // Check if already in Supabase (avoid duplicates)
             if (authUser && allInvoices.some(i => i.serial === (parsed.doc_serial || entry.label))) continue;
             const serial = parsed.doc_serial || entry.label;
@@ -982,11 +975,11 @@ function App() {
     }
 
     const filePath = await save({
-      defaultPath: `Invoice_Summary_${invoiceExportPeriod}_${invoiceExportDate}.xlsx`,
+      defaultPath: `Invoice_Summary_${invoiceExportFrom}_to_${invoiceExportTo}.xlsx`,
       filters: [{ name: "Excel", extensions: ["xlsx"] }],
     });
     if (filePath) {
-      await invoke("export_invoice_summary", { invoices: allInvoices, period: invoiceExportPeriod, date: invoiceExportDate, filePath });
+      await invoke("export_invoice_summary", { invoices: allInvoices, dateFrom: invoiceExportFrom, dateTo: invoiceExportTo, filePath });
       showAlert(t("发票汇总导出成功", "Invoice summary exported successfully"));
       setShowInvoiceExport(false);
     }
@@ -1460,25 +1453,14 @@ function App() {
           }} onClick={e => e.stopPropagation()}>
             <h3 style={{marginBottom:20,fontSize:16}}>{t("发票汇总导出", "Invoice Summary Export")}</h3>
             <div style={{marginBottom:16}}>
-              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("时间段", "Period")}</label>
-              <div style={{display:'flex',gap:8}}>
-                <button style={{padding:'6px 14px',borderRadius:6,border:'1px solid var(--border)',background:invoiceExportPeriod==='day'?'var(--accent)':'transparent',color:invoiceExportPeriod==='day'?'#fff':'inherit',cursor:'pointer',fontSize:13}}
-                  onClick={() => setInvoiceExportPeriod("day")}>{t("一天", "Day")}</button>
-                <button style={{padding:'6px 14px',borderRadius:6,border:'1px solid var(--border)',background:invoiceExportPeriod==='week'?'var(--accent)':'transparent',color:invoiceExportPeriod==='week'?'#fff':'inherit',cursor:'pointer',fontSize:13}}
-                  onClick={() => setInvoiceExportPeriod("week")}>{t("一周", "Week")}</button>
-                <button style={{padding:'6px 14px',borderRadius:6,border:'1px solid var(--border)',background:invoiceExportPeriod==='month'?'var(--accent)':'transparent',color:invoiceExportPeriod==='month'?'#fff':'inherit',cursor:'pointer',fontSize:13}}
-                  onClick={() => setInvoiceExportPeriod("month")}>{t("一月", "Month")}</button>
-              </div>
+              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("开始日期", "From date")}</label>
+              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
+                value={invoiceExportFrom} onChange={e => setInvoiceExportFrom(e.target.value)} />
             </div>
             <div style={{marginBottom:20}}>
-              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("目标日期", "Target date")}</label>
+              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("结束日期", "To date")}</label>
               <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
-                value={invoiceExportDate} onChange={e => setInvoiceExportDate(e.target.value)} />
-            </div>
-            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16,lineHeight:1.5}}>
-              {invoiceExportPeriod === "day" && t("将导出目标日期当天的数据", "Will export data for the selected day")}
-              {invoiceExportPeriod === "week" && t("将导出目标日期前7天的数据", "Will export data for 7 days before the target date")}
-              {invoiceExportPeriod === "month" && t("将导出目标日期前30天的数据", "Will export data for 30 days before the target date")}
+                value={invoiceExportTo} onChange={e => setInvoiceExportTo(e.target.value)} />
             </div>
             <div style={{display:'flex',gap:8}}>
               <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}

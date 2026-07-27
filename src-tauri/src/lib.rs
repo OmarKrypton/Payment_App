@@ -85,8 +85,8 @@ fn export_excel(data: FormData, computed: CalcResult, file_path: String) -> Resu
 }
 
 #[tauri::command]
-fn export_invoice_summary(invoices: Vec<InvoiceSummaryRow>, period: String, date: String, file_path: String) -> Result<(), String> {
-    excel::export_invoice_summary(&invoices, &period, &date, &file_path)
+fn export_invoice_summary(invoices: Vec<InvoiceSummaryRow>, date_from: String, date_to: String, file_path: String) -> Result<(), String> {
+    excel::export_invoice_summary(&invoices, &date_from, &date_to, &file_path)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
