@@ -4,6 +4,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot } from "./supabase";
+import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 
 interface OcrFieldInfo {
   field: string;
@@ -267,6 +268,7 @@ function App() {
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
   const [invoiceExportTo, setInvoiceExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
@@ -358,6 +360,17 @@ function App() {
       } catch {}
     })();
   }, []);
+
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.sidebar-export-group')) setShowExportMenu(false);
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showExportMenu]);
 
   // Listen for Supabase auth changes
   useEffect(() => {
@@ -975,12 +988,12 @@ function App() {
     }
 
     const filePath = await save({
-      defaultPath: `Invoice_Summary_${invoiceExportFrom}_to_${invoiceExportTo}.xlsx`,
+      defaultPath: `Invoice_Registry_${invoiceExportFrom}_to_${invoiceExportTo}.xlsx`,
       filters: [{ name: "Excel", extensions: ["xlsx"] }],
     });
     if (filePath) {
       await invoke("export_invoice_summary", { invoices: allInvoices, dateFrom: invoiceExportFrom, dateTo: invoiceExportTo, filePath });
-      showAlert(t("发票汇总导出成功", "Invoice summary exported successfully"));
+      showAlert(t("发票清单导出成功", "Invoice registry exported successfully"));
       setShowInvoiceExport(false);
     }
   };
@@ -1373,14 +1386,35 @@ function App() {
           </div>
         </div>
         <div className="sidebar-actions">
-          <button onClick={saveSnapshot} style={{background:'var(--accent)',color:'#fff',fontWeight:600}}>{t("💾 保存", "💾 Save")}</button>
-          <button onClick={showHistoryModal}>{t("📂 历史记录", "📂 History")}</button>
+          <button onClick={saveSnapshot} style={{background:'var(--accent)',color:'#fff',fontWeight:600}}>
+            <IconSave color="#fff" /> {t("保存", "Save")}
+          </button>
+          <button onClick={showHistoryModal}>
+            <IconHistory /> {t("历史记录", "History")}
+          </button>
           <div className="sidebar-actions-divider" />
-          <button onClick={newSession}>{t("🆕 新会话", "🆕 New Session")}</button>
-          <button onClick={importPdf}>{t("📄 导入PDF", "📄 Import PDF")}</button>
+          <button onClick={newSession}>
+            <IconNewSession /> {t("新会话", "New Session")}
+          </button>
+          <button onClick={importPdf}>
+            <IconImport /> {t("导入PDF", "Import PDF")}
+          </button>
           <div className="sidebar-actions-divider" />
-          <button onClick={exportExcel}>{t("📥 导出Excel", "📥 Export Excel")}</button>
-          <button onClick={() => setShowInvoiceExport(true)}>{t("📋 发票汇总", "📋 Invoice Summary")}</button>
+          <div className="sidebar-export-group">
+            <button onClick={() => setShowExportMenu(!showExportMenu)} style={{width:'100%'}}>
+              <IconExport /> {t("导出", "Export")} <IconChevronDown size={12} style={{marginLeft:'auto'}} />
+            </button>
+            {showExportMenu && (
+              <div className="sidebar-export-dropdown">
+                <button onClick={() => { setShowExportMenu(false); exportExcel(); }}>
+                  <IconReport /> {t("结算报告", "Settlement Report")}
+                </button>
+                <button onClick={() => { setShowExportMenu(false); setShowInvoiceExport(true); }}>
+                  <IconInvoice /> {t("发票清单", "Invoice Registry")}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </aside>
       <main className="content">
@@ -1468,7 +1502,7 @@ function App() {
             boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 320,
             border: '1px solid var(--border, #e0e0e0)',
           }} onClick={e => e.stopPropagation()}>
-            <h3 style={{marginBottom:20,fontSize:16}}>{t("发票汇总导出", "Invoice Summary Export")}</h3>
+            <h3 style={{marginBottom:20,fontSize:16}}>{t("发票清单导出", "Invoice Registry Export")}</h3>
             <div style={{marginBottom:16}}>
               <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("开始日期", "From date")}</label>
               <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
