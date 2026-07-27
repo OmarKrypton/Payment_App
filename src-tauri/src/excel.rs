@@ -528,7 +528,7 @@ pub fn export_invoice_summary(
     sheet.set_column_width(4, 12).map_err(|e| e.to_string())?;
 
     // Title
-    sheet.merge_range(0, 0, 0, 4, "CSCEC - Invoice Summary", &title_fmt)
+    sheet.merge_range(0, 0, 0, 4, "CSCEC - Invoice Registry", &title_fmt)
         .map_err(|e| e.to_string())?;
 
     // Period info

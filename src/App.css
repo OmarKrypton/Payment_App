@@ -213,6 +213,48 @@ body {
   margin: 4px 0;
 }
 
+.sidebar-export-group {
+  position: relative;
+}
+
+.sidebar-export-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg-sidebar);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+}
+
+.sidebar-export-dropdown button {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.7);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  transition: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-export-dropdown button:hover {
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
+
 /* ── Main Content ── */
 .content {
   flex: 1;
