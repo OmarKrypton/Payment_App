@@ -132,7 +132,8 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let mut import_table_amount_plus_vat = 0.0;
     let mut import_temp_labour_sum = 0.0;
     for entry in &data.import_entries {
-        let amt = parse_amt(&entry.amount) * parse_exchange_rate(&entry.rate);
+        let base_amt = parse_amt(&entry.amount);
+        let amt = if entry.rate_enabled { base_amt * parse_exchange_rate(&entry.rate) } else { base_amt };
         let vat = (amt * parse_rate(&entry.vat_rate) / 100.0 * 100.0).round() / 100.0;
         let wht = if entry.free_wht {
             0.0
