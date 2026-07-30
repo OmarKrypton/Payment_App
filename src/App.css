@@ -650,6 +650,36 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* ── History Filters ── */
+.history-filters {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.history-filters button {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 5px 14px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: none;
+}
+
+.history-filters button:hover {
+  background: var(--bg-input-hover);
+  border-color: var(--accent);
+}
+
+.history-filters button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 /* ── Toggle ── */
 .toggle {
   display: flex;
