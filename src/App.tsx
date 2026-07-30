@@ -23,7 +23,6 @@ interface ImportEntry {
   service_name: string;
   amount: string;
   rate: string;
-  rate_enabled: boolean;
   free_wht: boolean;
   wht_rate: string;
   vat_rate: string;
@@ -280,6 +279,7 @@ function App() {
   const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [synced, setSynced] = useState(false);
+  const [rateVisible, setRateVisible] = useState(true);
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
@@ -611,7 +611,7 @@ function App() {
   const delInv = (i: number) => delRow("invoices", i);
 
   const addImportEntry = () => {
-    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", rate_enabled: true, free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
+    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
     formRef.current = { ...formRef.current, import_entries: arr };
     recalc(formRef.current);
   };
@@ -848,11 +848,13 @@ function App() {
         </div>
           <div className="card" style={{overflowX:'auto',background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("汇率", "Rate")}</div>
-              <div style={{paddingTop:14,textAlign:'center'}}>{t("启用", "On")}</div>
+              <div style={{paddingTop:14,paddingLeft:10,display:'flex',alignItems:'center',gap:4}}>
+                {t("汇率", "Rate")}
+                <input type="checkbox" checked={rateVisible} onChange={() => setRateVisible(v => !v)} style={{width:14,height:14,accentColor:'var(--accent)',cursor:'pointer'}} title={rateVisible ? "Showing EGP (rate applied)" : "Showing USD (rate ignored)"} />
+              </div>
               <div style={{paddingTop:14,textAlign:'center'}}>{t("免WHT", "Free")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT率", "VAT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT率", "WHT")}</div>
@@ -866,18 +868,18 @@ function App() {
             </div>
           {(data.import_entries ?? []).map((e: any, i: number) => {
             const amt = parseFloat(e.amount) || 0;
-            const rateEnabled = e.rate_enabled !== false;
-            const egpAmt = (rateEnabled && parseFloat(e.rate)) ? amt * parseFloat(e.rate) : amt;
+            const rate = parseFloat(e.rate) || 1;
+            const egpAmt = amt * rate;
+            const displayAmt = rateVisible ? egpAmt : amt;
             const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
-            const vat = Math.round(egpAmt * vatRate / 100 * 100) / 100;
+            const vat = Math.round(displayAmt * vatRate / 100 * 100) / 100;
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
-            const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
+            const wht = e.free_wht ? 0 : Math.round(displayAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
                 <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
                 <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
-                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} style={rateEnabled ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
-                <input type="checkbox" checked={rateEnabled} onChange={() => updImportEntry(i, "rate_enabled", !rateEnabled)} style={{margin:'auto'}} />
+                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} style={rateVisible ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
                 <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
                   {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
@@ -889,8 +891,8 @@ function App() {
                 <div></div> {/* Spacer cell */}
                 <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(vat)}</div>
                 <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(egpAmt + vat - wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(egpAmt + vat)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(displayAmt + vat - wht)}</div>
+                <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(displayAmt + vat)}</div>
                 <button className="btn-danger" style={{padding:'7px 10px'}} onClick={() => delImportEntry(i)}>✕</button>
               </div>
             );
@@ -1225,7 +1227,6 @@ function App() {
       if (!parsed.final_decision) parsed.final_decision = "";
       if (!parsed.conditional_reason) parsed.conditional_reason = "";
       if (!parsed.reject_reason) parsed.reject_reason = "";
-      (parsed.import_entries ?? []).forEach((e: any) => { if (e.rate_enabled === undefined) e.rate_enabled = true; });
       formRef.current = parsed;
       await recalc(parsed);
     } catch (e) {

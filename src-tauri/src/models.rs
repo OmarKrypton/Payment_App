@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-fn default_true() -> bool { true }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrFieldInfo {
     pub field: String,
@@ -207,8 +205,6 @@ pub struct ImportEntry {
     pub amount: String,
     #[serde(default)]
     pub rate: String,
-    #[serde(default = "default_true")]
-    pub rate_enabled: bool,
     pub free_wht: bool,
     pub wht_rate: String,
     #[serde(default)]
