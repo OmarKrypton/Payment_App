@@ -74,6 +74,8 @@ pub struct FormData {
     pub conditional_reason: String,
     #[serde(default)]
     pub reject_reason: String,
+    #[serde(default)]
+    pub auditor: String,
     pub audit_notes: String,
     pub vat_manual: bool,
     pub wht_manual: bool,
@@ -153,6 +155,7 @@ impl Default for FormData {
             final_decision: String::new(),
             conditional_reason: String::new(),
             reject_reason: String::new(),
+            auditor: String::new(),
             audit_notes: String::new(),
             vat_manual: false,
             wht_manual: false,
@@ -269,6 +272,8 @@ pub struct HistoryEntry {
     pub label: String,
     pub notes: String,
     pub created_at: String,
+    #[serde(default)]
+    pub data_json: String,
 }
 
 

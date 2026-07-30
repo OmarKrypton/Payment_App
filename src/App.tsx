@@ -52,7 +52,7 @@ interface FormData {
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
-  final_decision: string; conditional_reason: string; reject_reason: string;
+  final_decision: string; conditional_reason: string; reject_reason: string; auditor: string;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
@@ -95,7 +95,7 @@ const EMPTY_FORM: FormData = {
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
-  final_decision: "", conditional_reason: "", reject_reason: "",
+  final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -122,7 +122,7 @@ const DEFAULT_FORM: FormData = {
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
-  final_decision: "", conditional_reason: "", reject_reason: "",
+  final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -256,6 +256,7 @@ function FastInput({ value, onChange, className, type, rows, style }: {
 interface HistoryEntry {
   id: number; label: string; notes: string; created_at: string; owner?: string;
   delete_requested_at?: string | null; delete_requested_by?: string | null;
+  data_json?: string; final_decision?: string; doc_type?: string; auditor?: string;
 }
 
 function App() {
@@ -1107,20 +1108,45 @@ function App() {
     if (authUser) {
       try {
         const rows = await listSnapshotsRemote(search);
-        setHistoryList(rows.map(r => ({
-          id: r.id,
-          label: r.label,
-          notes: r.notes,
-          created_at: new Date(r.created_at).toLocaleString(),
-          owner: r.user_id,
-          delete_requested_at: r.delete_requested_at,
-          delete_requested_by: r.delete_requested_by,
-        })));
+        setHistoryList(rows.map(r => {
+          let final_decision = "";
+          let doc_type = "bank";
+          let auditor = "";
+          try {
+            const parsed = JSON.parse(r.data_json);
+            final_decision = parsed.final_decision || "";
+            doc_type = parsed.doc_type || "bank";
+            auditor = parsed.auditor || "";
+          } catch {}
+          return {
+            id: r.id,
+            label: r.label,
+            notes: r.notes,
+            created_at: new Date(r.created_at).toLocaleString(),
+            owner: r.user_id,
+            delete_requested_at: r.delete_requested_at,
+            delete_requested_by: r.delete_requested_by,
+            final_decision,
+            doc_type,
+            auditor,
+          };
+        }));
       } catch (e) {
         console.error("listSnapshotsRemote failed", e);
         try {
           const list = await invoke<HistoryEntry[]>("list_history", { search });
-          setHistoryList(list);
+          setHistoryList(list.map(h => {
+            let final_decision = "";
+            let doc_type = "bank";
+            let auditor = "";
+            try {
+              const parsed = JSON.parse(h.data_json || "{}");
+              final_decision = parsed.final_decision || "";
+              doc_type = parsed.doc_type || "bank";
+              auditor = parsed.auditor || "";
+            } catch {}
+            return { ...h, final_decision, doc_type, auditor };
+          }));
         } catch (e2) {
           console.error("list_history fallback failed", e2);
           setHistoryList([]);
@@ -1129,7 +1155,18 @@ function App() {
     } else {
       try {
         const list = await invoke<HistoryEntry[]>("list_history", { search });
-        setHistoryList(list);
+        setHistoryList(list.map(h => {
+          let final_decision = "";
+          let doc_type = "bank";
+          let auditor = "";
+          try {
+            const parsed = JSON.parse(h.data_json || "{}");
+            final_decision = parsed.final_decision || "";
+            doc_type = parsed.doc_type || "bank";
+            auditor = parsed.auditor || "";
+          } catch {}
+          return { ...h, final_decision, doc_type, auditor };
+        }));
       } catch (e) {
         console.error("list_history failed", e);
         setHistoryList([]);
@@ -1178,7 +1215,8 @@ function App() {
       } catch {}
     }
     const label = serial || `Snapshot-${new Date().toLocaleDateString()}`;
-    const dataJson = JSON.stringify(data);
+    const saveData = { ...data, auditor: data.auditor || authUser || "" };
+    const dataJson = JSON.stringify(saveData);
     if (authUser) {
       try {
         await saveSnapshotRemote(label, "", dataJson);
@@ -1227,6 +1265,7 @@ function App() {
       if (!parsed.final_decision) parsed.final_decision = "";
       if (!parsed.conditional_reason) parsed.conditional_reason = "";
       if (!parsed.reject_reason) parsed.reject_reason = "";
+      if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
       await recalc(parsed);
     } catch (e) {
@@ -1496,39 +1535,58 @@ function App() {
           <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
             {historyLoading ? (
               <div className="history-empty">{t("加载中...", "Loading...")}</div>
-            ) : historyList.map(h => {
-              const isOwn = !h.owner || h.owner === authUserId;
-              const pendingDelete = h.delete_requested_at != null;
-              return (
-              <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}>
-                <div>
-                  <strong>{h.label}</strong>
-                  <p><small>
-                    {h.created_at}
-                    {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
-                    {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
-                  </small></p>
+            ) : (() => {
+              const bankItems = historyList.filter(h => h.doc_type !== "import");
+              const importItems = historyList.filter(h => h.doc_type === "import");
+              const renderGroup = (title: string, items: HistoryEntry[]) => items.length > 0 && (
+                <div key={title}>
+                  <div className="history-group-title">{title}</div>
+                  {items.map(h => {
+                    const isOwn = !h.owner || h.owner === authUserId;
+                    const pendingDelete = h.delete_requested_at != null;
+                    const decisionColor = h.final_decision === "approve" ? "var(--green)" : h.final_decision === "conditional" ? "var(--orange)" : h.final_decision === "reject" ? "var(--red)" : "";
+                    const auditorName = h.auditor ? h.auditor.split("@")[0] : "";
+                    return (
+                    <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}>
+                      <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                        {decisionColor && <span className="decision-dot" style={{background:decisionColor,flexShrink:0}} title={h.final_decision} />}
+                        <div style={{minWidth:0}}>
+                          <strong style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.label}</strong>
+                          <p><small>
+                            {h.created_at}
+                            {auditorName ? ` · ${auditorName}` : ''}
+                            {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
+                            {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
+                          </small></p>
+                        </div>
+                      </div>
+                      <div className="history-actions">
+                        <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
+                        {isAdminUser && pendingDelete && (
+                          <>
+                            <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
+                            <button className="btn-reject" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
+                          </>
+                        )}
+                        {isAdminUser && !pendingDelete && (
+                          <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
+                        )}
+                        {!isAdminUser && authUser && !pendingDelete && (
+                          <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
+                        )}
+                        {!authUser && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
+                      </div>
+                    </div>
+                    );
+                  })}
                 </div>
-                <div className="history-actions">
-                  <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
-                  {isAdminUser && pendingDelete && (
-                    <>
-                      <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
-                      <button className="btn-reject" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
-                    </>
-                  )}
-                  {isAdminUser && !pendingDelete && (
-                    <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
-                  )}
-                  {!isAdminUser && authUser && !pendingDelete && (
-                    <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
-                  )}
-                  {!authUser && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
-                </div>
-              </div>
               );
-            })}
-            {historyList.length === 0 && <div className="history-empty">{t("未找到快照", "No snapshots found")}</div>}
+              return <>
+                {renderGroup(t("银行凭证", "Bank Vouchers"), bankItems)}
+                {renderGroup(t("进口凭证", "Import Vouchers"), importItems)}
+                {bankItems.length === 0 && importItems.length === 0 && <div className="history-empty">{t("未找到快照", "No snapshots found")}</div>}
+              </>;
+            })()}
           </div>
         </div>
       </div>
