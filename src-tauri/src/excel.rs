@@ -461,7 +461,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         for entry in &data.import_entries {
             let amt: f64 = parse_amt(&entry.amount);
             let rate: f64 = parse_exchange_rate(&entry.rate);
-            let egp_amt = if entry.rate_enabled { amt * rate } else { amt };
+            let egp_amt = amt * rate;
             let vat_rate: f64 = parse_rate(&entry.vat_rate);
             let vat = (egp_amt * vat_rate / 100.0 * 100.0).round() / 100.0;
             let wht_rate: f64 = parse_rate(&entry.wht_rate);
@@ -472,7 +472,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 1, amt, &val_fmt)
                 .map_err(|e| e.to_string())?;
-            sheet3.write_with_format(r3, 2, if !entry.rate_enabled { format!("{} (off)", &entry.rate) } else if rate == 1.0 && entry.rate.is_empty() { "".to_string() } else { entry.rate.clone() }, &normal_fmt)
+            sheet3.write_with_format(r3, 2, if rate == 1.0 && entry.rate.is_empty() { "" } else { &entry.rate }, &normal_fmt)
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 3, if entry.free_wht { "Yes" } else { "No" }, &normal_fmt)
                 .map_err(|e| e.to_string())?;
