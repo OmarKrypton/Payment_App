@@ -36,7 +36,7 @@ pub fn list_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntr
 
     if search.is_empty() {
         let mut stmt = conn
-            .prepare("SELECT id, label, notes, created_at FROM snapshots ORDER BY created_at DESC")
+            .prepare("SELECT id, label, notes, created_at, data FROM snapshots ORDER BY created_at DESC")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| {
@@ -45,6 +45,7 @@ pub fn list_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntr
                     label: row.get(1)?,
                     notes: row.get(2)?,
                     created_at: row.get(3)?,
+                    data_json: row.get(4)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -54,7 +55,7 @@ pub fn list_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntr
     } else {
         let pattern = format!("%{}%", search);
         let mut stmt = conn
-            .prepare("SELECT id, label, notes, created_at FROM snapshots WHERE label LIKE ?1 OR notes LIKE ?1 ORDER BY created_at DESC")
+            .prepare("SELECT id, label, notes, created_at, data FROM snapshots WHERE label LIKE ?1 OR notes LIKE ?1 ORDER BY created_at DESC")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![pattern], |row| {
@@ -63,6 +64,7 @@ pub fn list_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntr
                     label: row.get(1)?,
                     notes: row.get(2)?,
                     created_at: row.get(3)?,
+                    data_json: row.get(4)?,
                 })
             })
             .map_err(|e| e.to_string())?;
