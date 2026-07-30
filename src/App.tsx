@@ -281,6 +281,7 @@ function App() {
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [synced, setSynced] = useState(false);
   const [rateVisible, setRateVisible] = useState(true);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "bank" | "import">("all");
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
@@ -1532,60 +1533,54 @@ function App() {
           <div className="modal-search">
             <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
           </div>
+          <div className="history-filters">
+            <button className={historyFilter === "all" ? "active" : ""} onClick={() => setHistoryFilter("all")}>{t("全部", "All")}</button>
+            <button className={historyFilter === "bank" ? "active" : ""} onClick={() => setHistoryFilter("bank")}>{t("银行", "Bank")}</button>
+            <button className={historyFilter === "import" ? "active" : ""} onClick={() => setHistoryFilter("import")}>{t("进口", "Import")}</button>
+          </div>
           <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
             {historyLoading ? (
               <div className="history-empty">{t("加载中...", "Loading...")}</div>
             ) : (() => {
-              const bankItems = historyList.filter(h => h.doc_type !== "import");
-              const importItems = historyList.filter(h => h.doc_type === "import");
-              const renderGroup = (title: string, items: HistoryEntry[]) => items.length > 0 && (
-                <div key={title}>
-                  <div className="history-group-title">{title}</div>
-                  {items.map(h => {
-                    const isOwn = !h.owner || h.owner === authUserId;
-                    const pendingDelete = h.delete_requested_at != null;
-                    const decisionColor = h.final_decision === "approve" ? "var(--green)" : h.final_decision === "conditional" ? "var(--orange)" : h.final_decision === "reject" ? "var(--red)" : "";
-                    const auditorName = h.auditor ? h.auditor.split("@")[0] : "";
-                    return (
-                    <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}>
-                      <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
-                        {decisionColor && <span className="decision-dot" style={{background:decisionColor,flexShrink:0}} title={h.final_decision} />}
-                        <div style={{minWidth:0}}>
-                          <strong style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.label}</strong>
-                          <p><small>
-                            {h.created_at}
-                            {auditorName ? ` · ${auditorName}` : ''}
-                            {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
-                            {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
-                          </small></p>
-                        </div>
-                      </div>
-                      <div className="history-actions">
-                        <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
-                        {isAdminUser && pendingDelete && (
-                          <>
-                            <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
-                            <button className="btn-reject" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
-                          </>
-                        )}
-                        {isAdminUser && !pendingDelete && (
-                          <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
-                        )}
-                        {!isAdminUser && authUser && !pendingDelete && (
-                          <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
-                        )}
-                        {!authUser && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
-                      </div>
+              const filtered = historyFilter === "all" ? historyList : historyList.filter(h => historyFilter === "import" ? h.doc_type === "import" : h.doc_type !== "import");
+              return filtered.length === 0 ? <div className="history-empty">{t("未找到快照", "No snapshots found")}</div> : filtered.map(h => {
+                const isOwn = !h.owner || h.owner === authUserId;
+                const pendingDelete = h.delete_requested_at != null;
+                const decisionColor = h.final_decision === "approve" ? "var(--green)" : h.final_decision === "conditional" ? "var(--orange)" : h.final_decision === "reject" ? "var(--red)" : "";
+                const auditorName = h.auditor ? h.auditor.split("@")[0] : "";
+                return (
+                <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                    {decisionColor && <span className="decision-dot" style={{background:decisionColor,flexShrink:0}} title={h.final_decision} />}
+                    <div style={{minWidth:0}}>
+                      <strong style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.label}</strong>
+                      <p><small>
+                        {h.created_at}
+                        {auditorName ? ` · ${auditorName}` : ''}
+                        {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
+                        {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
+                      </small></p>
                     </div>
-                    );
-                  })}
+                  </div>
+                  <div className="history-actions">
+                    <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
+                    {isAdminUser && pendingDelete && (
+                      <>
+                        <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
+                        <button className="btn-reject" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
+                      </>
+                    )}
+                    {isAdminUser && !pendingDelete && (
+                      <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
+                    )}
+                    {!isAdminUser && authUser && !pendingDelete && (
+                      <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
+                    )}
+                    {!authUser && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
+                  </div>
                 </div>
-              );
-              return <>
-                {renderGroup(t("银行凭证", "Bank Vouchers"), bankItems)}
-                {renderGroup(t("进口凭证", "Import Vouchers"), importItems)}
-                {bankItems.length === 0 && importItems.length === 0 && <div className="history-empty">{t("未找到快照", "No snapshots found")}</div>}
-              </>;
+                );
+              });
             })()}
           </div>
         </div>
