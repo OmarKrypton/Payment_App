@@ -340,6 +340,54 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     sheet2.merge_range(r, 0, r, 1, &data.audit_notes, &notes_wrap_fmt)
         .map_err(|e| e.to_string())?;
     sheet2.set_row_height(r, 80).map_err(|e| e.to_string())?;
+    r += 2;
+
+    // Section: Final Decision
+    sheet2
+        .write_with_format(r, 0, "Final Decision", &section2_fmt)
+        .map_err(|e| e.to_string())?;
+    r += 1;
+    let decision_label = match data.final_decision.as_str() {
+        "approve" => "Approved",
+        "conditional" => "Conditionally Approved",
+        "reject" => "Rejected",
+        _ => "Pending",
+    };
+    let reject_status_fmt = Format::new()
+        .set_font_size(10)
+        .set_font_color(Color::RGB(0xDC2626))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
+    let decision_fmt: &Format = match data.final_decision.as_str() {
+        "approve" => &pass_fmt,
+        "conditional" => &pending_fmt,
+        "reject" => &reject_status_fmt,
+        _ => &normal_fmt,
+    };
+    sheet2
+        .write_with_format(r, 0, "Decision", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    sheet2
+        .write_with_format(r, 1, decision_label, decision_fmt)
+        .map_err(|e| e.to_string())?;
+    r += 1;
+    if data.final_decision == "conditional" && !data.conditional_reason.is_empty() {
+        sheet2
+            .write_with_format(r, 0, "Reason for Conditional Approval", &bold_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet2.merge_range(r, 1, r, 1, &data.conditional_reason, &notes_wrap_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet2.set_row_height(r, 50).map_err(|e| e.to_string())?;
+        r += 1;
+    }
+    if data.final_decision == "reject" && !data.reject_reason.is_empty() {
+        sheet2
+            .write_with_format(r, 0, "Reason for Rejection", &bold_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet2.merge_range(r, 1, r, 1, &data.reject_reason, &notes_wrap_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet2.set_row_height(r, 50).map_err(|e| e.to_string())?;
+    }
 
     // ── Sheet: Import Calculation (import type only) ──
     if is_import {
@@ -413,7 +461,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         for entry in &data.import_entries {
             let amt: f64 = parse_amt(&entry.amount);
             let rate: f64 = parse_exchange_rate(&entry.rate);
-            let egp_amt = amt * rate;
+            let egp_amt = if entry.rate_enabled { amt * rate } else { amt };
             let vat_rate: f64 = parse_rate(&entry.vat_rate);
             let vat = (egp_amt * vat_rate / 100.0 * 100.0).round() / 100.0;
             let wht_rate: f64 = parse_rate(&entry.wht_rate);
@@ -424,7 +472,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 1, amt, &val_fmt)
                 .map_err(|e| e.to_string())?;
-            sheet3.write_with_format(r3, 2, if rate == 1.0 && entry.rate.is_empty() { "" } else { &entry.rate }, &normal_fmt)
+            sheet3.write_with_format(r3, 2, if !entry.rate_enabled { format!("{} (off)", &entry.rate) } else if rate == 1.0 && entry.rate.is_empty() { "".to_string() } else { entry.rate.clone() }, &normal_fmt)
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 3, if entry.free_wht { "Yes" } else { "No" }, &normal_fmt)
                 .map_err(|e| e.to_string())?;

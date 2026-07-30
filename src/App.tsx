@@ -23,6 +23,7 @@ interface ImportEntry {
   service_name: string;
   amount: string;
   rate: string;
+  rate_enabled: boolean;
   free_wht: boolean;
   wht_rate: string;
   vat_rate: string;
@@ -52,6 +53,7 @@ interface FormData {
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
+  final_decision: string; conditional_reason: string; reject_reason: string;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
@@ -94,6 +96,7 @@ const EMPTY_FORM: FormData = {
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
+  final_decision: "", conditional_reason: "", reject_reason: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -120,6 +123,7 @@ const DEFAULT_FORM: FormData = {
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
+  final_decision: "", conditional_reason: "", reject_reason: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -217,8 +221,8 @@ function Computed({ label, sub, value, highlight }: { label: string; sub?: strin
   );
 }
 
-function FastInput({ value, onChange, className, type, rows }: {
-  value: string; onChange: (v: string) => void; className?: string; type?: string; rows?: number;
+function FastInput({ value, onChange, className, type, rows, style }: {
+  value: string; onChange: (v: string) => void; className?: string; type?: string; rows?: number; style?: React.CSSProperties;
 }) {
   const [local, setLocal] = useState(value);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -240,12 +244,13 @@ function FastInput({ value, onChange, className, type, rows }: {
       className={className || "field-input"}
       value={local}
       rows={rows}
-      style={{ resize: 'none', overflowY: 'hidden', minHeight: '32px' }}
+      style={{ resize: 'none', overflowY: 'hidden', minHeight: '32px', ...style }}
       onChange={e => { setLocal(e.target.value); onChange(e.target.value); }}
       onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
     />;
   }
   return <input className={className || "field-input"} type={type || "text"} value={local}
+    style={style}
     onChange={e => { setLocal(e.target.value); onChange(e.target.value); }} />;
 }
 
@@ -606,7 +611,7 @@ function App() {
   const delInv = (i: number) => delRow("invoices", i);
 
   const addImportEntry = () => {
-    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
+    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", rate_enabled: true, free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
     formRef.current = { ...formRef.current, import_entries: arr };
     recalc(formRef.current);
   };
@@ -762,6 +767,35 @@ function App() {
         <h3>{t("审计备注", "Audit Notes")}</h3>
         <FastInput className="audit-notes" value={data.audit_notes} onChange={v => updateField("audit_notes", v)} rows={5} />
       </div>
+      <div className="card">
+        <h3>{t("最终决定", "Final Decision")}</h3>
+        <div className="decision-options">
+          <label className={`decision-option ${data.final_decision === "approve" ? "decision-selected approve" : ""}`}>
+            <input type="radio" name="final_decision" checked={data.final_decision === "approve"} onChange={() => updateField("final_decision", "approve")} />
+            <span className="decision-label">{t("批准", "Approve")}</span>
+          </label>
+          <label className={`decision-option ${data.final_decision === "conditional" ? "decision-selected conditional" : ""}`}>
+            <input type="radio" name="final_decision" checked={data.final_decision === "conditional"} onChange={() => updateField("final_decision", "conditional")} />
+            <span className="decision-label">{t("有条件批准", "Conditional Approve")}</span>
+          </label>
+          <label className={`decision-option ${data.final_decision === "reject" ? "decision-selected reject" : ""}`}>
+            <input type="radio" name="final_decision" checked={data.final_decision === "reject"} onChange={() => updateField("final_decision", "reject")} />
+            <span className="decision-label">{t("拒绝", "Reject")}</span>
+          </label>
+        </div>
+        {data.final_decision === "conditional" && (
+          <div className="field" style={{marginTop: 12}}>
+            <label className="field-label">{t("有条件批准原因", "Reason for Conditional Approve")}</label>
+            <FastInput className="audit-notes" value={data.conditional_reason} onChange={v => updateField("conditional_reason", v)} rows={3} />
+          </div>
+        )}
+        {data.final_decision === "reject" && (
+          <div className="field" style={{marginTop: 12}}>
+            <label className="field-label">{t("拒绝原因", "Reason for Reject")}</label>
+            <FastInput className="audit-notes" value={data.reject_reason} onChange={v => updateField("reject_reason", v)} rows={3} />
+          </div>
+        )}
+      </div>
     </div>
     );
   };
@@ -814,10 +848,11 @@ function App() {
         </div>
           <div className="card" style={{overflowX:'auto',background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
+            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("汇率", "Rate")}</div>
+              <div style={{paddingTop:14,textAlign:'center'}}>{t("启用", "On")}</div>
               <div style={{paddingTop:14,textAlign:'center'}}>{t("免WHT", "Free")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT率", "VAT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT率", "WHT")}</div>
@@ -831,17 +866,18 @@ function App() {
             </div>
           {(data.import_entries ?? []).map((e: any, i: number) => {
             const amt = parseFloat(e.amount) || 0;
-            const r = parseFloat(e.rate) || 1;
-            const egpAmt = r ? amt * r : amt;
+            const rateEnabled = e.rate_enabled !== false;
+            const egpAmt = (rateEnabled && parseFloat(e.rate)) ? amt * parseFloat(e.rate) : amt;
             const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
             const vat = Math.round(egpAmt * vatRate / 100 * 100) / 100;
             const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
             const wht = e.free_wht ? 0 : Math.round(egpAmt * whtRate / 100 * 100) / 100;
             return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
+              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
                 <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
                 <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
-                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} />
+                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} style={rateEnabled ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
+                <input type="checkbox" checked={rateEnabled} onChange={() => updImportEntry(i, "rate_enabled", !rateEnabled)} style={{margin:'auto'}} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
                 <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
                   {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
@@ -1186,6 +1222,10 @@ function App() {
       if (!parsed.import_costs) parsed.import_costs = [...DEFAULT_FORM.import_costs];
       if (!parsed.check_form_4_6) parsed.check_form_4_6 = false;
       if (!parsed.seller_tax_ids) parsed.seller_tax_ids = [];
+      if (!parsed.final_decision) parsed.final_decision = "";
+      if (!parsed.conditional_reason) parsed.conditional_reason = "";
+      if (!parsed.reject_reason) parsed.reject_reason = "";
+      (parsed.import_entries ?? []).forEach((e: any) => { if (e.rate_enabled === undefined) e.rate_enabled = true; });
       formRef.current = parsed;
       await recalc(parsed);
     } catch (e) {
@@ -1207,9 +1247,10 @@ function App() {
       if (isAdminUser) {
         try {
           await deleteSnapshotRemote(id);
-        } catch (e) {
-          console.error("deleteSnapshotRemote failed, falling back", e);
-          try { await invoke("delete_history", { id }); } catch {}
+          showAlert(t("快照已删除", "Snapshot deleted"));
+        } catch (e: any) {
+          console.error("deleteSnapshotRemote failed", e);
+          showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
         }
       } else {
         // Normal user: request deletion
@@ -1471,8 +1512,8 @@ function App() {
                   <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
                   {isAdminUser && pendingDelete && (
                     <>
-                      <button className="btn-load" style={{background:'#16a34a',color:'#fff'}} onClick={() => approveDelete(h.id)}>✓</button>
-                      <button className="btn-delete" style={{background:'#dc2626',color:'#fff'}} onClick={() => rejectDelete(h.id)}>✗</button>
+                      <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
+                      <button className="btn-reject" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
                     </>
                   )}
                   {isAdminUser && !pendingDelete && (

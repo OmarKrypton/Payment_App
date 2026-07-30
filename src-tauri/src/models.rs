@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool { true }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrFieldInfo {
     pub field: String,
@@ -68,6 +70,12 @@ pub struct FormData {
     pub check_nafeza: bool,
     #[serde(default)]
     pub check_form_4_6: bool,
+    #[serde(default)]
+    pub final_decision: String,
+    #[serde(default)]
+    pub conditional_reason: String,
+    #[serde(default)]
+    pub reject_reason: String,
     pub audit_notes: String,
     pub vat_manual: bool,
     pub wht_manual: bool,
@@ -144,6 +152,9 @@ impl Default for FormData {
             check_cert_origin: false,
             check_nafeza: false,
             check_form_4_6: false,
+            final_decision: String::new(),
+            conditional_reason: String::new(),
+            reject_reason: String::new(),
             audit_notes: String::new(),
             vat_manual: false,
             wht_manual: false,
@@ -196,6 +207,8 @@ pub struct ImportEntry {
     pub amount: String,
     #[serde(default)]
     pub rate: String,
+    #[serde(default = "default_true")]
+    pub rate_enabled: bool,
     pub free_wht: bool,
     pub wht_rate: String,
     #[serde(default)]

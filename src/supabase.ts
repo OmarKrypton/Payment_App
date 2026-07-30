@@ -76,11 +76,13 @@ export async function loadSnapshotRemote(id: number): Promise<string> {
 }
 
 export async function deleteSnapshotRemote(id: number): Promise<void> {
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("snapshots")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   if (error) throw error;
+  if (count === 0) throw new Error("Delete had no effect — row may not exist or RLS blocked it");
 }
 
 export async function changePassword(newPassword: string): Promise<void> {
