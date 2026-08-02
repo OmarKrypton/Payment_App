@@ -1,5 +1,6 @@
 mod calc;
 mod config;
+mod eta_xml;
 mod excel;
 mod history;
 mod importer;
@@ -87,6 +88,95 @@ fn export_excel(data: FormData, computed: CalcResult, file_path: String) -> Resu
 #[tauri::command]
 fn export_invoice_summary(invoices: Vec<InvoiceSummaryRow>, date_from: String, date_to: String, file_path: String) -> Result<(), String> {
     excel::export_invoice_summary(&invoices, &date_from, &date_to, &file_path)
+}
+
+#[tauri::command]
+fn validate_eta_xml(file_paths: Vec<String>, form_json: String) -> Result<Vec<eta_xml::ValidationResult>, String> {
+    let mut results = Vec::new();
+    for path in &file_paths {
+        let xml_content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read XML file {}: {}", path, e))?;
+        let invoice = eta_xml::parse_eta_xml(&xml_content)?;
+        let result = eta_xml::validate_eta_against_form(&invoice, &form_json)?;
+        results.push(result);
+    }
+    Ok(results)
+}
+
+#[tauri::command]
+fn import_to_pool(state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> Result<Vec<eta_xml::EtaInvoice>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    let mut imported = Vec::new();
+    for path in &file_paths {
+        let xml_content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read XML file {}: {}", path, e))?;
+        let invoice = eta_xml::parse_eta_xml(&xml_content)?;
+        history::add_to_pool(conn, &invoice)?;
+        imported.push(invoice);
+    }
+    Ok(imported)
+}
+
+#[tauri::command]
+fn list_invoice_pool(state: tauri::State<'_, DbState>) -> Result<Vec<history::PoolInvoice>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::list_pool(conn)
+}
+
+#[tauri::command]
+fn mark_pool_invoice_used(state: tauri::State<'_, DbState>, invoice_id: String, snapshot_id: i64, snapshot_label: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::mark_invoice_used(conn, &invoice_id, snapshot_id, &snapshot_label)
+}
+
+#[tauri::command]
+fn mark_pool_invoice_available(state: tauri::State<'_, DbState>, invoice_id: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::mark_invoice_available(conn, &invoice_id)
+}
+
+#[tauri::command]
+fn delete_pool_invoice(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::delete_from_pool(conn, id)
+}
+
+#[tauri::command]
+fn validate_from_pool(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>, form_json: String) -> Result<Vec<eta_xml::ValidationResult>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    let pool = history::list_pool(conn)?;
+    let mut results = Vec::new();
+    for inv_id in &invoice_ids {
+        let pool_inv = pool.iter().find(|p| &p.invoice_id == inv_id)
+            .ok_or_else(|| format!("Invoice {} not found in pool", inv_id))?;
+        let lines: Vec<eta_xml::EtaInvoiceLine> = serde_json::from_str(&pool_inv.lines_json)
+            .unwrap_or_default();
+        let invoice = eta_xml::EtaInvoice {
+            invoice_id: pool_inv.invoice_id.clone(),
+            uuid: pool_inv.uuid.clone(),
+            issue_date: pool_inv.issue_date.clone(),
+            invoice_type_code: String::new(),
+            seller_tax_id: pool_inv.seller_tax_id.clone(),
+            seller_name: pool_inv.seller_name.clone(),
+            buyer_tax_id: pool_inv.buyer_tax_id.clone(),
+            buyer_name: pool_inv.buyer_name.clone(),
+            currency: pool_inv.currency.clone(),
+            net_amount: pool_inv.net_amount,
+            total_vat: pool_inv.total_vat,
+            total_wht: pool_inv.total_wht,
+            grand_total: pool_inv.grand_total,
+            lines,
+        };
+        let result = eta_xml::validate_eta_against_form(&invoice, &form_json)?;
+        results.push(result);
+    }
+    Ok(results)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -187,6 +277,13 @@ pub fn run() {
             check_serial_exists,
             export_excel,
             export_invoice_summary,
+            validate_eta_xml,
+            import_to_pool,
+            list_invoice_pool,
+            mark_pool_invoice_used,
+            mark_pool_invoice_available,
+            delete_pool_invoice,
+            validate_from_pool,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

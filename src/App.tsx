@@ -282,6 +282,10 @@ function App() {
   const [synced, setSynced] = useState(false);
   const [rateVisible, setRateVisible] = useState(true);
   const [historyFilter, setHistoryFilter] = useState<"all" | "bank" | "import">("all");
+  const [etaResult, setEtaResult] = useState<any[] | null>(null);
+  const [showPool, setShowPool] = useState(false);
+  const [poolList, setPoolList] = useState<any[]>([]);
+  const [poolLoading, setPoolLoading] = useState(false);
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
@@ -1318,6 +1322,79 @@ function App() {
     loadHistoryList(historySearch);
   };
 
+  const handleEtaValidate = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ multiple: true, filters: [{ name: "XML", extensions: ["xml"] }] });
+      if (!selected) return;
+      const filePaths: string[] = (Array.isArray(selected) ? selected : [selected])
+        .map((f: any) => typeof f === "string" ? f : f.path)
+        .filter(Boolean);
+      if (filePaths.length === 0) return;
+      const formJson = JSON.stringify(formRef.current);
+      const result = await invoke<any[]>("validate_eta_xml", { filePaths, formJson });
+      // Also import to pool
+      try { await invoke("import_to_pool", { filePaths }); } catch {}
+      setEtaResult(result);
+    } catch (e: any) {
+      showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+    }
+  };
+
+  const loadPool = async () => {
+    setPoolLoading(true);
+    try {
+      const list = await invoke<any[]>("list_invoice_pool");
+      setPoolList(list);
+    } catch (e) {
+      console.error("list_invoice_pool failed", e);
+      setPoolList([]);
+    }
+    setPoolLoading(false);
+  };
+
+  const openPool = () => {
+    setShowPool(true);
+    loadPool();
+  };
+
+  const importToPool = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ multiple: true, filters: [{ name: "XML", extensions: ["xml"] }] });
+      if (!selected) return;
+      const filePaths: string[] = (Array.isArray(selected) ? selected : [selected])
+        .map((f: any) => typeof f === "string" ? f : f.path)
+        .filter(Boolean);
+      if (filePaths.length === 0) return;
+      const imported = await invoke<any[]>("import_to_pool", { filePaths });
+      showAlert(`${t("已导入", "Imported")} ${imported.length} ${t("发票到池", "invoice(s) to pool")}`);
+      loadPool();
+    } catch (e: any) {
+      showAlert(`${t("导入失败", "Import failed")}: ${e.message || e}`);
+    }
+  };
+
+  const validateFromPool = async (invoiceIds: string[]) => {
+    try {
+      const formJson = JSON.stringify(formRef.current);
+      const result = await invoke<any[]>("validate_from_pool", { invoiceIds, formJson });
+      setEtaResult(result);
+      setShowPool(false);
+    } catch (e: any) {
+      showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+    }
+  };
+
+  const deletePoolInvoice = async (id: number) => {
+    try {
+      await invoke("delete_pool_invoice", { id });
+      loadPool();
+    } catch (e: any) {
+      showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
+    }
+  };
+
   const rejectDelete = async (id: number) => {
     try {
       await rejectDeleteSnapshot(id);
@@ -1481,6 +1558,12 @@ function App() {
           <button onClick={importPdf}>
             <IconImport /> {t("导入PDF", "Import PDF")}
           </button>
+          <button onClick={handleEtaValidate}>
+            <IconReport /> {t("验证XML", "Validate XML")}
+          </button>
+          <button onClick={openPool}>
+            <IconInvoice /> {t("发票池", "Invoice Pool")}
+          </button>
           <div className="sidebar-actions-divider" />
           <div className="sidebar-export-group">
             <button onClick={() => setShowExportMenu(!showExportMenu)} style={{width:'100%'}}>
@@ -1613,6 +1696,148 @@ function App() {
                 onClick={exportInvoiceSummary}>{t("导出", "Export")}</button>
               <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
                 onClick={() => setShowInvoiceExport(false)}>{t("取消", "Cancel")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {etaResult && etaResult.length > 0 && (
+        <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setEtaResult(null)}>
+          <div className="modal" style={{width:700, maxHeight:'85vh'}} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t("ETA XML 验证结果", "ETA XML Validation Result")} ({etaResult.length} {t("发票", "invoices")})</h3>
+              <button className="modal-close" onClick={() => setEtaResult(null)}>✕</button>
+            </div>
+
+            {(() => {
+              const totalErrors = etaResult.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "error").length, 0);
+              const totalWarnings = etaResult.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "warning").length, 0);
+              const allValid = etaResult.every((r: any) => r.is_valid);
+              return (
+                <div style={{display:'flex',gap:12,marginBottom:16}}>
+                  <div style={{flex:1,padding:'10px 14px',borderRadius:8,background:allValid?'var(--green-bg)':'var(--red-bg)',border:`1px solid ${allValid?'#bbf7d0':'#fecaca'}`,textAlign:'center'}}>
+                    <div style={{fontSize:18,fontWeight:700,color:allValid?'var(--green)':'var(--red)'}}>{allValid ? '✓' : '✗'}</div>
+                    <div style={{fontSize:11,color:'var(--text-secondary)'}}>{allValid ? t("全部通过", "All Passed") : t("存在问题", "Issues Found")}</div>
+                  </div>
+                  <div style={{flex:1,padding:'10px 14px',borderRadius:8,background:'var(--bg-input)',border:'1px solid var(--border)',textAlign:'center'}}>
+                    <div style={{fontSize:18,fontWeight:700,color:'var(--red)'}}>{totalErrors}</div>
+                    <div style={{fontSize:11,color:'var(--text-secondary)'}}>{t("错误", "Errors")}</div>
+                  </div>
+                  <div style={{flex:1,padding:'10px 14px',borderRadius:8,background:'var(--bg-input)',border:'1px solid var(--border)',textAlign:'center'}}>
+                    <div style={{fontSize:18,fontWeight:700,color:'var(--orange)'}}>{totalWarnings}</div>
+                    <div style={{fontSize:11,color:'var(--text-secondary)'}}>{t("警告", "Warnings")}</div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{display:'flex',flexDirection:'column',gap:12,maxHeight:'calc(85vh - 180px)',overflowY:'auto'}}>
+              {etaResult.map((r: any, idx: number) => {
+                const errorCount = r.issues.filter((i: any) => i.severity === "error").length;
+                const warnCount = r.issues.filter((i: any) => i.severity === "warning").length;
+                return (
+                <div key={idx} style={{border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+                  <div style={{padding:'8px 12px',background:'var(--bg-input)',display:'flex',alignItems:'center',gap:8,borderBottom:'1px solid var(--border)'}}>
+                    <span style={{width:8,height:8,borderRadius:'50%',background:r.is_valid?'var(--green)':errorCount>0?'var(--red)':'var(--orange)',flexShrink:0}} />
+                    <strong style={{fontSize:12}}>{r.invoice.invoice_id || `Invoice ${idx + 1}`}</strong>
+                    <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:'auto'}}>
+                      {r.invoice.seller_name || r.invoice.seller_tax_id}
+                      {errorCount > 0 && <span style={{color:'var(--red)',marginLeft:8}}>{errorCount} {t("错误", "errors")}</span>}
+                      {warnCount > 0 && <span style={{color:'var(--orange)',marginLeft:8}}>{warnCount} {t("警告", "warnings")}</span>}
+                    </span>
+                  </div>
+                  <div style={{padding:'8px 12px',fontSize:12}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:4,marginBottom:8}}>
+                      <div><span style={{color:'var(--text-muted)'}}>{t("净额", "Net")}:</span> {r.invoice.net_amount.toFixed(2)}</div>
+                      <div><span style={{color:'var(--text-muted)'}}>VAT:</span> {r.invoice.total_vat.toFixed(2)}</div>
+                      <div><span style={{color:'var(--text-muted)'}}>WHT:</span> {r.invoice.total_wht.toFixed(2)}</div>
+                      <div><span style={{color:'var(--text-muted)'}}>{t("合计", "Total")}:</span> {r.invoice.grand_total.toFixed(2)}</div>
+                    </div>
+                    {r.issues.length === 0 ? (
+                      <div style={{color:'var(--green)',fontWeight:600,fontSize:11,textAlign:'center',padding:4}}>✓ {t("所有检查均通过", "All checks passed")}</div>
+                    ) : (
+                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                        {r.issues.map((issue: any, i: number) => (
+                          <div key={i} style={{
+                            display:'flex',alignItems:'flex-start',gap:6,padding:'6px 8px',
+                            borderRadius:4,fontSize:11,
+                            background: issue.severity === 'error' ? 'var(--red-bg)' : '#fffbeb',
+                            border: `1px solid ${issue.severity === 'error' ? '#fecaca' : '#fde68a'}`,
+                          }}>
+                            <span style={{color: issue.severity === 'error' ? 'var(--red)' : 'var(--orange)',fontWeight:700,flexShrink:0}}>
+                              {issue.severity === 'error' ? '✗' : '⚠'}
+                            </span>
+                            <div>
+                              <strong>{issue.field}</strong>
+                              <span style={{color:'var(--text-secondary)',marginLeft:6}}>{issue.message}</span>
+                              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>
+                                XML: {issue.xml_value} → {t("表单", "Form")}: {issue.form_value}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPool && (
+        <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setShowPool(false)}>
+          <div className="modal" style={{width:700, maxHeight:'85vh'}} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t("发票池", "Invoice Pool")}</h3>
+              <button className="modal-close" onClick={() => setShowPool(false)}>✕</button>
+            </div>
+            <div style={{display:'flex',gap:8,marginBottom:12}}>
+              <button className="btn-add" onClick={importToPool}>+ {t("导入XML", "Import XML")}</button>
+              <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => {
+                const available = poolList.filter((p: any) => p.status === 'available');
+                if (available.length === 0) { showAlert(t("没有可用发票", "No available invoices")); return; }
+                validateFromPool(available.map((p: any) => p.invoice_id));
+              }}>{t("验证所有可用发票", "Validate All Available")}</button>
+            </div>
+            <div className="history-list" style={poolLoading ? {opacity:0.5} : {}}>
+              {poolLoading ? (
+                <div className="history-empty">{t("加载中...", "Loading...")}</div>
+              ) : poolList.length === 0 ? (
+                <div className="history-empty">{t("发票池为空，导入XML发票以开始", "Pool is empty. Import XML invoices to get started.")}</div>
+              ) : poolList.map((p: any) => (
+                <div key={p.id} className="history-item" style={p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <strong style={{fontSize:12}}>{p.invoice_id}</strong>
+                      <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
+                        background:p.status==='available'?'var(--green-bg)':'#fffbeb',
+                        color:p.status==='available'?'var(--green)':'var(--orange)',
+                        border:`1px solid ${p.status==='available'?'#bbf7d0':'#fde68a'}`
+                      }}>{p.status === 'available' ? t("可用", "Available") : t("已使用", "Used")}</span>
+                    </div>
+                    <p style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>
+                      {p.seller_name || p.seller_tax_id}
+                      {p.buyer_tax_id ? ` → ${p.buyer_tax_id}` : ''}
+                      {p.issue_date ? ` · ${p.issue_date}` : ''}
+                      {p.status === 'used' && p.used_by_label ? ` · ${t("用于", "Used in")}: ${p.used_by_label}` : ''}
+                    </p>
+                    <p style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                      {t("净额", "Net")}: {p.net_amount.toFixed(2)} · VAT: {p.total_vat.toFixed(2)} · {t("合计", "Total")}: {p.grand_total.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="history-actions">
+                    {p.status === 'available' && (
+                      <button className="btn-load" onClick={() => validateFromPool([p.invoice_id])}>
+                        {t("验证", "Validate")}
+                      </button>
+                    )}
+                    <button className="btn-delete" onClick={() => deletePoolInvoice(p.id)}>✕</button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
