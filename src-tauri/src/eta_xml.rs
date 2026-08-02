@@ -47,14 +47,6 @@ pub struct ValidationResult {
     pub is_valid: bool,
 }
 
-fn strip_ns(tag: &str) -> &str {
-    if let Some(pos) = tag.rfind(':') {
-        &tag[pos + 1..]
-    } else {
-        tag
-    }
-}
-
 fn parse_f64(s: &str) -> f64 {
     s.trim().replace(',', "").parse().unwrap_or(0.0)
 }
@@ -72,7 +64,7 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         seller_name: String::new(),
         buyer_tax_id: String::new(),
         buyer_name: String::new(),
-        currency: String::new(),
+        currency: "EGP".to_string(),
         net_amount: 0.0,
         total_vat: 0.0,
         total_wht: 0.0,
@@ -80,203 +72,137 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         lines: Vec::new(),
     };
 
-    // State machine for parsing
     let mut current_text = String::new();
-    let mut in_supplier = false;
-    let mut in_customer = false;
-    let mut _in_tax_total = false;
-    let mut in_tax_subtotal = false;
-    let mut in_monetary_total = false;
-    let mut in_invoice_line = false;
-    let mut current_line = EtaInvoiceLine {
-        description: String::new(),
-        quantity: 0.0,
-        unit_price: 0.0,
-        line_total: 0.0,
-        vat_rate: 0.0,
-        vat_amount: 0.0,
-        item_code: String::new(),
-    };
-    let mut tax_subtotal_count = 0;
+    let mut in_document_json = false;
+    let mut document_json = String::new();
+    let mut doc_depth = 0;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                let local = strip_ns(&tag).to_string();
                 current_text.clear();
 
-                match local.as_str() {
-                    "AccountingSupplierParty" => in_supplier = true,
-                    "AccountingCustomerParty" => in_customer = true,
-                    "TaxTotal" => {
-                        if !in_invoice_line {
-                            _in_tax_total = true;
-                            tax_subtotal_count = 0;
-                        }
+                if tag == "document" {
+                    if doc_depth > 0 {
+                        // Inner <document> tag with JSON
+                        in_document_json = true;
                     }
-                    "TaxSubtotal" => {
-                        in_tax_subtotal = true;
-                        tax_subtotal_count += 1;
-                    }
-                    "LegalMonetaryTotal" => in_monetary_total = true,
-                    "InvoiceLine" => {
-                        in_invoice_line = true;
-                        current_line = EtaInvoiceLine {
-                            description: String::new(),
-                            quantity: 0.0,
-                            unit_price: 0.0,
-                            line_total: 0.0,
-                            vat_rate: 0.0,
-                            vat_amount: 0.0,
-                            item_code: String::new(),
-                        };
-                    }
-                    _ => {}
+                    doc_depth += 1;
                 }
-            }
-            Ok(Event::Empty(_)) => {
-                // Self-closing tags handled where needed
             }
             Ok(Event::Text(e)) => {
-                current_text = e.unescape().map_err(|e| e.to_string())?.to_string();
+                let text = e.unescape().map_err(|e| e.to_string())?.to_string();
+                if in_document_json {
+                    document_json.push_str(&text);
+                } else {
+                    current_text = text;
+                }
+            }
+            Ok(Event::CData(e)) => {
+                if in_document_json {
+                    document_json.push_str(&String::from_utf8_lossy(e.as_ref()));
+                }
             }
             Ok(Event::End(e)) => {
-                let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                let local = strip_ns(&tag).to_string();
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
-                let text = current_text.trim().to_string();
-
-                match local.as_str() {
-                    "ID" => {
-                        if in_supplier && invoice.seller_tax_id.is_empty() {
-                            invoice.seller_tax_id = text.clone();
-                        } else if in_customer && invoice.buyer_tax_id.is_empty() {
-                            invoice.buyer_tax_id = text.clone();
-                        } else if !in_supplier && !in_customer && !in_invoice_line {
-                            // Top-level invoice ID
-                            if invoice.invoice_id.is_empty() {
-                                invoice.invoice_id = text.clone();
-                            } else if invoice.uuid.is_empty() {
-                                invoice.uuid = text.clone();
-                            }
-                        } else if in_invoice_line && current_line.item_code.is_empty() {
-                            current_line.item_code = text.clone();
-                        }
+                if tag_name == "document" {
+                    doc_depth -= 1;
+                    if doc_depth == 1 && in_document_json {
+                        // Closed the inner <document> that contains JSON
+                        in_document_json = false;
                     }
-                    "UUID" => {
-                        if !in_supplier && !in_customer && !in_invoice_line {
-                            invoice.uuid = text;
-                        }
-                    }
-                    "IssueDate" => {
-                        invoice.issue_date = text;
-                    }
-                    "InvoiceTypeCode" => {
-                        invoice.invoice_type_code = text;
-                    }
-                    "Name" => {
-                        if in_supplier {
-                            invoice.seller_name = text;
-                        } else if in_customer {
-                            invoice.buyer_name = text;
-                        }
-                    }
-                    "Description" => {
-                        if in_invoice_line && current_line.description.is_empty() {
-                            current_line.description = text;
-                        }
-                    }
-                    "InvoicedQuantity" | "InvoicedQuantityUnit" | "Quantity" => {
-                        if in_invoice_line {
-                            current_line.quantity = parse_f64(&text);
-                        }
-                    }
-                    "PriceAmount" => {
-                        if in_invoice_line {
-                            current_line.unit_price = parse_f64(&text);
-                        }
-                    }
-                    "LineExtensionAmount" => {
-                        if in_invoice_line {
-                            current_line.line_total = parse_f64(&text);
-                        } else if in_monetary_total {
-                            invoice.net_amount = parse_f64(&text);
-                        }
-                    }
-                    "TaxExclusiveAmount" => {
-                        if in_monetary_total {
-                            invoice.net_amount = parse_f64(&text);
-                        }
-                    }
-                    "TaxInclusiveAmount" => {
-                        if in_monetary_total {
-                            invoice.grand_total = parse_f64(&text);
-                        }
-                    }
-                    "TaxAmount" => {
-                        if in_tax_subtotal && !in_invoice_line {
-                            if tax_subtotal_count == 1 {
-                                // First subtotal is usually VAT
-                                invoice.total_vat = parse_f64(&text);
-                            } else if tax_subtotal_count == 2 {
-                                // Second subtotal is usually WHT
-                                invoice.total_wht = parse_f64(&text);
-                            }
-                        } else if in_invoice_line && in_tax_subtotal {
-                            current_line.vat_amount = parse_f64(&text);
-                        }
-                    }
-                    "TaxableAmount" => {
-                        if in_invoice_line && in_tax_subtotal {
-                            // Already captured in LineExtensionAmount
-                        }
-                    }
-                    "Percent" => {
-                        if in_tax_subtotal {
-                            if in_invoice_line {
-                                current_line.vat_rate = parse_f64(&text);
-                            }
-                            // For top-level, we could track VAT rate too
-                        }
-                    }
-                    "DocumentCurrencyCode" => {
-                        invoice.currency = text;
-                    }
-                    _ => {}
                 }
 
-                // Track section exits
-                match local.as_str() {
-                    "AccountingSupplierParty" => in_supplier = false,
-                    "AccountingCustomerParty" => in_customer = false,
-                    "TaxTotal" => {
-                        if !in_invoice_line {
-                            _in_tax_total = false;
-                            tax_subtotal_count = 0;
-                        } else {
-                            // Line-level tax total
-                        }
+                if !in_document_json {
+                    let text = current_text.trim().to_string();
+                    match tag_name.as_str() {
+                        "uuid" => { invoice.uuid = text; }
+                        "internalId" => { invoice.invoice_id = text; }
+                        "issuerId" => { invoice.seller_tax_id = text; }
+                        "issuerName" => { invoice.seller_name = text; }
+                        "receiverId" => { invoice.buyer_tax_id = text; }
+                        "receiverName" => { invoice.buyer_name = text; }
+                        "dateTimeIssued" => { invoice.issue_date = text; }
+                        "netAmount" => { invoice.net_amount = parse_f64(&text); }
+                        "total" => { invoice.grand_total = parse_f64(&text); }
+                        _ => {}
                     }
-                    "TaxSubtotal" => in_tax_subtotal = false,
-                    "LegalMonetaryTotal" => in_monetary_total = false,
-                    "InvoiceLine" => {
-                        invoice.lines.push(current_line.clone());
-                        in_invoice_line = false;
-                    }
-                    _ => {}
                 }
                 current_text.clear();
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(format!("XML parse error at position {}: {:?}", reader.error_position(), e)),
+            Err(e) => return Err(format!("XML parse error: {:?}", e)),
             _ => {}
         }
     }
 
-    // If grand_total is 0 but net_amount + vat > 0, compute it
-    if invoice.grand_total == 0.0 && invoice.net_amount > 0.0 {
-        invoice.grand_total = invoice.net_amount + invoice.total_vat - invoice.total_wht;
+    // Parse the embedded JSON for line items and tax totals
+    if !document_json.is_empty() {
+        // Fix HTML entities first
+        let json_str = document_json.replace("&#34;", "\"");
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            // Extract tax totals
+            if let Some(tax_totals) = parsed.get("taxTotals").and_then(|v| v.as_array()) {
+                for tax in tax_totals {
+                    let tax_type = tax.get("taxType").and_then(|v| v.as_str()).unwrap_or("");
+                    let amt = tax.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    if tax_type == "T1" {
+                        // T1 is VAT
+                        invoice.total_vat = amt;
+                    } else if tax_type == "T2" || tax_type == "T4" || tax_type == "T5" {
+                        // Various WHT types
+                        invoice.total_wht += amt;
+                    }
+                }
+            }
+
+            // Extract line items
+            if let Some(lines) = parsed.get("invoiceLines").and_then(|v| v.as_array()) {
+                for line in lines {
+                    let desc = line.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let qty = line.get("quantity").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    let unit_val = line.get("unitValue").and_then(|v| v.get("amountEGP")).and_then(|v| v.as_f64())
+                        .or_else(|| line.get("unitValue").and_then(|v| v.get("amountSold")).and_then(|v| v.as_f64()))
+                        .unwrap_or(0.0);
+                    let net_total = line.get("netTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let item_code = line.get("itemCode").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                    // Extract VAT from taxable items
+                    let mut line_vat_rate = 0.0;
+                    let mut line_vat_amount = 0.0;
+                    if let Some(taxable) = line.get("taxableItems").and_then(|v| v.as_array()) {
+                        for tax_item in taxable {
+                            let tax_type = tax_item.get("taxType").and_then(|v| v.as_str()).unwrap_or("");
+                            if tax_type == "T1" {
+                                line_vat_rate = tax_item.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                line_vat_amount = tax_item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            }
+                        }
+                    }
+
+                    invoice.lines.push(EtaInvoiceLine {
+                        description: desc,
+                        quantity: qty,
+                        unit_price: unit_val,
+                        line_total: net_total,
+                        vat_rate: line_vat_rate,
+                        vat_amount: line_vat_amount,
+                        item_code,
+                    });
+                }
+            }
+
+            // If grand_total is still 0, get from totalAmount in JSON
+            if invoice.grand_total == 0.0 {
+                invoice.grand_total = parsed.get("totalAmount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            }
+            // If net_amount is still 0, get from netAmount in JSON
+            if invoice.net_amount == 0.0 {
+                invoice.net_amount = parsed.get("netAmount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            }
+        }
     }
 
     Ok(invoice)
@@ -288,26 +214,27 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
     let form: serde_json::Value = serde_json::from_str(form_json)
         .map_err(|e| format!("Invalid form JSON: {}", e))?;
 
-    // Helper to get form field as string
     let get_str = |key: &str| -> String {
         form.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
     };
 
-    // 1. Compare buyer tax ID
+    let doc_type = get_str("doc_type");
+
+    // ── Common checks ──
+
+    // 1. Buyer tax ID
     let form_buyer = get_str("buyer_tax_id");
-    if !form_buyer.is_empty() && !invoice.buyer_tax_id.is_empty() {
-        if form_buyer != invoice.buyer_tax_id {
-            issues.push(ValidationIssue {
-                field: "Buyer Tax ID".into(),
-                xml_value: invoice.buyer_tax_id.clone(),
-                form_value: form_buyer,
-                severity: "error".into(),
-                message: "Buyer tax ID does not match the XML invoice".into(),
-            });
-        }
+    if !form_buyer.is_empty() && !invoice.buyer_tax_id.is_empty() && form_buyer != invoice.buyer_tax_id {
+        issues.push(ValidationIssue {
+            field: "Buyer Tax ID".into(),
+            xml_value: invoice.buyer_tax_id.clone(),
+            form_value: form_buyer,
+            severity: "error".into(),
+            message: "Buyer tax ID does not match the XML invoice".into(),
+        });
     }
 
-    // 2. Compare seller tax IDs
+    // 2. Seller tax IDs
     let seller_ids: Vec<String> = form.get("seller_tax_ids")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
@@ -324,100 +251,7 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         }
     }
 
-    // 3. Check invoice amounts against import entries
-    let import_entries = form.get("import_entries").and_then(|v| v.as_array());
-    if let Some(entries) = import_entries {
-        // For bank type, check commercial invoice amounts
-        let doc_type = get_str("doc_type");
-        if doc_type == "import" {
-            // Check if total from XML matches total of import entries
-            let xml_total = invoice.net_amount;
-            let mut form_total = 0.0;
-            for entry in entries {
-                let amt = entry.get("amount").and_then(|v| v.as_str())
-                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                let rate = entry.get("rate").and_then(|v| v.as_str())
-                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                    .unwrap_or(1.0);
-                form_total += amt * rate;
-            }
-            let diff = (xml_total - form_total).abs();
-            if diff > 0.5 {
-                issues.push(ValidationIssue {
-                    field: "Total Amount".into(),
-                    xml_value: format!("{:.2}", xml_total),
-                    form_value: format!("{:.2}", form_total),
-                    severity: "error".into(),
-                    message: format!("Total amount differs by {:.2}", diff),
-                });
-            }
-        }
-    }
-
-    // 4. Check commercial invoices (bank type)
-    let invoices = form.get("invoices").and_then(|v| v.as_array());
-    if let Some(inv_list) = invoices {
-        // Check if the XML invoice ID matches any invoice in the form
-        let form_inv_ids: Vec<String> = inv_list.iter()
-            .filter_map(|inv| inv.get("invoice_no").and_then(|v| v.as_str()).map(|s| s.to_string()))
-            .collect();
-        if !form_inv_ids.is_empty() && !invoice.invoice_id.is_empty() {
-            if !form_inv_ids.iter().any(|id| id == &invoice.invoice_id) {
-                issues.push(ValidationIssue {
-                    field: "Invoice Number".into(),
-                    xml_value: invoice.invoice_id.clone(),
-                    form_value: form_inv_ids.join(", "),
-                    severity: "warning".into(),
-                    message: "Invoice number in XML does not match any invoice number in the form".into(),
-                });
-            }
-        }
-
-        // Check individual invoice amounts
-        for inv in inv_list {
-            let inv_no = inv.get("invoice_no").and_then(|v| v.as_str()).unwrap_or("");
-            let inv_amt = inv.get("amount").and_then(|v| v.as_str())
-                .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                .unwrap_or(0.0);
-            if inv_no == invoice.invoice_id && inv_amt > 0.0 {
-                let diff = (invoice.grand_total - inv_amt).abs();
-                if diff > 0.5 {
-                    issues.push(ValidationIssue {
-                        field: format!("Invoice {} Amount", inv_no),
-                        xml_value: format!("{:.2}", invoice.grand_total),
-                        form_value: format!("{:.2}", inv_amt),
-                        severity: "error".into(),
-                        message: format!("Invoice amount differs by {:.2}", diff),
-                    });
-                }
-            }
-        }
-    }
-
-    // 5. Check VAT rate
-    let import_entries = form.get("import_entries").and_then(|v| v.as_array());
-    if let Some(entries) = import_entries {
-        for (i, entry) in entries.iter().enumerate() {
-            let line_idx = if i < invoice.lines.len() { Some(i) } else { None };
-            if let Some(li) = line_idx {
-                let xml_line = &invoice.lines[li];
-                let form_vat = entry.get("vat_rate").and_then(|v| v.as_str()).unwrap_or("0%");
-                let form_vat_pct = form_vat.trim_end_matches('%').parse::<f64>().unwrap_or(0.0);
-                if xml_line.vat_rate > 0.0 && form_vat_pct > 0.0 && (xml_line.vat_rate - form_vat_pct).abs() > 0.5 {
-                    issues.push(ValidationIssue {
-                        field: format!("Line {} VAT Rate", i + 1),
-                        xml_value: format!("{:.0}%", xml_line.vat_rate),
-                        form_value: form_vat.to_string(),
-                        severity: "warning".into(),
-                        message: format!("VAT rate in XML ({:.0}%) differs from form ({})", xml_line.vat_rate, form_vat),
-                    });
-                }
-            }
-        }
-    }
-
-    // 6. Check for missing data in XML
+    // 3. Missing data in XML
     if invoice.invoice_id.is_empty() {
         issues.push(ValidationIssue {
             field: "Invoice ID".into(),
@@ -444,6 +278,263 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
             severity: "warning".into(),
             message: "XML invoice has no Buyer Tax ID".into(),
         });
+    }
+
+    // ── Bank document checks ──
+    if doc_type != "import" {
+        let invoices = form.get("invoices").and_then(|v| v.as_array());
+
+        // Find matching invoice in the form
+        if let Some(inv_list) = invoices {
+            let matching_inv = inv_list.iter().find(|inv| {
+                inv.get("invoice_no").and_then(|v| v.as_str()) == Some(&invoice.invoice_id)
+            });
+
+            if let Some(inv) = matching_inv {
+                let inv_amt = inv.get("amount").and_then(|v| v.as_str())
+                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                    .unwrap_or(0.0);
+
+                // Check net amount (amount before VAT)
+                if invoice.net_amount > 0.0 && inv_amt > 0.0 {
+                    // Form amount could be net or gross — check both
+                    let diff_net = (invoice.net_amount - inv_amt).abs();
+                    let diff_gross = (invoice.grand_total - inv_amt).abs();
+                    if diff_net > 0.5 && diff_gross > 0.5 {
+                        issues.push(ValidationIssue {
+                            field: "Invoice Amount".into(),
+                            xml_value: format!("Net: {:.2} / Gross: {:.2}", invoice.net_amount, invoice.grand_total),
+                            form_value: format!("{:.2}", inv_amt),
+                            severity: "error".into(),
+                            message: format!("Invoice amount differs — XML net {:.2} / gross {:.2} vs form {:.2}", invoice.net_amount, invoice.grand_total, inv_amt),
+                        });
+                    }
+                }
+
+                // Check VAT amount
+                if invoice.total_vat > 0.0 {
+                    let form_vat_total = form.get("import_total_vat").and_then(|v| v.as_str())
+                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    if form_vat_total > 0.0 {
+                        let diff = (invoice.total_vat - form_vat_total).abs();
+                        if diff > 0.5 {
+                            issues.push(ValidationIssue {
+                                field: "Total VAT".into(),
+                                xml_value: format!("{:.2}", invoice.total_vat),
+                                form_value: format!("{:.2}", form_vat_total),
+                                severity: "error".into(),
+                                message: format!("Total VAT differs by {:.2}", diff),
+                            });
+                        }
+                    }
+                }
+
+                // Check WHT amount
+                if invoice.total_wht > 0.0 {
+                    let form_wht_total = form.get("import_total_wht").and_then(|v| v.as_str())
+                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    if form_wht_total > 0.0 {
+                        let diff = (invoice.total_wht - form_wht_total).abs();
+                        if diff > 0.5 {
+                            issues.push(ValidationIssue {
+                                field: "Total WHT".into(),
+                                xml_value: format!("{:.2}", invoice.total_wht),
+                                form_value: format!("{:.2}", form_wht_total),
+                                severity: "error".into(),
+                                message: format!("Total WHT differs by {:.2}", diff),
+                            });
+                        }
+                    }
+                }
+
+                // Check per-line VAT rates
+                for (i, xml_line) in invoice.lines.iter().enumerate() {
+                    if xml_line.vat_rate > 0.0 {
+                        // Check if 14% is expected for general services, 10% for inspection/clearance/testing
+                        let desc = xml_line.description.to_lowercase();
+                        let expected_rate = if desc.contains("inspection") || desc.contains("clearance") || desc.contains("testing") || desc.contains("custom") {
+                            10.0
+                        } else {
+                            14.0
+                        };
+                        if (xml_line.vat_rate - expected_rate).abs() > 0.5 {
+                            issues.push(ValidationIssue {
+                                field: format!("Line {} VAT Rate", i + 1),
+                                xml_value: format!("{:.0}%", xml_line.vat_rate),
+                                form_value: format!("{:.0}%", expected_rate),
+                                severity: "warning".into(),
+                                message: format!("Line '{}' has VAT {:.0}% — expected {:.0}% based on service type", xml_line.description, xml_line.vat_rate, expected_rate),
+                            });
+                        }
+                    }
+                }
+            } else {
+                // No matching invoice found
+                let form_inv_ids: Vec<String> = inv_list.iter()
+                    .filter_map(|inv| inv.get("invoice_no").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    .collect();
+                if !form_inv_ids.is_empty() {
+                    issues.push(ValidationIssue {
+                        field: "Invoice Number".into(),
+                        xml_value: invoice.invoice_id.clone(),
+                        form_value: form_inv_ids.join(", "),
+                        severity: "warning".into(),
+                        message: "Invoice number in XML does not match any invoice number in the form".into(),
+                    });
+                }
+            }
+        }
+    }
+
+    // ── Import document checks ──
+    if doc_type == "import" {
+        let import_entries = form.get("import_entries").and_then(|v| v.as_array());
+
+        if let Some(entries) = import_entries {
+            // Check total amount (sum of import entries with rates)
+            let mut form_total = 0.0;
+            let mut form_vat_total = 0.0;
+            let mut form_wht_total = 0.0;
+            for entry in entries {
+                let amt = entry.get("amount").and_then(|v| v.as_str())
+                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let rate = entry.get("rate").and_then(|v| v.as_str())
+                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                    .unwrap_or(1.0);
+                let egp_amt = amt * rate;
+                let vat_rate = entry.get("vat_rate").and_then(|v| v.as_str())
+                    .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let wht_rate = entry.get("wht_rate").and_then(|v| v.as_str())
+                    .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let free_wht = entry.get("free_wht").and_then(|v| v.as_bool()).unwrap_or(false);
+                form_total += egp_amt;
+                form_vat_total += egp_amt * vat_rate / 100.0;
+                if !free_wht {
+                    form_wht_total += egp_amt * wht_rate / 100.0;
+                }
+            }
+
+            // Check net amount
+            if invoice.net_amount > 0.0 && form_total > 0.0 {
+                let diff = (invoice.net_amount - form_total).abs();
+                if diff > 0.5 {
+                    issues.push(ValidationIssue {
+                        field: "Total Net Amount".into(),
+                        xml_value: format!("{:.2}", invoice.net_amount),
+                        form_value: format!("{:.2}", form_total),
+                        severity: "error".into(),
+                        message: format!("Total net amount differs by {:.2}", diff),
+                    });
+                }
+            }
+
+            // Check total VAT
+            if invoice.total_vat > 0.0 && form_vat_total > 0.0 {
+                let diff = (invoice.total_vat - form_vat_total).abs();
+                if diff > 0.5 {
+                    issues.push(ValidationIssue {
+                        field: "Total VAT".into(),
+                        xml_value: format!("{:.2}", invoice.total_vat),
+                        form_value: format!("{:.2}", form_vat_total),
+                        severity: "error".into(),
+                        message: format!("Total VAT differs by {:.2} — check VAT rates on individual lines", diff),
+                    });
+                }
+            }
+
+            // Check total WHT
+            if invoice.total_wht > 0.0 && form_wht_total > 0.0 {
+                let diff = (invoice.total_wht - form_wht_total).abs();
+                if diff > 0.5 {
+                    issues.push(ValidationIssue {
+                        field: "Total WHT".into(),
+                        xml_value: format!("{:.2}", invoice.total_wht),
+                        form_value: format!("{:.2}", form_wht_total),
+                        severity: "error".into(),
+                        message: format!("Total WHT differs by {:.2} — check WHT rates and free_wht flags", diff),
+                    });
+                }
+            }
+
+            // Check per-line VAT rates
+            for (i, entry) in entries.iter().enumerate() {
+                let form_vat = entry.get("vat_rate").and_then(|v| v.as_str()).unwrap_or("0%");
+                let form_vat_pct = form_vat.trim_end_matches('%').parse::<f64>().unwrap_or(0.0);
+                if i < invoice.lines.len() {
+                    let xml_line = &invoice.lines[i];
+                    if xml_line.vat_rate > 0.0 && form_vat_pct > 0.0 && (xml_line.vat_rate - form_vat_pct).abs() > 0.5 {
+                        issues.push(ValidationIssue {
+                            field: format!("Line {} VAT Rate", i + 1),
+                            xml_value: format!("{:.0}%", xml_line.vat_rate),
+                            form_value: form_vat.to_string(),
+                            severity: "warning".into(),
+                            message: format!("VAT rate in XML ({:.0}%) differs from form ({})", xml_line.vat_rate, form_vat),
+                        });
+                    }
+                    // Check per-line amount
+                    let amt = entry.get("amount").and_then(|v| v.as_str())
+                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let rate = entry.get("rate").and_then(|v| v.as_str())
+                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                        .unwrap_or(1.0);
+                    let egp_amt = amt * rate;
+                    if xml_line.line_total > 0.0 && egp_amt > 0.0 {
+                        let diff = (xml_line.line_total - egp_amt).abs();
+                        if diff > 0.5 {
+                            issues.push(ValidationIssue {
+                                field: format!("Line {} Amount", i + 1),
+                                xml_value: format!("{:.2}", xml_line.line_total),
+                                form_value: format!("{:.2}", egp_amt),
+                                severity: "error".into(),
+                                message: format!("Line amount differs by {:.2}", diff),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Check if XML has more lines than the form
+            if invoice.lines.len() > entries.len() {
+                issues.push(ValidationIssue {
+                    field: "Line Count".into(),
+                    xml_value: format!("{}", invoice.lines.len()),
+                    form_value: format!("{}", entries.len()),
+                    severity: "warning".into(),
+                    message: format!("XML has {} line items but form only has {} entries", invoice.lines.len(), entries.len()),
+                });
+            }
+        }
+
+        // Check commercial invoice amounts for import
+        let invoices = form.get("invoices").and_then(|v| v.as_array());
+        if let Some(inv_list) = invoices {
+            let matching_inv = inv_list.iter().find(|inv| {
+                inv.get("invoice_no").and_then(|v| v.as_str()) == Some(&invoice.invoice_id)
+            });
+            if let Some(inv) = matching_inv {
+                let inv_amt = inv.get("amount").and_then(|v| v.as_str())
+                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                if inv_amt > 0.0 && invoice.grand_total > 0.0 {
+                    let diff = (invoice.grand_total - inv_amt).abs();
+                    if diff > 0.5 {
+                        issues.push(ValidationIssue {
+                            field: "Commercial Invoice Amount".into(),
+                            xml_value: format!("{:.2}", invoice.grand_total),
+                            form_value: format!("{:.2}", inv_amt),
+                            severity: "error".into(),
+                            message: format!("Commercial invoice amount differs by {:.2}", diff),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     let is_valid = issues.iter().all(|i| i.severity != "error");
