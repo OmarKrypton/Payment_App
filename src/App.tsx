@@ -625,7 +625,10 @@ function App() {
   };
   const updImportEntry = (i: number, k: string, v: any) => {
     updateNested("import_entries", i, k, v);
-    if (k === "service_name") updateNested("import_entries", i, "attached_invoice", "");
+    if (k === "service_name") {
+      updateNested("import_entries", i, "attached_invoice", "");
+      syncPoolFromForm();
+    }
   };
   const delImportEntry = (i: number) => delRow("import_entries", i);
   const addCostRow = () => {
@@ -1319,6 +1322,7 @@ function App() {
       if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
       await recalc(parsed);
+      await syncPoolFromForm();
     } catch (e) {
       console.error("loadSnapshot failed", e);
     }
@@ -1378,19 +1382,43 @@ function App() {
     const serial = data.doc_serial || "draft";
     const updated = [...(formRef.current.import_entries ?? [])];
     for (const r of results) {
-      if (r.is_valid && r.matched_entry_index != null) {
-        const idx = r.matched_entry_index;
-        if (updated[idx] && !updated[idx].attached_invoice) {
-          updated[idx] = { ...updated[idx], attached_invoice: r.invoice.invoice_id };
-          try { await invoke("mark_pool_invoice_used", { invoiceId: r.invoice.invoice_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
+      const indices: number[] = Array.isArray(r.matched_entry_indices)
+        ? r.matched_entry_indices
+        : r.matched_entry_index != null ? [r.matched_entry_index] : [];
+      if (r.is_valid && indices.length > 0) {
+        for (const idx of indices) {
+          if (updated[idx] && !updated[idx].attached_invoice) {
+            updated[idx] = { ...updated[idx], attached_invoice: r.invoice.invoice_id };
+          }
         }
+        try { await invoke("mark_pool_invoice_used", { invoiceId: r.invoice.invoice_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
       }
     }
     if (updated.some((e, i) => e && e.attached_invoice !== (formRef.current.import_entries ?? [])[i]?.attached_invoice)) {
       formRef.current = { ...formRef.current, import_entries: updated };
       await recalc(formRef.current);
     }
-    try { await loadPool(); } catch {}
+    await syncPoolFromForm();
+  };
+
+  // Make the pool's "used" flag reflect the currently-open document:
+  // any pool invoice marked used that is not attached to an entry in this form
+  // becomes available again (e.g. an entry whose validation now has errors, or
+  // whose service_name was edited).
+  const syncPoolFromForm = async () => {
+    try {
+      const entries = formRef.current.import_entries ?? [];
+      const attached = new Set(
+        entries.filter((e: any) => e && e.attached_invoice).map((e: any) => e.attached_invoice)
+      );
+      const list = await invoke<any[]>("list_invoice_pool");
+      for (const p of list) {
+        if (p.status === 'used' && !attached.has(p.invoice_id)) {
+          try { await invoke("mark_pool_invoice_available", { invoiceId: p.invoice_id }); } catch {}
+        }
+      }
+      try { await loadPool(); } catch {}
+    } catch {}
   };
 
   const handleEtaValidate = async () => {

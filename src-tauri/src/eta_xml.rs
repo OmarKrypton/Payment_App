@@ -47,7 +47,7 @@ pub struct ValidationResult {
     pub issues: Vec<ValidationIssue>,
     pub is_valid: bool,
     #[serde(default)]
-    pub matched_entry_index: Option<usize>,
+    pub matched_entry_indices: Vec<usize>,
 }
 
 fn parse_f64(s: &str) -> f64 {
@@ -299,7 +299,7 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
 
     let doc_type = get_str("doc_type");
 
-    let mut matched_entry_index: Option<usize> = None;
+    let mut matched_entry_indices: Vec<usize> = Vec::new();
 
     // ── Common checks ──
 
@@ -474,86 +474,127 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         let import_entries = form.get("import_entries").and_then(|v| v.as_array());
 
         if let Some(entries) = import_entries {
-            // Find the form entry that matches this XML invoice.
-            // service_name is a free-text field like "A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT",
-            // so we match against the part after "Inv:" (spaces/case insensitive).
-            matched_entry_index = entries.iter().position(|entry| {
-                let name = entry.get("service_name").and_then(|v| v.as_str()).unwrap_or("");
-                service_matches_invoice(name, &invoice.invoice_id)
-            });
+            // Collect ALL form entries matching this XML invoice.
+            // Multiple services can reference the same invoice (e.g. two lines with
+            // different VAT rates), so we match every entry whose service_name contains
+            // the invoice id, then validate the aggregated totals and each line.
+            matched_entry_indices = entries.iter().enumerate()
+                .filter(|(_, entry)| {
+                    let name = entry.get("service_name").and_then(|v| v.as_str()).unwrap_or("");
+                    service_matches_invoice(name, &invoice.invoice_id)
+                })
+                .map(|(i, _)| i)
+                .collect();
 
-            if let Some(entry) = matched_entry_index.map(|i| &entries[i]) {
-                let amt = entry.get("amount").and_then(|v| v.as_str())
-                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                let rate = entry.get("rate").and_then(|v| v.as_str())
-                    .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                    .unwrap_or(1.0);
-                let egp_amt = amt * rate;
-                let vat_rate = entry.get("vat_rate").and_then(|v| v.as_str())
-                    .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                let wht_rate = entry.get("wht_rate").and_then(|v| v.as_str())
-                    .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                let free_wht = entry.get("free_wht").and_then(|v| v.as_bool()).unwrap_or(false);
+            if !matched_entry_indices.is_empty() {
+                let matched: Vec<&serde_json::Value> = matched_entry_indices.iter()
+                    .map(|&i| &entries[i])
+                    .collect();
 
-                // Check net amount against this single entry
-                if invoice.net_amount > 0.0 && egp_amt > 0.0 {
-                    let diff = (invoice.net_amount - egp_amt).abs();
+                let entry_numbers = |entry: &serde_json::Value| -> (f64, f64, f64, f64, f64, bool) {
+                    let amt = entry.get("amount").and_then(|v| v.as_str())
+                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let rate = entry.get("rate").and_then(|v| v.as_str())
+                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
+                        .unwrap_or(1.0);
+                    let vat_rate = entry.get("vat_rate").and_then(|v| v.as_str())
+                        .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let wht_rate = entry.get("wht_rate").and_then(|v| v.as_str())
+                        .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let free_wht = entry.get("free_wht").and_then(|v| v.as_bool()).unwrap_or(false);
+                    (amt * rate, amt, rate, vat_rate, wht_rate, free_wht)
+                };
+
+                // Aggregate totals across all matched entries
+                let mut form_total = 0.0;
+                let mut form_vat_total = 0.0;
+                let mut form_wht_total = 0.0;
+                for e in &matched {
+                    let (egp, _amt, _rate, vat_rate, wht_rate, free_wht) = entry_numbers(e);
+                    form_total += egp;
+                    form_vat_total += egp * vat_rate / 100.0;
+                    if !free_wht {
+                        form_wht_total += egp * wht_rate / 100.0;
+                    }
+                }
+
+                // Check net amount against the sum of matching entries
+                if invoice.net_amount > 0.0 && form_total > 0.0 {
+                    let diff = (invoice.net_amount - form_total).abs();
                     if diff > 0.5 {
                         issues.push(ValidationIssue {
                             field: "Total Net Amount".into(),
                             xml_value: format!("{:.2}", invoice.net_amount),
-                            form_value: format!("{:.2}", egp_amt),
+                            form_value: format!("{:.2}", form_total),
                             severity: "error".into(),
-                            message: format!("Total net amount differs by {:.2} (form {:.2} × rate {})", diff, amt, rate),
+                            message: format!("Total net amount differs by {:.2} — sum of matching services is {:.2}", diff, form_total),
                         });
                     }
                 }
 
                 // Check total VAT
-                let expected_vat = egp_amt * vat_rate / 100.0;
-                if invoice.total_vat > 0.0 && expected_vat > 0.0 {
-                    let diff = (invoice.total_vat - expected_vat).abs();
+                if invoice.total_vat > 0.0 && form_vat_total > 0.0 {
+                    let diff = (invoice.total_vat - form_vat_total).abs();
                     if diff > 0.5 {
                         issues.push(ValidationIssue {
                             field: "Total VAT".into(),
                             xml_value: format!("{:.2}", invoice.total_vat),
-                            form_value: format!("{:.2}", expected_vat),
+                            form_value: format!("{:.2}", form_vat_total),
                             severity: "error".into(),
-                            message: format!("Total VAT differs by {:.2} — expected {:.0}% of {:.2}", diff, vat_rate, egp_amt),
+                            message: format!("Total VAT differs by {:.2} — expected from matching services", diff),
                         });
                     }
                 }
 
                 // Check total WHT
-                if !free_wht && wht_rate > 0.0 {
-                    let expected_wht = egp_amt * wht_rate / 100.0;
-                    if invoice.total_wht > 0.0 && expected_wht > 0.0 {
-                        let diff = (invoice.total_wht - expected_wht).abs();
-                        if diff > 0.5 {
-                            issues.push(ValidationIssue {
-                                field: "Total WHT".into(),
-                                xml_value: format!("{:.2}", invoice.total_wht),
-                                form_value: format!("{:.2}", expected_wht),
-                                severity: "error".into(),
-                                message: format!("Total WHT differs by {:.2} — expected {:.0}% of {:.2}", diff, wht_rate, egp_amt),
-                            });
-                        }
+                if invoice.total_wht > 0.0 && form_wht_total > 0.0 {
+                    let diff = (invoice.total_wht - form_wht_total).abs();
+                    if diff > 0.5 {
+                        issues.push(ValidationIssue {
+                            field: "Total WHT".into(),
+                            xml_value: format!("{:.2}", invoice.total_wht),
+                            form_value: format!("{:.2}", form_wht_total),
+                            severity: "error".into(),
+                            message: format!("Total WHT differs by {:.2} — expected from matching services", diff),
+                        });
                     }
-                } else if !free_wht && wht_rate == 0.0 && invoice.total_wht > 0.0 {
+                } else if invoice.total_wht > 0.0 && form_wht_total == 0.0 {
                     issues.push(ValidationIssue {
                         field: "Total WHT".into(),
                         xml_value: format!("{:.2}", invoice.total_wht),
                         form_value: "0.00".into(),
                         severity: "warning".into(),
-                        message: "XML has WHT but the form entry has WHT rate 0% and free_wht unchecked".into(),
+                        message: "XML invoice has WHT but matching services have none (0% or free_wht)".into(),
+                    });
+                } else if form_wht_total > 0.0 && invoice.total_wht == 0.0 {
+                    issues.push(ValidationIssue {
+                        field: "Total WHT".into(),
+                        xml_value: "0.00".into(),
+                        form_value: format!("{:.2}", form_wht_total),
+                        severity: "warning".into(),
+                        message: "Matching services expect WHT but the XML invoice has none".into(),
                     });
                 }
 
-                // Check each XML line's VAT rate against the entry's VAT rate
+                // Check each XML line's VAT rate / amount against the corresponding matched entry
                 for (i, xml_line) in invoice.lines.iter().enumerate() {
+                    if i >= matched.len() {
+                        break;
+                    }
+                    let entry = matched[i];
+                    let (egp, _amt, _rate, vat_rate, _wht_rate, _free_wht) = entry_numbers(entry);
+                    if xml_line.line_total > 0.0 && egp > 0.0 && (xml_line.line_total - egp).abs() > 0.5 {
+                        issues.push(ValidationIssue {
+                            field: format!("Line {} Amount", i + 1),
+                            xml_value: format!("{:.2}", xml_line.line_total),
+                            form_value: format!("{:.2}", egp),
+                            severity: "error".into(),
+                            message: format!("Line amount differs by {:.2} (form amount × rate)", (xml_line.line_total - egp).abs()),
+                        });
+                    }
                     if xml_line.vat_rate > 0.0 && vat_rate > 0.0 && (xml_line.vat_rate - vat_rate).abs() > 0.5 {
                         issues.push(ValidationIssue {
                             field: format!("Line {} VAT Rate", i + 1),
@@ -563,6 +604,17 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                             message: format!("VAT rate in XML ({:.0}%) differs from form ({:.0}%)", xml_line.vat_rate, vat_rate),
                         });
                     }
+                }
+
+                // More XML lines than matching services
+                if invoice.lines.len() > matched.len() {
+                    issues.push(ValidationIssue {
+                        field: "Line Count".into(),
+                        xml_value: format!("{}", invoice.lines.len()),
+                        form_value: format!("{}", matched.len()),
+                        severity: "warning".into(),
+                        message: format!("XML has {} line items but only {} services match this invoice", invoice.lines.len(), matched.len()),
+                    });
                 }
             } else {
                 // No form entry matches this invoice
@@ -613,7 +665,7 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         invoice: invoice.clone(),
         issues,
         is_valid,
-        matched_entry_index,
+        matched_entry_indices,
     })
 }
 
@@ -632,6 +684,46 @@ mod tests {
         assert!(service_matches_invoice("A4 KPI CC 0206ADT", "0206ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0205ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026", "0206ADT"));
+    }
+
+    #[test]
+    fn matches_shared_invoice_across_entries() {
+        // Two services reference the same invoice id (different VAT rates).
+        // Both entries must match and totals must be validated against the sum.
+        let form_json = r#"{
+            "doc_type": "import",
+            "buyer_tax_id": "100489095",
+            "seller_tax_ids": ["721067026"],
+            "invoices": [{"invoice_no": "0205 ADT", "seller_tax_id": "721067026", "amount": "26250"}],
+            "import_entries": [
+                {"service_name": "Customs A Inv: 0205 ADT", "amount": "10000", "rate": "1", "vat_rate": "14%", "wht_rate": "3%", "free_wht": false},
+                {"service_name": "Customs B Inv: 0205 ADT", "amount": "13500", "rate": "1", "vat_rate": "10%", "wht_rate": "0%", "free_wht": true}
+            ]
+        }"#;
+        let xml = r#"<document>
+  <internalId>0205 ADT</internalId>
+  <issuerId>721067026</issuerId>
+  <receiverId>100489095</receiverId>
+  <netAmount>23500</netAmount>
+  <total>26250</total>
+  <document>
+    {"invoiceLines":[
+      {"description":"A","quantity":1,"netTotal":10000,"taxableItems":[
+        {"taxType":"T2","amount":1400,"subType":"Tbl01","rate":14},
+        {"taxType":"T4","amount":300,"subType":"W004","rate":3}]},
+      {"description":"B","quantity":1,"netTotal":13500,"taxableItems":[
+        {"taxType":"T2","amount":1350,"subType":"Tbl01","rate":10}]}],
+     "taxTotals":[{"taxType":"T2","amount":2750},{"taxType":"T4","amount":300}],
+     "netAmount":23500,"totalAmount":26250}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.net_amount, 23500.0);
+        assert_eq!(inv.total_vat, 2750.0);
+        assert_eq!(inv.total_wht, 300.0);
+        let res = validate_eta_against_form(&inv, form_json).unwrap();
+        assert_eq!(res.matched_entry_indices, vec![0, 1], "both entries reference invoice 0205 ADT");
+        assert!(res.is_valid, "totals match the sum of both entries: {:#?}", res.issues);
     }
 
     #[test]
