@@ -582,9 +582,10 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 // Per-line checks. Strict positional matching is only meaningful when
                 // the XML line count equals the number of matched services. A single
                 // XML line is often split across multiple services (e.g. 2600 →
-                // 1000 + 1600), or several lines may map to one service; in those
-                // cases the aggregate totals above already validate the split, so we
-                // skip positional line/entry comparisons.
+                // 1000 + 1600), or many XML lines may be aggregated into one service
+                // (e.g. a total line). In those cases the aggregate totals above
+                // already validate the amounts, so we skip positional line/entry
+                // comparisons and avoid a confusing line-count warning.
                 if invoice.lines.len() == matched.len() {
                     for (i, xml_line) in invoice.lines.iter().enumerate() {
                         let entry = matched[i];
@@ -608,14 +609,6 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                             });
                         }
                     }
-                } else if invoice.lines.len() > matched.len() {
-                    issues.push(ValidationIssue {
-                        field: "Line Count".into(),
-                        xml_value: format!("{}", invoice.lines.len()),
-                        form_value: format!("{}", matched.len()),
-                        severity: "warning".into(),
-                        message: format!("XML has {} line items but only {} services match this invoice", invoice.lines.len(), matched.len()),
-                    });
                 }
             } else {
                 // No form entry matches this invoice
