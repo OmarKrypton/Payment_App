@@ -51,6 +51,29 @@ fn parse_f64(s: &str) -> f64 {
     s.trim().replace(',', "").parse().unwrap_or(0.0)
 }
 
+fn normalize_id(s: &str) -> String {
+    s.trim().to_uppercase().chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn service_matches_invoice(service_name: &str, invoice_id: &str) -> bool {
+    let invoice_norm = normalize_id(invoice_id);
+    if invoice_norm.is_empty() {
+        return false;
+    }
+    let upper = service_name.to_uppercase();
+    let mut candidates = vec![normalize_id(&upper)];
+    if let Some(pos) = upper.find("INV:") {
+        candidates.push(normalize_id(&upper[pos + 4..]));
+    }
+    candidates.iter().any(|c| {
+        if c.is_empty() {
+            return false;
+        }
+        c == &invoice_norm
+            || (invoice_norm.len() >= 4 && (c.ends_with(&invoice_norm) || c.starts_with(&invoice_norm)))
+    })
+}
+
 pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
     let mut reader = Reader::from_str(xml_content);
     reader.config_mut().trim_text(true);
@@ -201,6 +224,28 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
             // If net_amount is still 0, get from netAmount in JSON
             if invoice.net_amount == 0.0 {
                 invoice.net_amount = parsed.get("netAmount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            }
+            // Identity fields may only exist in the embedded JSON
+            if invoice.invoice_id.is_empty() {
+                invoice.invoice_id = parsed.get("internalId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            }
+            if invoice.uuid.is_empty() {
+                invoice.uuid = parsed.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            }
+            if invoice.seller_tax_id.is_empty() {
+                invoice.seller_tax_id = parsed.get("issuerId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            }
+            if invoice.seller_name.is_empty() {
+                invoice.seller_name = parsed.get("issuerName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            }
+            if invoice.buyer_tax_id.is_empty() {
+                invoice.buyer_tax_id = parsed.get("receiverId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            }
+            if invoice.buyer_name.is_empty() {
+                invoice.buyer_name = parsed.get("receiverName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            }
+            if invoice.issue_date.is_empty() {
+                invoice.issue_date = parsed.get("dateTimeIssued").and_then(|v| v.as_str()).unwrap_or("").to_string();
             }
         }
     }
@@ -393,11 +438,12 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         let import_entries = form.get("import_entries").and_then(|v| v.as_array());
 
         if let Some(entries) = import_entries {
-            // Find the form entry that matches this XML invoice by service name / invoice number
+            // Find the form entry that matches this XML invoice.
+            // service_name is a free-text field like "A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT",
+            // so we match against the part after "Inv:" (spaces/case insensitive).
             let matching_entry = entries.iter().find(|entry| {
-                entry.get("service_name").and_then(|v| v.as_str())
-                    .map(|s| s.trim())
-                    == Some(invoice.invoice_id.as_str())
+                let name = entry.get("service_name").and_then(|v| v.as_str()).unwrap_or("");
+                service_matches_invoice(name, &invoice.invoice_id)
             });
 
             if let Some(entry) = matching_entry {
@@ -532,4 +578,18 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         issues,
         is_valid,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_inv_in_free_text() {
+        assert!(service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0206ADT"));
+        assert!(service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0206 ADT"));
+        assert!(service_matches_invoice("0206ADT", "0206ADT"));
+        assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0205ADT"));
+        assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026", "0206ADT"));
+    }
 }
