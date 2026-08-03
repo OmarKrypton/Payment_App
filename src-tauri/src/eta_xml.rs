@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EtaInvoiceLine {
@@ -175,17 +176,41 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         // Fix HTML entities first
         let json_str = document_json.replace("&#34;", "\"");
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            // Determine which tax types are withholding by inspecting line-level subtypes.
+            // WHT entries carry a "W"-prefixed subtype (e.g. W004); added taxes (VAT-like)
+            // like Tbl01 must NOT be summed into WHT.
+            let mut wht_tax_types: HashSet<String> = HashSet::new();
+            if let Some(lines) = parsed.get("invoiceLines").and_then(|v| v.as_array()) {
+                for line in lines {
+                    if let Some(taxable) = line.get("taxableItems").and_then(|v| v.as_array()) {
+                        for tax_item in taxable {
+                            let sub = tax_item.get("subType").and_then(|v| v.as_str()).unwrap_or("");
+                            if sub.starts_with('W') {
+                                if let Some(tt) = tax_item.get("taxType").and_then(|v| v.as_str()) {
+                                    wht_tax_types.insert(tt.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Extract tax totals
             if let Some(tax_totals) = parsed.get("taxTotals").and_then(|v| v.as_array()) {
                 for tax in tax_totals {
                     let tax_type = tax.get("taxType").and_then(|v| v.as_str()).unwrap_or("");
                     let amt = tax.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    if tax_type == "T1" {
-                        // T1 is VAT
-                        invoice.total_vat = amt;
-                    } else if tax_type == "T2" || tax_type == "T4" || tax_type == "T5" {
-                        // Various WHT types
+                    if wht_tax_types.contains(tax_type) {
+                        // Withholding tax (subtype W-prefixed)
                         invoice.total_wht += amt;
+                    } else if tax_type == "T1" || !wht_tax_types.is_empty() {
+                        // T1 is VAT; any other tax once WHT types are known is added (VAT-like)
+                        invoice.total_vat += amt;
+                    } else if tax_type == "T2" || tax_type == "T4" || tax_type == "T5" {
+                        // Fallback (no W subtypes present): treat as WHT as before
+                        invoice.total_wht += amt;
+                    } else {
+                        invoice.total_vat += amt;
                     }
                 }
             }
@@ -201,13 +226,13 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                     let net_total = line.get("netTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let item_code = line.get("itemCode").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-                    // Extract VAT from taxable items
+                    // Extract the added (VAT-like) tax from taxable items; skip WHT entries
                     let mut line_vat_rate = 0.0;
                     let mut line_vat_amount = 0.0;
                     if let Some(taxable) = line.get("taxableItems").and_then(|v| v.as_array()) {
                         for tax_item in taxable {
                             let tax_type = tax_item.get("taxType").and_then(|v| v.as_str()).unwrap_or("");
-                            if tax_type == "T1" {
+                            if !wht_tax_types.contains(tax_type) {
                                 line_vat_rate = tax_item.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
                                 line_vat_amount = tax_item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
                             }
@@ -607,5 +632,32 @@ mod tests {
         assert!(service_matches_invoice("A4 KPI CC 0206ADT", "0206ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0205ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026", "0206ADT"));
+    }
+
+    #[test]
+    fn parses_wht_by_subtype() {
+        let xml = r#"<document>
+  <internalId>0205 ADT</internalId>
+  <issuerId>721067026</issuerId>
+  <receiverId>100489095</receiverId>
+  <netAmount>23500</netAmount>
+  <total>25145</total>
+  <document>
+    {"invoiceLines":[{"description":"Customs Clearance","quantity":1,"netTotal":23500,"taxableItems":[
+      {"taxType":"T2","amount":2350,"subType":"Tbl01","rate":10},
+      {"taxType":"T4","amount":705,"subType":"W004","rate":3}]}],
+     "taxTotals":[{"taxType":"T2","amount":2350},{"taxType":"T4","amount":705}],
+     "netAmount":23500,"totalAmount":25145}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.invoice_id, "0205 ADT");
+        assert_eq!(inv.net_amount, 23500.0);
+        assert_eq!(inv.grand_total, 25145.0);
+        assert_eq!(inv.total_wht, 705.0, "WHT should be only the W-subtype entry (T4)");
+        assert_eq!(inv.total_vat, 2350.0, "Tbl01 (T2) is an added tax, not WHT");
+        assert_eq!(inv.lines.len(), 1);
+        assert_eq!(inv.lines[0].vat_rate, 10.0);
+        assert_eq!(inv.lines[0].vat_amount, 2350.0);
     }
 }
