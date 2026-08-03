@@ -61,6 +61,16 @@ pub fn save_snapshot(conn: &Connection, label: &str, notes: &str, data_json: &st
     Ok(conn.last_insert_rowid())
 }
 
+pub fn update_snapshot(conn: &Connection, id: i64, label: &str, notes: &str, data_json: &str) -> Result<(), String> {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    conn.execute(
+        "UPDATE snapshots SET label = ?1, notes = ?2, data = ?3, created_at = ?4 WHERE id = ?5",
+        params![label, notes, data_json, now, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn list_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntry>, String> {
     let mut result = Vec::new();
 

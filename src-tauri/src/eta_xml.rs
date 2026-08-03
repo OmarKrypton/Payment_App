@@ -45,6 +45,8 @@ pub struct ValidationResult {
     pub invoice: EtaInvoice,
     pub issues: Vec<ValidationIssue>,
     pub is_valid: bool,
+    #[serde(default)]
+    pub matched_entry_index: Option<usize>,
 }
 
 fn parse_f64(s: &str) -> f64 {
@@ -272,6 +274,8 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
 
     let doc_type = get_str("doc_type");
 
+    let mut matched_entry_index: Option<usize> = None;
+
     // ── Common checks ──
 
     // 1. Buyer tax ID
@@ -448,12 +452,12 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
             // Find the form entry that matches this XML invoice.
             // service_name is a free-text field like "A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT",
             // so we match against the part after "Inv:" (spaces/case insensitive).
-            let matching_entry = entries.iter().find(|entry| {
+            matched_entry_index = entries.iter().position(|entry| {
                 let name = entry.get("service_name").and_then(|v| v.as_str()).unwrap_or("");
                 service_matches_invoice(name, &invoice.invoice_id)
             });
 
-            if let Some(entry) = matching_entry {
+            if let Some(entry) = matched_entry_index.map(|i| &entries[i]) {
                 let amt = entry.get("amount").and_then(|v| v.as_str())
                     .and_then(|s| s.replace(',', "").parse::<f64>().ok())
                     .unwrap_or(0.0);
@@ -584,6 +588,7 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         invoice: invoice.clone(),
         issues,
         is_valid,
+        matched_entry_index,
     })
 }
 

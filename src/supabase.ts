@@ -85,6 +85,16 @@ export async function deleteSnapshotRemote(id: number): Promise<void> {
   if (count === 0) throw new Error("Delete had no effect — row may not exist or RLS blocked it");
 }
 
+export async function updateSnapshotRemote(id: number, label: string, notes: string, dataJson: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("snapshots")
+    .update({ label, notes, data_json: dataJson, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
 export async function changePassword(newPassword: string): Promise<void> {
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) throw error;

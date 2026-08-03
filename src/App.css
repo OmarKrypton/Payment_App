@@ -638,6 +638,23 @@ body {
   flex-shrink: 0;
 }
 
+/* ── Attached Invoice Pill ── */
+.attached-pill {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--green);
+  background: var(--green-bg);
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-bottom: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── History Group Title ── */
 .history-group-title {
   font-size: 11px;
