@@ -1913,20 +1913,25 @@ function App() {
                 <div className="history-empty">{t("发票池为空，导入XML发票以开始", "Pool is empty. Import XML invoices to get started.")}</div>
               ) : poolList.map((p: any) => (
                 <div key={p.id} className="history-item" style={p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'}}>
-                  <div style={{minWidth:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    <div style={{minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                       <strong style={{fontSize:12}}>{p.invoice_id}</strong>
                       <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
                         background:p.status==='available'?'var(--green-bg)':'#fffbeb',
                         color:p.status==='available'?'var(--green)':'var(--orange)',
                         border:`1px solid ${p.status==='available'?'#bbf7d0':'#fde68a'}`
                       }}>{p.status === 'available' ? t("可用", "Available") : t("已使用", "Used")}</span>
+                      {p.status === 'used' && p.used_by_label && (
+                        <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
+                          background:'var(--accent-light)',color:'var(--accent)',
+                          border:'1px solid var(--accent)'
+                        }}>{t("序列号", "Serial")}: {p.used_by_label}</span>
+                      )}
                     </div>
                     <p style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>
                       {p.seller_name || p.seller_tax_id}
                       {p.buyer_tax_id ? ` → ${p.buyer_tax_id}` : ''}
                       {p.issue_date ? ` · ${p.issue_date}` : ''}
-                      {p.status === 'used' && p.used_by_label ? ` · ${t("用于", "Used in")}: ${p.used_by_label}` : ''}
                     </p>
                     <p style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
                       {t("净额", "Net")}: {p.net_amount.toFixed(2)} · VAT: {p.total_vat.toFixed(2)} · {t("合计", "Total")}: {p.grand_total.toFixed(2)}
