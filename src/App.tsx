@@ -1208,12 +1208,14 @@ function App() {
 
   const saveSnapshot = async () => {
     if (overwriteTarget) {
-      // Overwrite an existing snapshot (maker fixed a rejected document)
+      // Overwrite an existing snapshot (maker fixed a rejected document).
+      // Preserve the decision chosen in the Final Decision card (e.g. an approved
+      // doc stays approved; for a rejected doc the maker sets Approve before saving).
       const saveData = {
         ...data,
-        final_decision: "",
-        conditional_reason: "",
-        reject_reason: "",
+        final_decision: data.final_decision || "",
+        conditional_reason: data.final_decision === "conditional" ? (data.conditional_reason || "") : "",
+        reject_reason: data.final_decision === "reject" ? (data.reject_reason || "") : "",
         auditor: data.auditor || authUser || "",
       };
       const dataJson = JSON.stringify(saveData);
