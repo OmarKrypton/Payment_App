@@ -214,6 +214,8 @@ pub struct ImportEntry {
     pub vat_rate: String,
     #[serde(default)]
     pub temp_labour: bool,
+    #[serde(default)]
+    pub attached_invoice: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 
 interface OcrFieldInfo {
@@ -27,6 +27,7 @@ interface ImportEntry {
   wht_rate: string;
   vat_rate: string;
   temp_labour: boolean;
+  attached_invoice: string;
 }
 
 interface InvoiceData {
@@ -286,6 +287,7 @@ function App() {
   const [showPool, setShowPool] = useState(false);
   const [poolList, setPoolList] = useState<any[]>([]);
   const [poolLoading, setPoolLoading] = useState(false);
+  const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
@@ -617,11 +619,14 @@ function App() {
   const delInv = (i: number) => delRow("invoices", i);
 
   const addImportEntry = () => {
-    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false }];
+    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false, attached_invoice: "" }];
     formRef.current = { ...formRef.current, import_entries: arr };
     recalc(formRef.current);
   };
-  const updImportEntry = (i: number, k: string, v: any) => updateNested("import_entries", i, k, v);
+  const updImportEntry = (i: number, k: string, v: any) => {
+    updateNested("import_entries", i, k, v);
+    if (k === "service_name") updateNested("import_entries", i, "attached_invoice", "");
+  };
   const delImportEntry = (i: number) => delRow("import_entries", i);
   const addCostRow = () => {
     const arr = [...(data.import_costs ?? []), { name: "", amount: "0.00" }];
@@ -883,7 +888,12 @@ function App() {
             const wht = e.free_wht ? 0 : Math.round(displayAmt * whtRate / 100 * 100) / 100;
             return (
               <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
-                <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
+                <div style={{minWidth:0}}>
+                  {e.attached_invoice && (
+                    <div className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${e.attached_invoice}`}>✓ {e.attached_invoice}</div>
+                  )}
+                  <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
+                </div>
                 <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
                 <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} style={rateVisible ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
@@ -923,6 +933,7 @@ function App() {
     formRef.current = { ...EMPTY_FORM };
     setComputed(EMPTY_CALC);
     setTab("bank");
+    setOverwriteTarget(null);
     await recalc(formRef.current);
     try { await invoke("save_config", { data: formRef.current }); } catch {}
   }, [t, recalc]);
@@ -1196,6 +1207,39 @@ function App() {
   }, [data.doc_serial]);
 
   const saveSnapshot = async () => {
+    if (overwriteTarget) {
+      // Overwrite an existing snapshot (maker fixed a rejected document)
+      const saveData = {
+        ...data,
+        final_decision: "",
+        conditional_reason: "",
+        reject_reason: "",
+        auditor: data.auditor || authUser || "",
+      };
+      const dataJson = JSON.stringify(saveData);
+      const target = overwriteTarget;
+      if (target.remote && authUser) {
+        try {
+          await updateSnapshotRemote(target.id, target.label, "", dataJson);
+          setSynced(true);
+          showAlert(`${t("已覆盖并同步", "Overwritten & synced")} (${target.label})`);
+        } catch (e: any) {
+          showAlert(`${t("覆盖失败", "Overwrite failed")}: ${e.message || e}`);
+          return;
+        }
+      } else {
+        try {
+          await invoke("update_history", { id: target.id, label: target.label, notes: "", dataJson });
+          showAlert(`${t("已覆盖", "Overwritten")} (${target.label})`);
+        } catch (e: any) {
+          showAlert(`${t("覆盖失败", "Overwrite failed")}: ${e.message || e}`);
+          return;
+        }
+      }
+      setOverwriteTarget(null);
+      loadHistoryList(historySearch);
+      return;
+    }
     const serial = data.doc_serial;
     if (serial) {
       // Check for duplicate serial number in Supabase
@@ -1279,6 +1323,12 @@ function App() {
     hideHistoryModal();
   };
 
+  const startOverwrite = async (id: number) => {
+    const entry = historyList.find(h => h.id === id);
+    await loadSnapshot(id);
+    setOverwriteTarget({ id, label: entry?.label || "", remote: !!authUser });
+  };
+
   const historySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onHistorySearch = (v: string) => {
     setHistorySearch(v);
@@ -1322,6 +1372,25 @@ function App() {
     loadHistoryList(historySearch);
   };
 
+  const attachValidatedInvoices = async (results: any[]) => {
+    const serial = data.doc_serial || "draft";
+    const updated = [...(formRef.current.import_entries ?? [])];
+    for (const r of results) {
+      if (r.is_valid && r.matched_entry_index != null) {
+        const idx = r.matched_entry_index;
+        if (updated[idx] && !updated[idx].attached_invoice) {
+          updated[idx] = { ...updated[idx], attached_invoice: r.invoice.invoice_id };
+          try { await invoke("mark_pool_invoice_used", { invoiceId: r.invoice.invoice_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
+        }
+      }
+    }
+    if (updated.some((e, i) => e && e.attached_invoice !== (formRef.current.import_entries ?? [])[i]?.attached_invoice)) {
+      formRef.current = { ...formRef.current, import_entries: updated };
+      await recalc(formRef.current);
+    }
+    try { await loadPool(); } catch {}
+  };
+
   const handleEtaValidate = async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -1335,6 +1404,7 @@ function App() {
       const result = await invoke<any[]>("validate_eta_xml", { filePaths, formJson });
       // Also import to pool
       try { await invoke("import_to_pool", { filePaths }); } catch {}
+      await attachValidatedInvoices(result);
       setEtaResult(result);
     } catch (e: any) {
       showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
@@ -1379,6 +1449,7 @@ function App() {
     try {
       const formJson = JSON.stringify(formRef.current);
       const result = await invoke<any[]>("validate_from_pool", { invoiceIds, formJson });
+      await attachValidatedInvoices(result);
       setEtaResult(result);
       setShowPool(false);
     } catch (e: any) {
@@ -1647,6 +1718,9 @@ function App() {
                   </div>
                   <div className="history-actions">
                     <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
+                    {(isOwn || isAdminUser) && !pendingDelete && (
+                      <button className="btn-approve" onClick={() => startOverwrite(h.id)} title={t("加载并覆盖此快照（重置审核决定）", "Load & overwrite this snapshot (resets decision)")}>{t("覆盖", "Overwrite")}</button>
+                    )}
                     {isAdminUser && pendingDelete && (
                       <>
                         <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>

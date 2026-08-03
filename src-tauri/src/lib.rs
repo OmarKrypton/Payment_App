@@ -60,6 +60,19 @@ fn save_history(
 }
 
 #[tauri::command]
+fn update_history(
+    state: tauri::State<'_, DbState>,
+    id: i64,
+    label: String,
+    notes: String,
+    data_json: String,
+) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::update_snapshot(conn, id, &label, &notes, &data_json)
+}
+
+#[tauri::command]
 fn load_history(state: tauri::State<'_, DbState>, id: i64) -> Result<String, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -272,6 +285,7 @@ pub fn run() {
             compute_retention,
             list_history,
             save_history,
+            update_history,
             load_history,
             delete_history,
             check_serial_exists,
