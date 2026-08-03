@@ -90,7 +90,7 @@ export async function updateSnapshotRemote(id: number, label: string, notes: str
   if (!session) throw new Error("Not authenticated");
   const { error } = await supabase
     .from("snapshots")
-    .update({ label, notes, data_json: dataJson, updated_at: new Date().toISOString() })
+    .update({ label, notes, data_json: dataJson })
     .eq("id", id);
   if (error) throw error;
 }
