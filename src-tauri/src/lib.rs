@@ -125,7 +125,7 @@ fn import_to_pool(state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> 
         let xml_content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read XML file {}: {}", path, e))?;
         let invoice = eta_xml::parse_eta_xml(&xml_content)?;
-        history::add_to_pool(conn, &invoice)?;
+        history::add_to_pool(conn, &invoice, &xml_content)?;
         imported.push(invoice);
     }
     Ok(imported)
@@ -168,23 +168,30 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>
     for inv_id in &invoice_ids {
         let pool_inv = pool.iter().find(|p| &p.invoice_id == inv_id)
             .ok_or_else(|| format!("Invoice {} not found in pool", inv_id))?;
-        let lines: Vec<eta_xml::EtaInvoiceLine> = serde_json::from_str(&pool_inv.lines_json)
-            .unwrap_or_default();
-        let invoice = eta_xml::EtaInvoice {
-            invoice_id: pool_inv.invoice_id.clone(),
-            uuid: pool_inv.uuid.clone(),
-            issue_date: pool_inv.issue_date.clone(),
-            invoice_type_code: String::new(),
-            seller_tax_id: pool_inv.seller_tax_id.clone(),
-            seller_name: pool_inv.seller_name.clone(),
-            buyer_tax_id: pool_inv.buyer_tax_id.clone(),
-            buyer_name: pool_inv.buyer_name.clone(),
-            currency: pool_inv.currency.clone(),
-            net_amount: pool_inv.net_amount,
-            total_vat: pool_inv.total_vat,
-            total_wht: pool_inv.total_wht,
-            grand_total: pool_inv.grand_total,
-            lines,
+
+        // Re-parse the original XML when available so results are always fresh,
+        // regardless of when the invoice was imported.
+        let invoice = if !pool_inv.raw_xml.is_empty() {
+            eta_xml::parse_eta_xml(&pool_inv.raw_xml)?
+        } else {
+            let lines: Vec<eta_xml::EtaInvoiceLine> = serde_json::from_str(&pool_inv.lines_json)
+                .unwrap_or_default();
+            eta_xml::EtaInvoice {
+                invoice_id: pool_inv.invoice_id.clone(),
+                uuid: pool_inv.uuid.clone(),
+                issue_date: pool_inv.issue_date.clone(),
+                invoice_type_code: String::new(),
+                seller_tax_id: pool_inv.seller_tax_id.clone(),
+                seller_name: pool_inv.seller_name.clone(),
+                buyer_tax_id: pool_inv.buyer_tax_id.clone(),
+                buyer_name: pool_inv.buyer_name.clone(),
+                currency: pool_inv.currency.clone(),
+                net_amount: pool_inv.net_amount,
+                total_vat: pool_inv.total_vat,
+                total_wht: pool_inv.total_wht,
+                grand_total: pool_inv.grand_total,
+                lines,
+            }
         };
         let result = eta_xml::validate_eta_against_form(&invoice, &form_json)?;
         results.push(result);
