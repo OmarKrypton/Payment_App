@@ -65,6 +65,13 @@ fn service_matches_invoice(service_name: &str, invoice_id: &str) -> bool {
     if let Some(pos) = upper.find("INV:") {
         candidates.push(normalize_id(&upper[pos + 4..]));
     }
+    // Match any standalone alphanumeric token (covers numbers typed without "Inv:",
+    // even when embedded in the middle of the text)
+    for token in upper.split(|c: char| !c.is_alphanumeric()) {
+        if normalize_id(token) == invoice_norm {
+            return true;
+        }
+    }
     candidates.iter().any(|c| {
         if c.is_empty() {
             return false;
@@ -589,6 +596,10 @@ mod tests {
         assert!(service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0206ADT"));
         assert!(service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0206 ADT"));
         assert!(service_matches_invoice("0206ADT", "0206ADT"));
+        assert!(service_matches_invoice("0206 ADT", "0206ADT"));
+        assert!(service_matches_invoice("SERVICE 0206ADT 1234", "0206ADT"));
+        assert!(service_matches_invoice("0206ADT TAX ID 721067026", "0206ADT"));
+        assert!(service_matches_invoice("A4 KPI CC 0206ADT", "0206ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0205ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026", "0206ADT"));
     }
