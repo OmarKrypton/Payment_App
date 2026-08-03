@@ -579,35 +579,36 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                     });
                 }
 
-                // Check each XML line's VAT rate / amount against the corresponding matched entry
-                for (i, xml_line) in invoice.lines.iter().enumerate() {
-                    if i >= matched.len() {
-                        break;
+                // Per-line checks. Strict positional matching is only meaningful when
+                // the XML line count equals the number of matched services. A single
+                // XML line is often split across multiple services (e.g. 2600 →
+                // 1000 + 1600), or several lines may map to one service; in those
+                // cases the aggregate totals above already validate the split, so we
+                // skip positional line/entry comparisons.
+                if invoice.lines.len() == matched.len() {
+                    for (i, xml_line) in invoice.lines.iter().enumerate() {
+                        let entry = matched[i];
+                        let (egp, _amt, _rate, vat_rate, _wht_rate, _free_wht) = entry_numbers(entry);
+                        if xml_line.line_total > 0.0 && egp > 0.0 && (xml_line.line_total - egp).abs() > 0.5 {
+                            issues.push(ValidationIssue {
+                                field: format!("Line {} Amount", i + 1),
+                                xml_value: format!("{:.2}", xml_line.line_total),
+                                form_value: format!("{:.2}", egp),
+                                severity: "error".into(),
+                                message: format!("Line amount differs by {:.2} (form amount × rate)", (xml_line.line_total - egp).abs()),
+                            });
+                        }
+                        if xml_line.vat_rate > 0.0 && vat_rate > 0.0 && (xml_line.vat_rate - vat_rate).abs() > 0.5 {
+                            issues.push(ValidationIssue {
+                                field: format!("Line {} VAT Rate", i + 1),
+                                xml_value: format!("{:.0}%", xml_line.vat_rate),
+                                form_value: format!("{:.0}%", vat_rate),
+                                severity: "warning".into(),
+                                message: format!("VAT rate in XML ({:.0}%) differs from form ({:.0}%)", xml_line.vat_rate, vat_rate),
+                            });
+                        }
                     }
-                    let entry = matched[i];
-                    let (egp, _amt, _rate, vat_rate, _wht_rate, _free_wht) = entry_numbers(entry);
-                    if xml_line.line_total > 0.0 && egp > 0.0 && (xml_line.line_total - egp).abs() > 0.5 {
-                        issues.push(ValidationIssue {
-                            field: format!("Line {} Amount", i + 1),
-                            xml_value: format!("{:.2}", xml_line.line_total),
-                            form_value: format!("{:.2}", egp),
-                            severity: "error".into(),
-                            message: format!("Line amount differs by {:.2} (form amount × rate)", (xml_line.line_total - egp).abs()),
-                        });
-                    }
-                    if xml_line.vat_rate > 0.0 && vat_rate > 0.0 && (xml_line.vat_rate - vat_rate).abs() > 0.5 {
-                        issues.push(ValidationIssue {
-                            field: format!("Line {} VAT Rate", i + 1),
-                            xml_value: format!("{:.0}%", xml_line.vat_rate),
-                            form_value: format!("{:.0}%", vat_rate),
-                            severity: "warning".into(),
-                            message: format!("VAT rate in XML ({:.0}%) differs from form ({:.0}%)", xml_line.vat_rate, vat_rate),
-                        });
-                    }
-                }
-
-                // More XML lines than matching services
-                if invoice.lines.len() > matched.len() {
+                } else if invoice.lines.len() > matched.len() {
                     issues.push(ValidationIssue {
                         field: "Line Count".into(),
                         xml_value: format!("{}", invoice.lines.len()),
@@ -724,6 +725,43 @@ mod tests {
         let res = validate_eta_against_form(&inv, form_json).unwrap();
         assert_eq!(res.matched_entry_indices, vec![0, 1], "both entries reference invoice 0205 ADT");
         assert!(res.is_valid, "totals match the sum of both entries: {:#?}", res.issues);
+    }
+
+    #[test]
+    fn matches_line_split_across_services() {
+        // One XML line of 2600 is split into two services (1000 + 1600).
+        // Positional line checks must not fire; the aggregate must pass.
+        let form_json = r#"{
+            "doc_type": "import",
+            "buyer_tax_id": "100489095",
+            "seller_tax_ids": ["721067026"],
+            "invoices": [{"invoice_no": "0205 ADT", "seller_tax_id": "721067026", "amount": "2964"}],
+            "import_entries": [
+                {"service_name": "Clearing A Inv: 0205 ADT", "amount": "1000", "rate": "1", "vat_rate": "14%", "wht_rate": "3%", "free_wht": false},
+                {"service_name": "Clearing B Inv: 0205 ADT", "amount": "1600", "rate": "1", "vat_rate": "14%", "wht_rate": "3%", "free_wht": false}
+            ]
+        }"#;
+        let xml = r#"<document>
+  <internalId>0205 ADT</internalId>
+  <issuerId>721067026</issuerId>
+  <receiverId>100489095</receiverId>
+  <netAmount>2600</netAmount>
+  <total>2964</total>
+  <document>
+    {"invoiceLines":[{"description":"Clearing","quantity":1,"netTotal":2600,"taxableItems":[
+      {"taxType":"T2","amount":364,"subType":"Tbl01","rate":14},
+      {"taxType":"T4","amount":78,"subType":"W004","rate":3}]}],
+     "taxTotals":[{"taxType":"T2","amount":364},{"taxType":"T4","amount":78}],
+     "netAmount":2600,"totalAmount":2964}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.net_amount, 2600.0);
+        assert_eq!(inv.total_vat, 364.0);
+        assert_eq!(inv.total_wht, 78.0);
+        let res = validate_eta_against_form(&inv, form_json).unwrap();
+        assert_eq!(res.matched_entry_indices, vec![0, 1]);
+        assert!(res.is_valid, "split line must validate against the sum: {:#?}", res.issues);
     }
 
     #[test]
