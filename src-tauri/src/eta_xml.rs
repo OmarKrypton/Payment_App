@@ -393,11 +393,14 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         let import_entries = form.get("import_entries").and_then(|v| v.as_array());
 
         if let Some(entries) = import_entries {
-            // Check total amount (sum of import entries with rates)
-            let mut form_total = 0.0;
-            let mut form_vat_total = 0.0;
-            let mut form_wht_total = 0.0;
-            for entry in entries {
+            // Find the form entry that matches this XML invoice by service name / invoice number
+            let matching_entry = entries.iter().find(|entry| {
+                entry.get("service_name").and_then(|v| v.as_str())
+                    .map(|s| s.trim())
+                    == Some(invoice.invoice_id.as_str())
+            });
+
+            if let Some(entry) = matching_entry {
                 let amt = entry.get("amount").and_then(|v| v.as_str())
                     .and_then(|s| s.replace(',', "").parse::<f64>().ok())
                     .unwrap_or(0.0);
@@ -412,102 +415,87 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                     .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
                     .unwrap_or(0.0);
                 let free_wht = entry.get("free_wht").and_then(|v| v.as_bool()).unwrap_or(false);
-                form_total += egp_amt;
-                form_vat_total += egp_amt * vat_rate / 100.0;
-                if !free_wht {
-                    form_wht_total += egp_amt * wht_rate / 100.0;
-                }
-            }
 
-            // Check net amount
-            if invoice.net_amount > 0.0 && form_total > 0.0 {
-                let diff = (invoice.net_amount - form_total).abs();
-                if diff > 0.5 {
-                    issues.push(ValidationIssue {
-                        field: "Total Net Amount".into(),
-                        xml_value: format!("{:.2}", invoice.net_amount),
-                        form_value: format!("{:.2}", form_total),
-                        severity: "error".into(),
-                        message: format!("Total net amount differs by {:.2}", diff),
-                    });
-                }
-            }
-
-            // Check total VAT
-            if invoice.total_vat > 0.0 && form_vat_total > 0.0 {
-                let diff = (invoice.total_vat - form_vat_total).abs();
-                if diff > 0.5 {
-                    issues.push(ValidationIssue {
-                        field: "Total VAT".into(),
-                        xml_value: format!("{:.2}", invoice.total_vat),
-                        form_value: format!("{:.2}", form_vat_total),
-                        severity: "error".into(),
-                        message: format!("Total VAT differs by {:.2} — check VAT rates on individual lines", diff),
-                    });
-                }
-            }
-
-            // Check total WHT
-            if invoice.total_wht > 0.0 && form_wht_total > 0.0 {
-                let diff = (invoice.total_wht - form_wht_total).abs();
-                if diff > 0.5 {
-                    issues.push(ValidationIssue {
-                        field: "Total WHT".into(),
-                        xml_value: format!("{:.2}", invoice.total_wht),
-                        form_value: format!("{:.2}", form_wht_total),
-                        severity: "error".into(),
-                        message: format!("Total WHT differs by {:.2} — check WHT rates and free_wht flags", diff),
-                    });
-                }
-            }
-
-            // Check per-line VAT rates
-            for (i, entry) in entries.iter().enumerate() {
-                let form_vat = entry.get("vat_rate").and_then(|v| v.as_str()).unwrap_or("0%");
-                let form_vat_pct = form_vat.trim_end_matches('%').parse::<f64>().unwrap_or(0.0);
-                if i < invoice.lines.len() {
-                    let xml_line = &invoice.lines[i];
-                    if xml_line.vat_rate > 0.0 && form_vat_pct > 0.0 && (xml_line.vat_rate - form_vat_pct).abs() > 0.5 {
+                // Check net amount against this single entry
+                if invoice.net_amount > 0.0 && egp_amt > 0.0 {
+                    let diff = (invoice.net_amount - egp_amt).abs();
+                    if diff > 0.5 {
                         issues.push(ValidationIssue {
-                            field: format!("Line {} VAT Rate", i + 1),
-                            xml_value: format!("{:.0}%", xml_line.vat_rate),
-                            form_value: form_vat.to_string(),
-                            severity: "warning".into(),
-                            message: format!("VAT rate in XML ({:.0}%) differs from form ({})", xml_line.vat_rate, form_vat),
+                            field: "Total Net Amount".into(),
+                            xml_value: format!("{:.2}", invoice.net_amount),
+                            form_value: format!("{:.2}", egp_amt),
+                            severity: "error".into(),
+                            message: format!("Total net amount differs by {:.2} (form {:.2} × rate {})", diff, amt, rate),
                         });
                     }
-                    // Check per-line amount
-                    let amt = entry.get("amount").and_then(|v| v.as_str())
-                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                        .unwrap_or(0.0);
-                    let rate = entry.get("rate").and_then(|v| v.as_str())
-                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                        .unwrap_or(1.0);
-                    let egp_amt = amt * rate;
-                    if xml_line.line_total > 0.0 && egp_amt > 0.0 {
-                        let diff = (xml_line.line_total - egp_amt).abs();
+                }
+
+                // Check total VAT
+                let expected_vat = egp_amt * vat_rate / 100.0;
+                if invoice.total_vat > 0.0 && expected_vat > 0.0 {
+                    let diff = (invoice.total_vat - expected_vat).abs();
+                    if diff > 0.5 {
+                        issues.push(ValidationIssue {
+                            field: "Total VAT".into(),
+                            xml_value: format!("{:.2}", invoice.total_vat),
+                            form_value: format!("{:.2}", expected_vat),
+                            severity: "error".into(),
+                            message: format!("Total VAT differs by {:.2} — expected {:.0}% of {:.2}", diff, vat_rate, egp_amt),
+                        });
+                    }
+                }
+
+                // Check total WHT
+                if !free_wht && wht_rate > 0.0 {
+                    let expected_wht = egp_amt * wht_rate / 100.0;
+                    if invoice.total_wht > 0.0 && expected_wht > 0.0 {
+                        let diff = (invoice.total_wht - expected_wht).abs();
                         if diff > 0.5 {
                             issues.push(ValidationIssue {
-                                field: format!("Line {} Amount", i + 1),
-                                xml_value: format!("{:.2}", xml_line.line_total),
-                                form_value: format!("{:.2}", egp_amt),
+                                field: "Total WHT".into(),
+                                xml_value: format!("{:.2}", invoice.total_wht),
+                                form_value: format!("{:.2}", expected_wht),
                                 severity: "error".into(),
-                                message: format!("Line amount differs by {:.2}", diff),
+                                message: format!("Total WHT differs by {:.2} — expected {:.0}% of {:.2}", diff, wht_rate, egp_amt),
                             });
                         }
                     }
+                } else if !free_wht && wht_rate == 0.0 && invoice.total_wht > 0.0 {
+                    issues.push(ValidationIssue {
+                        field: "Total WHT".into(),
+                        xml_value: format!("{:.2}", invoice.total_wht),
+                        form_value: "0.00".into(),
+                        severity: "warning".into(),
+                        message: "XML has WHT but the form entry has WHT rate 0% and free_wht unchecked".into(),
+                    });
                 }
-            }
 
-            // Check if XML has more lines than the form
-            if invoice.lines.len() > entries.len() {
-                issues.push(ValidationIssue {
-                    field: "Line Count".into(),
-                    xml_value: format!("{}", invoice.lines.len()),
-                    form_value: format!("{}", entries.len()),
-                    severity: "warning".into(),
-                    message: format!("XML has {} line items but form only has {} entries", invoice.lines.len(), entries.len()),
-                });
+                // Check each XML line's VAT rate against the entry's VAT rate
+                for (i, xml_line) in invoice.lines.iter().enumerate() {
+                    if xml_line.vat_rate > 0.0 && vat_rate > 0.0 && (xml_line.vat_rate - vat_rate).abs() > 0.5 {
+                        issues.push(ValidationIssue {
+                            field: format!("Line {} VAT Rate", i + 1),
+                            xml_value: format!("{:.0}%", xml_line.vat_rate),
+                            form_value: format!("{:.0}%", vat_rate),
+                            severity: "warning".into(),
+                            message: format!("VAT rate in XML ({:.0}%) differs from form ({:.0}%)", xml_line.vat_rate, vat_rate),
+                        });
+                    }
+                }
+            } else {
+                // No form entry matches this invoice
+                let form_names: Vec<String> = entries.iter()
+                    .filter_map(|e| e.get("service_name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    .collect();
+                if !form_names.is_empty() {
+                    issues.push(ValidationIssue {
+                        field: "Invoice Number".into(),
+                        xml_value: invoice.invoice_id.clone(),
+                        form_value: form_names.join(", "),
+                        severity: "warning".into(),
+                        message: "Invoice number in XML does not match any service name in the import tab".into(),
+                    });
+                }
             }
         }
 
