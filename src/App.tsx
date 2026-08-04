@@ -260,6 +260,26 @@ interface HistoryEntry {
   data_json?: string; final_decision?: string; doc_type?: string; auditor?: string;
 }
 
+const normalizeId = (s: string) => (s || "").toUpperCase().replace(/\s+/g, "");
+
+// Mirrors service_matches_invoice in src-tauri/src/eta_xml.rs: returns true when an
+// invoice id appears in a service name (as a whole "Inv:" suffix or any standalone token).
+const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boolean => {
+  const invNorm = normalizeId(invoiceId);
+  if (!invNorm) return false;
+  const upper = (serviceName || "").toUpperCase();
+  const candidates: string[] = [normalizeId(upper)];
+  const invIdx = upper.indexOf("INV:");
+  if (invIdx >= 0) candidates.push(normalizeId(upper.slice(invIdx + 4)));
+  for (const token of upper.split(/[^A-Z0-9]+/)) {
+    if (normalizeId(token) === invNorm) return true;
+  }
+  return candidates.some((c) => {
+    if (!c) return false;
+    return c === invNorm || (invNorm.length >= 4 && (c.endsWith(invNorm) || c.startsWith(invNorm)));
+  });
+};
+
 function App() {
   const [tab, setTab] = useState<"bank" | "final_decision" | "import">("bank");
   const [lang, setLang] = useState<"zh" | "en">("zh");
@@ -625,10 +645,7 @@ function App() {
   };
   const updImportEntry = (i: number, k: string, v: any) => {
     updateNested("import_entries", i, k, v);
-    if (k === "service_name") {
-      updateNested("import_entries", i, "attached_invoice", "");
-      syncPoolFromForm();
-    }
+    if (k === "service_name") updateNested("import_entries", i, "attached_invoice", "");
   };
   const delImportEntry = (i: number) => delRow("import_entries", i);
   const addCostRow = () => {
@@ -1322,7 +1339,7 @@ function App() {
       if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
       await recalc(parsed);
-      await syncPoolFromForm();
+      await reconcilePillsFromPool();
     } catch (e) {
       console.error("loadSnapshot failed", e);
     }
@@ -1398,27 +1415,32 @@ function App() {
       formRef.current = { ...formRef.current, import_entries: updated };
       await recalc(formRef.current);
     }
-    await syncPoolFromForm();
+    try { await loadPool(); } catch {}
   };
 
-  // Make the pool's "used" flag reflect the currently-open document, WITHOUT
-  // stealing invoices used by other documents: only a pool invoice that was
-  // attached by this same serial and is no longer attached here (e.g. validation
-  // now has errors, or the service name was edited) is freed again.
-  const syncPoolFromForm = async () => {
+  // Non-destructive: keep the form consistent with the pool by showing a pill on
+  // any service whose name references an invoice already marked "used" in the pool.
+  // It never changes pool status, so invoices stay used across documents.
+  const reconcilePillsFromPool = async () => {
     try {
-      const serial = data.doc_serial || "draft";
       const entries = formRef.current.import_entries ?? [];
-      const attached = new Set(
-        entries.filter((e: any) => e && e.attached_invoice).map((e: any) => e.attached_invoice)
-      );
       const list = await invoke<any[]>("list_invoice_pool");
-      for (const p of list) {
-        if (p.status === 'used' && p.used_by_label === serial && !attached.has(p.invoice_id)) {
-          try { await invoke("mark_pool_invoice_available", { invoiceId: p.invoice_id }); } catch {}
+      const used = list.filter((p: any) => p.status === 'used');
+      if (used.length === 0) return;
+      let changed = false;
+      const updated = entries.map((e: any) => {
+        if (!e || e.attached_invoice || !e.service_name) return e;
+        const match = used.find((p: any) => serviceNameContainsInvoice(e.service_name, p.invoice_id));
+        if (match) {
+          changed = true;
+          return { ...e, attached_invoice: match.invoice_id };
         }
+        return e;
+      });
+      if (changed) {
+        formRef.current = { ...formRef.current, import_entries: updated };
+        await recalc(formRef.current);
       }
-      try { await loadPool(); } catch {}
     } catch {}
   };
 
