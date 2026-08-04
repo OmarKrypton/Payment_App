@@ -1495,6 +1495,10 @@ function App() {
   };
 
   const validateFromPool = async (invoiceIds: string[]) => {
+    if (!(data.doc_serial || "").trim()) {
+      showAlert(t("请先输入本文档的文档编号（序列号）", "Please enter a serial number for this document first"));
+      return;
+    }
     try {
       const formJson = JSON.stringify(formRef.current);
       const result = await invoke<any[]>("validate_from_pool", { invoiceIds, formJson });
