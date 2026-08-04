@@ -36,6 +36,7 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
             grand_total REAL DEFAULT 0,
             lines_json TEXT DEFAULT '[]',
             raw_xml TEXT DEFAULT '',
+            file_name TEXT DEFAULT '',
             status TEXT DEFAULT 'available',
             used_by_snapshot_id INTEGER,
             used_by_label TEXT DEFAULT '',
@@ -59,6 +60,10 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
         .map_err(|e| e.to_string())?;
     if !cols.iter().any(|c| c == "raw_xml") {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN raw_xml TEXT DEFAULT ''", [])
+            .map_err(|e| e.to_string())?;
+    }
+    if !cols.iter().any(|c| c == "file_name") {
+        conn.execute("ALTER TABLE eta_invoices ADD COLUMN file_name TEXT DEFAULT ''", [])
             .map_err(|e| e.to_string())?;
     }
     Ok(conn)
@@ -172,21 +177,23 @@ pub struct PoolInvoice {
     pub total_vat: f64,
     pub total_wht: f64,
     pub grand_total: f64,
-    pub lines_json: String,
+    pub     lines_json: String,
     #[serde(default)]
     pub raw_xml: String,
+    #[serde(default)]
+    pub file_name: String,
     pub status: String,
     pub used_by_snapshot_id: Option<i64>,
     pub used_by_label: String,
     pub created_at: String,
 }
 
-pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str) -> Result<i64, String> {
+pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<i64, String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let lines_json = serde_json::to_string(&invoice.lines).unwrap_or_else(|_| "[]".to_string());
     conn.execute(
-        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'available', ?15)
+        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 'available', ?16)
          ON CONFLICT(invoice_id) DO UPDATE SET
             uuid = excluded.uuid,
             seller_tax_id = excluded.seller_tax_id,
@@ -200,12 +207,13 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str) -> Re
             total_wht = excluded.total_wht,
             grand_total = excluded.grand_total,
             lines_json = excluded.lines_json,
-            raw_xml = excluded.raw_xml",
+            raw_xml = excluded.raw_xml,
+            file_name = excluded.file_name",
         params![
             invoice.invoice_id, invoice.uuid, invoice.seller_tax_id, invoice.seller_name,
             invoice.buyer_tax_id, invoice.buyer_name, invoice.issue_date, invoice.currency,
             invoice.net_amount, invoice.total_vat, invoice.total_wht, invoice.grand_total,
-            lines_json, raw_xml, now
+            lines_json, raw_xml, file_name, now
         ],
     ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
@@ -214,7 +222,7 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str) -> Re
 pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     let mut result = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, status, used_by_snapshot_id, used_by_label, created_at FROM eta_invoices ORDER BY created_at DESC")
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_snapshot_id, used_by_label, created_at FROM eta_invoices ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -234,10 +242,11 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
                 grand_total: row.get(12)?,
                 lines_json: row.get(13)?,
                 raw_xml: row.get(14)?,
-                status: row.get(15)?,
-                used_by_snapshot_id: row.get(16)?,
-                used_by_label: row.get(17)?,
-                created_at: row.get(18)?,
+                file_name: row.get(15)?,
+                status: row.get(16)?,
+                used_by_snapshot_id: row.get(17)?,
+                used_by_label: row.get(18)?,
+                created_at: row.get(19)?,
             })
         })
         .map_err(|e| e.to_string())?;

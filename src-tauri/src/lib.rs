@@ -125,7 +125,11 @@ fn import_to_pool(state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> 
         let xml_content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read XML file {}: {}", path, e))?;
         let invoice = eta_xml::parse_eta_xml(&xml_content)?;
-        history::add_to_pool(conn, &invoice, &xml_content)?;
+        let file_name = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        history::add_to_pool(conn, &invoice, &xml_content, &file_name)?;
         imported.push(invoice);
     }
     Ok(imported)
