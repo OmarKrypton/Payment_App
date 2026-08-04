@@ -1401,19 +1401,20 @@ function App() {
     await syncPoolFromForm();
   };
 
-  // Make the pool's "used" flag reflect the currently-open document:
-  // any pool invoice marked used that is not attached to an entry in this form
-  // becomes available again (e.g. an entry whose validation now has errors, or
-  // whose service_name was edited).
+  // Make the pool's "used" flag reflect the currently-open document, WITHOUT
+  // stealing invoices used by other documents: only a pool invoice that was
+  // attached by this same serial and is no longer attached here (e.g. validation
+  // now has errors, or the service name was edited) is freed again.
   const syncPoolFromForm = async () => {
     try {
+      const serial = data.doc_serial || "draft";
       const entries = formRef.current.import_entries ?? [];
       const attached = new Set(
         entries.filter((e: any) => e && e.attached_invoice).map((e: any) => e.attached_invoice)
       );
       const list = await invoke<any[]>("list_invoice_pool");
       for (const p of list) {
-        if (p.status === 'used' && !attached.has(p.invoice_id)) {
+        if (p.status === 'used' && p.used_by_label === serial && !attached.has(p.invoice_id)) {
           try { await invoke("mark_pool_invoice_available", { invoiceId: p.invoice_id }); } catch {}
         }
       }
