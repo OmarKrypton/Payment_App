@@ -1994,14 +1994,14 @@ function App() {
                           </div>
                           <p style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>
                             {p.seller_name || p.seller_tax_id}
-                            {p.buyer_tax_id ? ` → ${p.buyer_tax_id}` : ''}
+                            {p.seller_name && p.seller_tax_id ? ` · ${p.seller_tax_id}` : ''}
                             {p.issue_date ? ` · ${p.issue_date}` : ''}
                           </p>
                           {p.file_name && (
                             <p style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>📄 {p.file_name}</p>
                           )}
                           <p style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
-                            {t("净额", "Net")}: {p.net_amount.toFixed(2)} · VAT: {p.total_vat.toFixed(2)} · {t("合计", "Total")}: {p.grand_total.toFixed(2)}
+                            {t("净额", "Net")}: {p.net_amount.toFixed(2)} · VAT: {p.total_vat.toFixed(2)}{p.total_wht > 0 ? ` · WHT: ${p.total_wht.toFixed(2)}` : ''} · {t("合计", "Total")}: {p.grand_total.toFixed(2)}
                           </p>
                         </div>
                         <div className="history-actions">
