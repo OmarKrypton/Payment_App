@@ -178,13 +178,18 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
             // Determine which tax types are withholding by inspecting line-level subtypes.
             // WHT entries carry a "W"-prefixed subtype (e.g. W004); added taxes (VAT-like)
-            // like Tbl01 must NOT be summed into WHT.
+            // like Tbl01 must NOT be summed into WHT. If no subtype info exists at all
+            // (legacy format), fall back to treating T2/T4/T5 as WHT.
             let mut wht_tax_types: HashSet<String> = HashSet::new();
+            let mut has_any_subtype = false;
             if let Some(lines) = parsed.get("invoiceLines").and_then(|v| v.as_array()) {
                 for line in lines {
                     if let Some(taxable) = line.get("taxableItems").and_then(|v| v.as_array()) {
                         for tax_item in taxable {
                             let sub = tax_item.get("subType").and_then(|v| v.as_str()).unwrap_or("");
+                            if !sub.is_empty() {
+                                has_any_subtype = true;
+                            }
                             if sub.starts_with('W') {
                                 if let Some(tt) = tax_item.get("taxType").and_then(|v| v.as_str()) {
                                     wht_tax_types.insert(tt.to_string());
@@ -203,11 +208,12 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                     if wht_tax_types.contains(tax_type) {
                         // Withholding tax (subtype W-prefixed)
                         invoice.total_wht += amt;
-                    } else if tax_type == "T1" || !wht_tax_types.is_empty() {
-                        // T1 is VAT; any other tax once WHT types are known is added (VAT-like)
+                    } else if has_any_subtype || tax_type == "T1" {
+                        // Subtypes are meaningful: everything not W is VAT-like (T1 standard,
+                        // T2/Tbl01 table tax, etc.). T1 is always VAT.
                         invoice.total_vat += amt;
                     } else if tax_type == "T2" || tax_type == "T4" || tax_type == "T5" {
-                        // Fallback (no W subtypes present): treat as WHT as before
+                        // Legacy fallback (no subtype info present): treat as WHT
                         invoice.total_wht += amt;
                     } else {
                         invoice.total_vat += amt;
@@ -226,15 +232,21 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                     let net_total = line.get("netTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let item_code = line.get("itemCode").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-                    // Extract the added (VAT-like) tax from taxable items; skip WHT entries
+                    // Extract the effective (VAT-like) tax from taxable items; skip WHT
+                    // entries. When a line carries several non-WHT taxes (e.g. T2 10%
+                    // plus a zero-rated T1), use the one with the largest amount.
                     let mut line_vat_rate = 0.0;
                     let mut line_vat_amount = 0.0;
                     if let Some(taxable) = line.get("taxableItems").and_then(|v| v.as_array()) {
                         for tax_item in taxable {
                             let tax_type = tax_item.get("taxType").and_then(|v| v.as_str()).unwrap_or("");
                             if !wht_tax_types.contains(tax_type) {
-                                line_vat_rate = tax_item.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                line_vat_amount = tax_item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                let rate = tax_item.get("rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                let amount = tax_item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                if amount > line_vat_amount {
+                                    line_vat_rate = rate;
+                                    line_vat_amount = amount;
+                                }
                             }
                         }
                     }
@@ -755,6 +767,51 @@ mod tests {
         let res = validate_eta_against_form(&inv, form_json).unwrap();
         assert_eq!(res.matched_entry_indices, vec![0, 1]);
         assert!(res.is_valid, "split line must validate against the sum: {:#?}", res.issues);
+    }
+
+    #[test]
+    fn parses_mixed_vat_no_wht() {
+        // Invoice with T1 (14%) and T2 Tbl01 (10%) taxes, NO W-prefixed subtypes,
+        // and genuinely no withholding. Everything not W is VAT-like, so WHT must be 0
+        // and VAT must include the T2 table tax.
+        let xml = r#"<document>
+  <internalId>A0910185</internalId>
+  <issuerId>200201336</issuerId>
+  <receiverId>100489095</receiverId>
+  <netAmount>80252</netAmount>
+  <total>90427.68</total>
+  <document>
+    {"invoiceLines":[
+      {"description":"Delivery via Truck","quantity":1,"unitValue":{"amountEGP":51162},"netTotal":51162,"taxableItems":[{"taxType":"T1","rate":14,"amount":7162.68,"subType":"V009"}]},
+      {"description":"Cargo Reporting Fee","quantity":1,"unitValue":{"amountEGP":2600},"netTotal":2600,"taxableItems":[
+        {"taxType":"T2","rate":10,"amount":260,"subType":"Tbl01"},
+        {"taxType":"T1","rate":0,"amount":0,"subType":"V009"}]},
+      {"description":"Import Temporary Clearance","quantity":1,"unitValue":{"amountEGP":2600},"netTotal":2600,"taxableItems":[
+        {"taxType":"T2","rate":10,"amount":260,"subType":"Tbl01"},
+        {"taxType":"T1","rate":0,"amount":0,"subType":"V009"}]},
+      {"description":"Fiscal Representation","quantity":1,"unitValue":{"amountEGP":10000},"netTotal":10000,"taxableItems":[
+        {"taxType":"T2","rate":10,"amount":1000,"subType":"Tbl01"},
+        {"taxType":"T1","rate":0,"amount":0,"subType":"V009"}]},
+      {"description":"Delivery Order Change","quantity":1,"unitValue":{"amountEGP":2600},"netTotal":2600,"taxableItems":[{"taxType":"T1","rate":14,"amount":364,"subType":"V009"}]},
+      {"description":"Import Customs Clearance","quantity":1,"unitValue":{"amountEGP":8690},"netTotal":8690,"taxableItems":[
+        {"taxType":"T2","rate":10,"amount":869,"subType":"Tbl01"},
+        {"taxType":"T1","rate":0,"amount":0,"subType":"V009"}]},
+      {"description":"Customs Document Issuing","quantity":1,"unitValue":{"amountEGP":2600},"netTotal":2600,"taxableItems":[
+        {"taxType":"T2","rate":10,"amount":260,"subType":"Tbl01"},
+        {"taxType":"T1","rate":0,"amount":0,"subType":"V009"}]}],
+     "taxTotals":[{"taxType":"T1","amount":7526.68},{"taxType":"T2","amount":2649}],
+     "netAmount":80252,"totalAmount":90427.68}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.invoice_id, "A0910185");
+        assert_eq!(inv.net_amount, 80252.0);
+        assert_eq!(inv.grand_total, 90427.68);
+        assert_eq!(inv.total_vat, 10175.68, "VAT must include T1 + T2 table tax (no W subtypes)");
+        assert_eq!(inv.total_wht, 0.0, "no W-prefixed subtype => no withholding");
+        assert_eq!(inv.lines.len(), 7);
+        assert_eq!(inv.lines[1].vat_rate, 10.0, "T2 10% must win over zero-rated T1");
+        assert_eq!(inv.lines[1].vat_amount, 260.0);
     }
 
     #[test]
