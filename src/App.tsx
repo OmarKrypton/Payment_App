@@ -295,6 +295,7 @@ function App() {
   const [showChangePw, setShowChangePw] = useState(false);
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showImportMenu, setShowImportMenu] = useState(false);
   const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
   const [invoiceExportTo, setInvoiceExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
@@ -307,6 +308,8 @@ function App() {
   const [showPool, setShowPool] = useState(false);
   const [poolList, setPoolList] = useState<any[]>([]);
   const [poolLoading, setPoolLoading] = useState(false);
+  const [poolSearch, setPoolSearch] = useState("");
+  const [poolTab, setPoolTab] = useState<"unclaimed" | "claimed">("unclaimed");
   const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
@@ -404,6 +407,17 @@ function App() {
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, [showExportMenu]);
+
+  // Close import dropdown when clicking outside
+  useEffect(() => {
+    if (!showImportMenu) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.sidebar-export-group')) setShowImportMenu(false);
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showImportMenu]);
 
   // Listen for Supabase auth changes
   useEffect(() => {
@@ -1444,26 +1458,6 @@ function App() {
     } catch {}
   };
 
-  const handleEtaValidate = async () => {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({ multiple: true, filters: [{ name: "XML", extensions: ["xml"] }] });
-      if (!selected) return;
-      const filePaths: string[] = (Array.isArray(selected) ? selected : [selected])
-        .map((f: any) => typeof f === "string" ? f : f.path)
-        .filter(Boolean);
-      if (filePaths.length === 0) return;
-      const formJson = JSON.stringify(formRef.current);
-      const result = await invoke<any[]>("validate_eta_xml", { filePaths, formJson });
-      // Also import to pool
-      try { await invoke("import_to_pool", { filePaths }); } catch {}
-      await attachValidatedInvoices(result);
-      setEtaResult(result);
-    } catch (e: any) {
-      showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
-    }
-  };
-
   const loadPool = async () => {
     setPoolLoading(true);
     try {
@@ -1478,6 +1472,8 @@ function App() {
 
   const openPool = () => {
     setShowPool(true);
+    setPoolSearch("");
+    setPoolTab("unclaimed");
     loadPool();
   };
 
@@ -1679,15 +1675,21 @@ function App() {
           <button onClick={newSession}>
             <IconNewSession /> {t("新会话", "New Session")}
           </button>
-          <button onClick={importPdf}>
-            <IconImport /> {t("导入PDF", "Import PDF")}
-          </button>
-          <button onClick={handleEtaValidate}>
-            <IconReport /> {t("验证XML", "Validate XML")}
-          </button>
-          <button onClick={openPool}>
-            <IconInvoice /> {t("发票池", "Invoice Pool")}
-          </button>
+          <div className="sidebar-export-group">
+            <button onClick={() => setShowImportMenu(!showImportMenu)} style={{width:'100%'}}>
+              <IconImport /> {t("导入", "Import")} <IconChevronDown size={12} style={{marginLeft:'auto', transition:'transform 0.2s', transform: showImportMenu ? 'rotate(0deg)' : 'rotate(180deg)'}} />
+            </button>
+            {showImportMenu && (
+              <div className="sidebar-export-dropdown">
+                <button onClick={() => { setShowImportMenu(false); importPdf(); }}>
+                  <IconReport /> {t("导入PDF", "Import PDF")}
+                </button>
+                <button onClick={() => { setShowImportMenu(false); openPool(); }}>
+                  <IconInvoice /> {t("发票池", "Invoice Pool")}
+                </button>
+              </div>
+            )}
+          </div>
           <div className="sidebar-actions-divider" />
           <div className="sidebar-export-group">
             <button onClick={() => setShowExportMenu(!showExportMenu)} style={{width:'100%'}}>
@@ -1921,7 +1923,7 @@ function App() {
               <h3>{t("发票池", "Invoice Pool")}</h3>
               <button className="modal-close" onClick={() => setShowPool(false)}>✕</button>
             </div>
-            <div style={{display:'flex',gap:8,marginBottom:12}}>
+            <div style={{display:'flex',gap:8,marginBottom:10}}>
               <button className="btn-add" onClick={importToPool}>+ {t("导入XML", "Import XML")}</button>
               <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => {
                 const available = poolList.filter((p: any) => p.status === 'available');
@@ -1929,48 +1931,93 @@ function App() {
                 validateFromPool(available.map((p: any) => p.invoice_id));
               }}>{t("验证所有可用发票", "Validate All Available")}</button>
             </div>
-            <div className="history-list" style={poolLoading ? {opacity:0.5} : {}}>
-              {poolLoading ? (
-                <div className="history-empty">{t("加载中...", "Loading...")}</div>
-              ) : poolList.length === 0 ? (
-                <div className="history-empty">{t("发票池为空，导入XML发票以开始", "Pool is empty. Import XML invoices to get started.")}</div>
-              ) : poolList.map((p: any) => (
-                <div key={p.id} className="history-item" style={p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'}}>
-                    <div style={{minWidth:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                      <strong style={{fontSize:12}}>{p.invoice_id}</strong>
-                      <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
-                        background:p.status==='available'?'var(--green-bg)':'#fffbeb',
-                        color:p.status==='available'?'var(--green)':'var(--orange)',
-                        border:`1px solid ${p.status==='available'?'#bbf7d0':'#fde68a'}`
-                      }}>{p.status === 'available' ? t("可用", "Available") : t("已使用", "Used")}</span>
-                      {p.status === 'used' && p.used_by_label && (
-                        <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
-                          background:'var(--accent-light)',color:'var(--accent)',
-                          border:'1px solid var(--accent)'
-                        }}>{t("序列号", "Serial")}: {p.used_by_label}</span>
-                      )}
-                    </div>
-                    <p style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>
-                      {p.seller_name || p.seller_tax_id}
-                      {p.buyer_tax_id ? ` → ${p.buyer_tax_id}` : ''}
-                      {p.issue_date ? ` · ${p.issue_date}` : ''}
-                    </p>
-                    <p style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
-                      {t("净额", "Net")}: {p.net_amount.toFixed(2)} · VAT: {p.total_vat.toFixed(2)} · {t("合计", "Total")}: {p.grand_total.toFixed(2)}
-                    </p>
+            <input
+              className="field-input"
+              style={{width:'100%', marginBottom:10, boxSizing:'border-box'}}
+              placeholder={t("搜索发票ID、卖方税号、文件名或序列号...", "Search invoice ID, seller tax ID, file name, or serial...")}
+              value={poolSearch}
+              onChange={e => setPoolSearch(e.target.value)}
+            />
+            {(() => {
+              const q = poolSearch.trim().toLowerCase();
+              const filtered = poolList.filter((p: any) => {
+                if (!q) return true;
+                const hay = [p.invoice_id, p.seller_tax_id, p.seller_name, p.file_name || "", p.used_by_label || ""].join(" ").toLowerCase();
+                return hay.includes(q);
+              });
+              const unclaimed = filtered.filter((p: any) => p.status === 'available');
+              const claimed = filtered.filter((p: any) => p.status === 'used');
+              const shown = poolTab === 'unclaimed' ? unclaimed : claimed;
+              const segStyle = (active: boolean): React.CSSProperties => ({
+                flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 11,
+                background: active ? 'var(--accent)' : 'transparent',
+                color: active ? '#fff' : 'var(--text-secondary)',
+                border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
+              });
+              return (
+                <>
+                  <div style={{display:'flex',gap:6,marginBottom:10}}>
+                    <button style={segStyle(poolTab === 'unclaimed')} onClick={() => setPoolTab('unclaimed')}>
+                      {t("未认领", "Unclaimed")} ({unclaimed.length})
+                    </button>
+                    <button style={segStyle(poolTab === 'claimed')} onClick={() => setPoolTab('claimed')}>
+                      {t("已认领", "Claimed")} ({claimed.length})
+                    </button>
                   </div>
-                  <div className="history-actions">
-                    {p.status === 'available' && (
-                      <button className="btn-load" onClick={() => validateFromPool([p.invoice_id])}>
-                        {t("验证", "Validate")}
-                      </button>
-                    )}
-                    <button className="btn-delete" onClick={() => deletePoolInvoice(p.id)}>✕</button>
+                  <div className="history-list" style={poolLoading ? {opacity:0.5} : {}}>
+                    {poolLoading ? (
+                      <div className="history-empty">{t("加载中...", "Loading...")}</div>
+                    ) : poolList.length === 0 ? (
+                      <div className="history-empty">{t("发票池为空，导入XML发票以开始", "Pool is empty. Import XML invoices to get started.")}</div>
+                    ) : shown.length === 0 ? (
+                      <div className="history-empty">{t("无匹配结果", "No matching invoices")}</div>
+                    ) : shown.map((p: any) => (
+                      <div key={p.id} className="history-item" style={p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'}}>
+                        <div style={{minWidth:0}}>
+                          <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                            <strong style={{fontSize:12}}>{p.invoice_id}</strong>
+                            {p.status === 'used' ? (
+                              <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
+                                background:'#fffbeb',color:'var(--orange)',border:'1px solid #fde68a'
+                              }}>{t("已认领", "Claimed")}</span>
+                            ) : (
+                              <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
+                                background:'var(--green-bg)',color:'var(--green)',border:'1px solid #bbf7d0'
+                              }}>{t("未认领", "Unclaimed")}</span>
+                            )}
+                            {p.status === 'used' && p.used_by_label && (
+                              <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
+                                background:'var(--accent-light)',color:'var(--accent)',
+                                border:'1px solid var(--accent)'
+                              }}>{t("序列号", "Serial")}: {p.used_by_label}</span>
+                            )}
+                          </div>
+                          <p style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>
+                            {p.seller_name || p.seller_tax_id}
+                            {p.buyer_tax_id ? ` → ${p.buyer_tax_id}` : ''}
+                            {p.issue_date ? ` · ${p.issue_date}` : ''}
+                          </p>
+                          {p.file_name && (
+                            <p style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>📄 {p.file_name}</p>
+                          )}
+                          <p style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                            {t("净额", "Net")}: {p.net_amount.toFixed(2)} · VAT: {p.total_vat.toFixed(2)} · {t("合计", "Total")}: {p.grand_total.toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="history-actions">
+                          {p.status === 'available' && (
+                            <button className="btn-load" onClick={() => validateFromPool([p.invoice_id])}>
+                              {t("验证", "Validate")}
+                            </button>
+                          )}
+                          <button className="btn-delete" onClick={() => deletePoolInvoice(p.id)}>✕</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ))}
-            </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
