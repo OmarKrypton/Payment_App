@@ -644,6 +644,27 @@ function App() {
     </div>
   );
 
+  const InvoicesCard = () => (
+    <div className="card">
+      <h3>{t("发票", "Invoices")}</h3>
+      <div className="invoice-header">
+        <span>{t("发票号", "Invoice No")}</span>
+        <span>{t("销售方税号", "Seller TAX ID")}</span>
+        <span>{t("金额", "Amount")}</span>
+        <span></span>
+      </div>
+      {data.invoices.map((inv, i) => (
+        <div key={i} className="invoice-row">
+          <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
+          <FastInput value={inv.seller_tax_id || ""} onChange={v => updInv(i, "seller_tax_id", v)} />
+          <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
+          <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
+        </div>
+      ))}
+      <button className="btn-add" onClick={addInvoice}>+ {t("添加发票", "Add Invoice")}</button>
+    </div>
+  );
+
   const addInvoice = () => {
     const arr = [...data.invoices, { invoice_no: `Invoice-${data.invoices.length + 1}`, seller_tax_id: "", amount: "0.00" }];
     formRef.current = { ...formRef.current, invoices: arr };
@@ -687,8 +708,8 @@ function App() {
     recalc(formRef.current);
   };
 
+  const isImport = data.doc_type === "import";
   const AuditTab = () => {
-    const isImport = data.doc_type === "import";
     return (
     <div className="audit-tab">
       <div className="card">
@@ -726,24 +747,6 @@ function App() {
 
       {!isImport && (
         <>
-          <div className="card">
-            <h3>{t("发票", "Invoices")}</h3>
-            <div className="invoice-header">
-              <span>{t("发票号", "Invoice No")}</span>
-              <span>{t("销售方税号", "Seller TAX ID")}</span>
-              <span>{t("金额", "Amount")}</span>
-              <span></span>
-            </div>
-            {data.invoices.map((inv, i) => (
-              <div key={i} className="invoice-row">
-                <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
-                <FastInput value={inv.seller_tax_id || ""} onChange={v => updInv(i, "seller_tax_id", v)} />
-                <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
-                <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
-              </div>
-            ))}
-            <button className="btn-add" onClick={addInvoice}>+ {t("添加发票", "Add Invoice")}</button>
-          </div>
           <div className="card">
             <h3>{t("计算值", "Computed Values")}</h3>
             <Computed label={t("净应付金额 (9A)", "Net Amount Payable (9A)")} value={computed.c_9A} />
@@ -1729,6 +1732,7 @@ function App() {
               {Card9()}{Card10()}
             </div>
             {Card11()}
+            {!isImport && InvoicesCard()}
           </>
         ) : tab === "import" ? (
           ImportTab()
