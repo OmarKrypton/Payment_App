@@ -310,6 +310,7 @@ function App() {
   const [poolLoading, setPoolLoading] = useState(false);
   const [poolSearch, setPoolSearch] = useState("");
   const [poolTab, setPoolTab] = useState<"unclaimed" | "claimed">("unclaimed");
+  const [poolMode, setPoolMode] = useState<"validate" | "select">("validate");
   const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
@@ -661,7 +662,10 @@ function App() {
           <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
         </div>
       ))}
-      <button className="btn-add" onClick={addInvoice}>+ {t("添加发票", "Add Invoice")}</button>
+      <div style={{display:'flex',gap:8}}>
+        <button className="btn-add" onClick={addInvoice}>+ {t("添加发票", "Add Invoice")}</button>
+        <button className="btn-add" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+      </div>
     </div>
   );
 
@@ -1474,10 +1478,48 @@ function App() {
   };
 
   const openPool = () => {
+    setPoolMode("validate");
     setShowPool(true);
     setPoolSearch("");
     setPoolTab("unclaimed");
     loadPool();
+  };
+
+  const openPoolForSelect = () => {
+    setPoolMode("select");
+    setShowPool(true);
+    setPoolSearch("");
+    setPoolTab("unclaimed");
+    loadPool();
+  };
+
+  const attachFromPool = async (invoiceId: string) => {
+    const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+    if (!p) return;
+    if (data.invoices.some(inv => inv.invoice_no === invoiceId)) {
+      showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
+      return;
+    }
+    const arr = [...data.invoices, {
+      invoice_no: invoiceId,
+      seller_tax_id: p.seller_tax_id || "",
+      amount: (p.grand_total ?? 0).toFixed(2),
+    }];
+    formRef.current = { ...formRef.current, invoices: arr };
+    recalc(formRef.current);
+    try {
+      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: (data.doc_serial || "").trim() });
+    } catch {}
+    await loadPool();
+  };
+
+  const unclaimPoolInvoice = async (invoiceId: string) => {
+    try {
+      await invoke("mark_pool_invoice_available", { invoiceId });
+      loadPool();
+    } catch (e: any) {
+      showAlert(`${t("解除认领失败", "Unclaim failed")}: ${e.message || e}`);
+    }
   };
 
   const importToPool = async () => {
@@ -1933,12 +1975,19 @@ function App() {
             </div>
             <div style={{display:'flex',gap:8,marginBottom:10}}>
               <button className="btn-add" onClick={importToPool}>+ {t("导入XML", "Import XML")}</button>
-              <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => {
-                const available = poolList.filter((p: any) => p.status === 'available');
-                if (available.length === 0) { showAlert(t("没有可用发票", "No available invoices")); return; }
-                validateFromPool(available.map((p: any) => p.invoice_id));
-              }}>{t("验证所有可用发票", "Validate All Available")}</button>
+              {poolMode === 'validate' && (
+                <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => {
+                  const available = poolList.filter((p: any) => p.status === 'available');
+                  if (available.length === 0) { showAlert(t("没有可用发票", "No available invoices")); return; }
+                  validateFromPool(available.map((p: any) => p.invoice_id));
+                }}>{t("验证所有可用发票", "Validate All Available")}</button>
+              )}
             </div>
+            {poolMode === 'select' && (
+              <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:8}}>
+                {t("选择要附加到本文档的发票（点击“添加”将其加入发票列表并标记为已认领）", "Select invoices to attach to this document. Click \"Add\" to include them in the invoice list and mark them as claimed.")}
+              </div>
+            )}
             <input
               className="field-input"
               style={{width:'100%', marginBottom:10, boxSizing:'border-box'}}
@@ -2013,9 +2062,19 @@ function App() {
                           </p>
                         </div>
                         <div className="history-actions">
-                          {p.status === 'available' && (
+                          {poolMode === 'select' && p.status === 'available' && (
+                            <button className="btn-load" onClick={() => attachFromPool(p.invoice_id)}>
+                              {t("添加", "Add")}
+                            </button>
+                          )}
+                          {poolMode === 'validate' && p.status === 'available' && (
                             <button className="btn-load" onClick={() => validateFromPool([p.invoice_id])}>
                               {t("验证", "Validate")}
+                            </button>
+                          )}
+                          {poolMode !== 'select' && p.status === 'used' && (
+                            <button className="btn-load" onClick={() => unclaimPoolInvoice(p.invoice_id)}>
+                              {t("解除认领", "Unclaim")}
                             </button>
                           )}
                           <button className="btn-delete" onClick={() => deletePoolInvoice(p.id)}>✕</button>
