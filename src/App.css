@@ -744,7 +744,7 @@ body {
 /* ── Invoice Section ── */
 .invoice-header {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr auto;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr auto;
   gap: 6px;
   padding: 6px 0 4px;
   font-size: 9px;
@@ -758,7 +758,7 @@ body {
 
 .invoice-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr auto;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr auto;
   gap: 6px;
   align-items: center;
   padding: 3px 0;
