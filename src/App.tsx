@@ -664,7 +664,7 @@ function App() {
       label, active, inv, doc, ok: Math.abs(inv - doc) <= 0.5, fmtV,
     });
     const comparisons = [
-      matcher(t("净额 vs 本期结算", "Net vs Current Settlement"), totals.net, computed.c_1B, fmtShort),
+      matcher(t("净额 vs 结算−扣除(折扣)", "Net vs Settlement−Deductions"), totals.net, computed.c_1B - computed.c_1D, fmtShort),
       matcher(t("VAT vs 本期VAT", "VAT vs Current VAT Amount"), totals.vat, computed.c_1E, fmtShort),
       matcher(t("VAT率 vs 设定税率", "VAT Rate vs Set VAT Rate"), invVatRate, docVatRate, n => `${n.toFixed(1)}%`, docVatRate > 0),
       matcher(t("WHT vs 本期WHT", "WHT vs Current WHT Amount"), totals.wht, computed.c_6B, fmtShort, computed.c_6B > 0 || totals.wht > 0),
