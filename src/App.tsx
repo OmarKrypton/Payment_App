@@ -34,6 +34,9 @@ interface InvoiceData {
   invoice_no: string;
   seller_tax_id: string;
   amount: string;
+  vat?: string;
+  wht?: string;
+  company_name?: string;
 }
 
 interface ImportCostRow {
@@ -649,16 +652,22 @@ function App() {
     <div className="card">
       <h3>{t("发票", "Invoices")}</h3>
       <div className="invoice-header">
+        <span>{t("公司名", "Company Name")}</span>
         <span>{t("发票号", "Invoice No")}</span>
         <span>{t("销售方税号", "Seller TAX ID")}</span>
-        <span>{t("金额", "Amount")}</span>
+        <span>{t("净额", "Net")}</span>
+        <span>VAT</span>
+        <span>WHT</span>
         <span></span>
       </div>
       {data.invoices.map((inv, i) => (
         <div key={i} className="invoice-row">
+          <FastInput value={inv.company_name || ""} onChange={v => updInv(i, "company_name", v)} />
           <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
           <FastInput value={inv.seller_tax_id || ""} onChange={v => updInv(i, "seller_tax_id", v)} />
           <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
+          <FastInput value={inv.vat || "0.00"} onChange={v => updInv(i, "vat", v)} />
+          <FastInput value={inv.wht || "0.00"} onChange={v => updInv(i, "wht", v)} />
           <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
         </div>
       ))}
@@ -670,7 +679,7 @@ function App() {
   );
 
   const addInvoice = () => {
-    const arr = [...data.invoices, { invoice_no: `Invoice-${data.invoices.length + 1}`, seller_tax_id: "", amount: "0.00" }];
+    const arr = [...data.invoices, { invoice_no: `Invoice-${data.invoices.length + 1}`, seller_tax_id: "", amount: "0.00", vat: "0.00", wht: "0.00", company_name: "" }];
     formRef.current = { ...formRef.current, invoices: arr };
     recalc(formRef.current);
   };
@@ -1503,10 +1512,20 @@ function App() {
     const arr = [...data.invoices, {
       invoice_no: invoiceId,
       seller_tax_id: p.seller_tax_id || "",
-      amount: (p.grand_total ?? 0).toFixed(2),
+      amount: (p.net_amount ?? 0).toFixed(2),
+      vat: (p.total_vat ?? 0).toFixed(2),
+      wht: (p.total_wht ?? 0).toFixed(2),
+      company_name: p.seller_name || "",
     }];
     formRef.current = { ...formRef.current, invoices: arr };
-    recalc(formRef.current);
+    await recalc(formRef.current);
+    try {
+      const formJson = JSON.stringify(formRef.current);
+      const results = await invoke<any[]>("validate_from_pool", { invoiceIds: [invoiceId], formJson });
+      setEtaResult(results);
+    } catch (e: any) {
+      showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+    }
     try {
       await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: (data.doc_serial || "").trim() });
     } catch {}
