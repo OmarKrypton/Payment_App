@@ -764,6 +764,56 @@ body {
   padding: 3px 0;
 }
 
+.invoice-company {
+  position: relative;
+  min-width: 0;
+}
+
+.invoice-company .attached-pill {
+  position: absolute;
+  top: -12px;
+  left: 0;
+  z-index: 2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invoice-row.has-pill {
+  padding-top: 16px;
+}
+
+.invoice-totals {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.invoice-compare {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.invoice-compare-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  margin-bottom: 2px;
+}
+
+.invoice-compare-row .arrow { color: var(--text-muted); }
+.invoice-compare-row .flag { font-weight: 700; }
+.invoice-compare-row.ok .flag { color: var(--green); }
+.invoice-compare-row.bad .flag { color: var(--red); }
+.invoice-compare-row.bad { background: var(--red-bg); }
+.invoice-compare-row.ok { background: var(--green-bg); }
+
 /* ── Audit Tab ── */
 .audit-tab {
   display: flex;

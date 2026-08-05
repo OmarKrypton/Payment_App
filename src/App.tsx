@@ -649,7 +649,30 @@ function App() {
     </div>
   );
 
-  const InvoicesCard = () => (
+  const InvoicesCard = () => {
+    const totals = (data.invoices ?? []).reduce((acc, inv) => {
+      acc.net += parseFloat(inv.amount) || 0;
+      acc.vat += parseFloat(inv.vat || "0") || 0;
+      acc.wht += parseFloat(inv.wht || "0") || 0;
+      return acc;
+    }, { net: 0, vat: 0, wht: 0 });
+    const invVatRate = totals.net > 0 ? (totals.vat / totals.net) * 100 : 0;
+    const invWhtRate = totals.net > 0 ? (totals.wht / totals.net) * 100 : 0;
+    const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
+    const docWhtRate = parseFloat((data.wht_rate || "0").replace('%', '')) || 0;
+    const matcher = (label: string, inv: number, doc: number, fmtV: (n: number) => string, active = true) => ({
+      label, active, inv, doc, ok: Math.abs(inv - doc) <= 0.5, fmtV,
+    });
+    const comparisons = [
+      matcher(t("净额 vs 本期结算", "Net vs Current Settlement"), totals.net, computed.c_1B, fmtShort),
+      matcher(t("VAT vs 本期VAT", "VAT vs Current VAT Amount"), totals.vat, computed.c_1E, fmtShort),
+      matcher(t("VAT率 vs 设定税率", "VAT Rate vs Set VAT Rate"), invVatRate, docVatRate, n => `${n.toFixed(1)}%`, docVatRate > 0),
+      matcher(t("WHT vs 本期WHT", "WHT vs Current WHT Amount"), totals.wht, computed.c_6B, fmtShort, computed.c_6B > 0 || totals.wht > 0),
+      matcher(t("WHT率 vs 设定税率", "WHT Rate vs Set WHT Rate"), invWhtRate, docWhtRate, n => `${n.toFixed(1)}%`, docWhtRate > 0),
+      matcher(t("发票含税−WHT vs 净应付(9A)", "Invoices+VAT−WHT vs Net Payable (9A)"), totals.net + totals.vat - totals.wht, computed.c_9A, fmtShort),
+    ];
+    const shown = comparisons.filter(c => c.active);
+    return (
     <div className="card">
       <h3>{t("发票", "Invoices")}</h3>
       <div className="invoice-header">
@@ -662,8 +685,8 @@ function App() {
         <span></span>
       </div>
       {data.invoices.map((inv, i) => (
-        <div key={i} className="invoice-row">
-          <div style={{minWidth:0}}>
+        <div key={i} className={`invoice-row${inv.attached_invoice ? ' has-pill' : ''}`}>
+          <div className="invoice-company">
             {inv.attached_invoice && (
               <div className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${inv.attached_invoice}`}>✓ {inv.attached_invoice}</div>
             )}
@@ -677,12 +700,36 @@ function App() {
           <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
         </div>
       ))}
-      <div style={{display:'flex',gap:8}}>
-        <button className="btn-add" onClick={addInvoice}>+ {t("添加发票", "Add Invoice")}</button>
+      <div className="invoice-row invoice-totals">
+        <div className="invoice-company" style={{fontWeight:600}}>{t("合计", "Totals")}</div>
+        <div />
+        <div />
+        <div className="computed-value" style={{fontWeight:700}}>{fmtShort(totals.net)}</div>
+        <div className="computed-value" style={{fontWeight:700}}>{fmtShort(totals.vat)}</div>
+        <div className="computed-value" style={{fontWeight:700}}>{fmtShort(totals.wht)}</div>
+        <div />
+      </div>
+      <div style={{display:'flex',gap:8,marginTop:8}}>
+        <button className="btn-add" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
         <button className="btn-add" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
       </div>
+      {shown.length > 0 && (
+        <div className="invoice-compare">
+          <div style={{fontWeight:600,fontSize:11,marginBottom:6}}>{t("与文档字段对比", "Comparison vs Document Fields")}</div>
+          {shown.map((c, i) => (
+            <div key={i} className={`invoice-compare-row ${c.ok ? 'ok' : 'bad'}`}>
+              <span>{c.label}</span>
+              <span>{c.fmtV(c.inv)}</span>
+              <span className="arrow">→</span>
+              <span>{c.fmtV(c.doc)}</span>
+              <span className="flag">{c.ok ? '✓' : '✗'}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
+  }
 
   const addInvoice = () => {
     const arr = [...data.invoices, { invoice_no: `Invoice-${data.invoices.length + 1}`, seller_tax_id: "", amount: "0.00", vat: "0.00", wht: "0.00", company_name: "" }];
