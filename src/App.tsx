@@ -37,6 +37,7 @@ interface InvoiceData {
   vat?: string;
   wht?: string;
   company_name?: string;
+  attached_invoice?: string;
 }
 
 interface ImportCostRow {
@@ -662,7 +663,12 @@ function App() {
       </div>
       {data.invoices.map((inv, i) => (
         <div key={i} className="invoice-row">
-          <FastInput value={inv.company_name || ""} onChange={v => updInv(i, "company_name", v)} />
+          <div style={{minWidth:0}}>
+            {inv.attached_invoice && (
+              <div className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${inv.attached_invoice}`}>✓ {inv.attached_invoice}</div>
+            )}
+            <FastInput value={inv.company_name || ""} onChange={v => updInv(i, "company_name", v)} />
+          </div>
           <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
           <FastInput value={inv.seller_tax_id || ""} onChange={v => updInv(i, "seller_tax_id", v)} />
           <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
@@ -701,7 +707,14 @@ function App() {
     updateNested("import_entries", i, k, v);
     if (k === "service_name") updateNested("import_entries", i, "attached_invoice", "");
   };
-  const delImportEntry = (i: number) => delRow("import_entries", i);
+  const delImportEntry = (i: number) => {
+    const inv = (formRef.current.import_entries ?? [])[i];
+    const attached = inv?.attached_invoice;
+    delRow("import_entries", i);
+    if (attached && poolList.some((x: any) => x.invoice_id === attached && x.status === 'used')) {
+      invoke("mark_pool_invoice_available", { invoiceId: attached }).catch(() => {});
+    }
+  };
   const addCostRow = () => {
     const arr = [...(data.import_costs ?? []), { name: "", amount: "0.00" }];
     formRef.current = { ...formRef.current, import_costs: arr };
@@ -1523,6 +1536,7 @@ function App() {
       vat: (p.total_vat ?? 0).toFixed(2),
       wht: (p.total_wht ?? 0).toFixed(2),
       company_name: p.seller_name || "",
+      attached_invoice: invoiceId,
     }];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
