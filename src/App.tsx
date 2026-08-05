@@ -684,7 +684,13 @@ function App() {
     recalc(formRef.current);
   };
   const updInv = (i: number, k: string, v: string) => updateNested("invoices", i, k, v);
-  const delInv = (i: number) => delRow("invoices", i);
+  const delInv = (i: number) => {
+    const inv = (formRef.current.invoices ?? [])[i];
+    delRow("invoices", i);
+    if (inv && inv.invoice_no && poolList.some((x: any) => x.invoice_id === inv.invoice_no && x.status === 'used')) {
+      invoke("mark_pool_invoice_available", { invoiceId: inv.invoice_no }).catch(() => {});
+    }
+  };
 
   const addImportEntry = () => {
     const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false, attached_invoice: "" }];
@@ -1505,11 +1511,12 @@ function App() {
   const attachFromPool = async (invoiceId: string) => {
     const p = poolList.find((x: any) => x.invoice_id === invoiceId);
     if (!p) return;
-    if (data.invoices.some(inv => inv.invoice_no === invoiceId)) {
+    const currentInvoices = [...(formRef.current.invoices ?? [])];
+    if (currentInvoices.some(inv => inv.invoice_no === invoiceId)) {
       showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
       return;
     }
-    const arr = [...data.invoices, {
+    const arr = [...currentInvoices, {
       invoice_no: invoiceId,
       seller_tax_id: p.seller_tax_id || "",
       amount: (p.net_amount ?? 0).toFixed(2),
@@ -1520,16 +1527,23 @@ function App() {
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
     try {
-      const formJson = JSON.stringify(formRef.current);
-      const results = await invoke<any[]>("validate_from_pool", { invoiceIds: [invoiceId], formJson });
-      setEtaResult(results);
+      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: ((formRef.current.doc_serial) || "").trim() });
+    } catch {}
+    await loadPool();
+    // Compare every pool-attached invoice still in this document against the
+    // bank document fields, so adding multiple invoices one-by-one always shows
+    // the full set of comparisons together.
+    try {
+      const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
+      const attached = arr.filter(inv => poolIds.has(inv.invoice_no)).map(inv => inv.invoice_no);
+      if (attached.length > 0) {
+        const formJson = JSON.stringify(formRef.current);
+        const results = await invoke<any[]>("validate_from_pool", { invoiceIds: attached, formJson });
+        setEtaResult(results);
+      }
     } catch (e: any) {
       showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
     }
-    try {
-      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: (data.doc_serial || "").trim() });
-    } catch {}
-    await loadPool();
   };
 
   const unclaimPoolInvoice = async (invoiceId: string) => {
