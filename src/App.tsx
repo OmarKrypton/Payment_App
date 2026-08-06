@@ -2112,7 +2112,10 @@ function App() {
                     </span>
                   </div>
                   <div style={{padding:'8px 12px',fontSize:12}}>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:4,marginBottom:8}}>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(90px,1fr))',gap:4,marginBottom:8}}>
+                      {r.invoice.currency && r.invoice.currency !== 'EGP' ? (
+                        <div><span style={{color:'var(--accent)',fontWeight:700}}>[{r.invoice.currency}]</span></div>
+                      ) : null}
                       <div><span style={{color:'var(--text-muted)'}}>{t("净额", "Net")}:</span> {r.invoice.net_amount.toFixed(2)}</div>
                       <div><span style={{color:'var(--text-muted)'}}>VAT:</span> {r.invoice.total_vat.toFixed(2)}</div>
                       <div><span style={{color:'var(--text-muted)'}}>WHT:</span> {r.invoice.total_wht.toFixed(2)}</div>
@@ -2251,6 +2254,9 @@ function App() {
                             <p style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>📄 {p.file_name}</p>
                           )}
                           <p style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                            {p.currency && p.currency !== 'EGP' ? (
+                              <span style={{fontWeight:700,color:'var(--accent)',marginRight:4}}>[{p.currency}]</span>
+                            ) : null}
                             {t("净额", "Net")}: {p.net_amount.toFixed(2)} · VAT: {p.total_vat.toFixed(2)}{p.total_wht > 0 ? ` · WHT: ${p.total_wht.toFixed(2)}` : ''} · {t("合计", "Total")}: {p.grand_total.toFixed(2)}
                           </p>
                         </div>
