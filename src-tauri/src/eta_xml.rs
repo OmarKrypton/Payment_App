@@ -105,6 +105,7 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         lines: Vec::new(),
     };
 
+    let mut exchange_rate = 0.0;
     let mut current_text = String::new();
     let mut in_document_json = false;
     let mut document_json = String::new();
@@ -226,9 +227,29 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                 for line in lines {
                     let desc = line.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let qty = line.get("quantity").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                    let unit_val = line.get("unitValue").and_then(|v| v.get("amountEGP")).and_then(|v| v.as_f64())
-                        .or_else(|| line.get("unitValue").and_then(|v| v.get("amountSold")).and_then(|v| v.as_f64()))
-                        .unwrap_or(0.0);
+                    let unit_value = line.get("unitValue");
+                    let cur_sold = unit_value.and_then(|v| v.get("currencySold")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let rate = unit_value.and_then(|v| v.get("currencyExchangeRate")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let amount_sold = unit_value.and_then(|v| v.get("amountSold")).and_then(|v| v.as_f64());
+                    let amount_egp = unit_value.and_then(|v| v.get("amountEGP")).and_then(|v| v.as_f64());
+
+                    // If the invoice is sold in a foreign currency (e.g. USD), keep the
+                    // invoice currency and capture the exchange rate so totals can be
+                    // converted to the sold currency below (amounts in the XML are EGP).
+                    if !cur_sold.is_empty() && cur_sold != "EGP" {
+                        if invoice.currency == "EGP" {
+                            invoice.currency = cur_sold.clone();
+                        }
+                        if rate > 0.0 {
+                            exchange_rate = rate;
+                        }
+                    }
+
+                    let unit_val = if invoice.currency == "EGP" {
+                        amount_egp.or(amount_sold).unwrap_or(0.0)
+                    } else {
+                        amount_sold.or(amount_egp).unwrap_or(0.0)
+                    };
                     let net_total = line.get("netTotal").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let item_code = line.get("itemCode").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
@@ -293,6 +314,21 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
             if invoice.issue_date.is_empty() {
                 invoice.issue_date = parsed.get("dateTimeIssued").and_then(|v| v.as_str()).unwrap_or("").to_string();
             }
+        }
+    }
+
+    // The ETA document always reports amounts in EGP (converted at the invoice's
+    // exchange rate). When the invoice is sold in a foreign currency (e.g. USD),
+    // convert the totals back to the sold currency so they match the actual
+    // invoice figures (amountSold) and compare correctly against the form.
+    if invoice.currency != "EGP" && exchange_rate > 0.0 {
+        invoice.net_amount = (invoice.net_amount / exchange_rate * 100.0).round() / 100.0;
+        invoice.total_vat = (invoice.total_vat / exchange_rate * 100.0).round() / 100.0;
+        invoice.total_wht = (invoice.total_wht / exchange_rate * 100.0).round() / 100.0;
+        invoice.grand_total = (invoice.grand_total / exchange_rate * 100.0).round() / 100.0;
+        for line in invoice.lines.iter_mut() {
+            line.line_total = (line.line_total / exchange_rate * 100.0).round() / 100.0;
+            line.vat_amount = (line.vat_amount / exchange_rate * 100.0).round() / 100.0;
         }
     }
 
@@ -839,5 +875,56 @@ mod tests {
         assert_eq!(inv.lines.len(), 1);
         assert_eq!(inv.lines[0].vat_rate, 10.0);
         assert_eq!(inv.lines[0].vat_amount, 2350.0);
+    }
+
+    #[test]
+    fn converts_usd_invoice_to_sold_currency() {
+        // ETA reports amounts in EGP converted at the invoice exchange rate; the
+        // actual bill is in USD (amountSold). Totals must be converted to USD.
+        let xml = r#"<document>
+  <internalId>EGSOKAM260000812</internalId>
+  <issuerId>202487288</issuerId>
+  <receiverId>100489095</receiverId>
+  <netAmount>17933.19</netAmount>
+  <total>20443.84</total>
+  <document>
+    {"invoiceLines":[{"description":"Import shipment services","quantity":1,
+      "unitValue":{"currencySold":"USD","amountEGP":17933.19,"amountSold":341,"currencyExchangeRate":52.59},
+      "netTotal":17933.19,"taxableItems":[{"taxType":"T1","amount":2510.65,"subType":"V009","rate":14}]}],
+     "taxTotals":[{"taxType":"T1","amount":2510.65}],
+     "netAmount":17933.19,"totalAmount":20443.84}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.currency, "USD");
+        assert_eq!(inv.net_amount, 341.0, "net converted from EGP 17933.19 / 52.59");
+        assert_eq!(inv.total_vat, 47.74, "VAT converted from EGP 2510.65 / 52.59");
+        assert_eq!(inv.grand_total, 388.74, "total converted from EGP 20443.84 / 52.59");
+        assert_eq!(inv.lines.len(), 1);
+        assert_eq!(inv.lines[0].line_total, 341.0);
+        assert_eq!(inv.lines[0].unit_price, 341.0);
+        assert_eq!(inv.lines[0].vat_amount, 47.74);
+    }
+
+    #[test]
+    fn leaves_egp_invoice_unchanged() {
+        let xml = r#"<document>
+  <internalId>EGSOC000000001</internalId>
+  <netAmount>1000</netAmount>
+  <total>1140</total>
+  <document>
+    {"invoiceLines":[{"description":"Service","quantity":1,
+      "unitValue":{"currencySold":"EGP","amountEGP":1000,"amountSold":1000,"currencyExchangeRate":1},
+      "netTotal":1000,"taxableItems":[{"taxType":"T1","amount":140,"subType":"V009","rate":14}]}],
+     "taxTotals":[{"taxType":"T1","amount":140}],
+     "netAmount":1000,"totalAmount":1140}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.currency, "EGP");
+        assert_eq!(inv.net_amount, 1000.0);
+        assert_eq!(inv.total_vat, 140.0);
+        assert_eq!(inv.grand_total, 1140.0);
+        assert_eq!(inv.lines[0].line_total, 1000.0);
     }
 }
