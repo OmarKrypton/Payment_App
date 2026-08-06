@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemote, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 
 interface OcrFieldInfo {
@@ -743,6 +743,7 @@ function App() {
     delRow("invoices", i);
     if (inv && inv.invoice_no && poolList.some((x: any) => x.invoice_id === inv.invoice_no && x.status === 'used')) {
       invoke("mark_pool_invoice_available", { invoiceId: inv.invoice_no }).catch(() => {});
+      try { if (authUser) markPoolAvailableRemote(inv.invoice_no); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
     }
   };
 
@@ -761,6 +762,7 @@ function App() {
     delRow("import_entries", i);
     if (attached && poolList.some((x: any) => x.invoice_id === attached && x.status === 'used')) {
       invoke("mark_pool_invoice_available", { invoiceId: attached }).catch(() => {});
+      try { if (authUser) markPoolAvailableRemote(attached); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
     }
   };
   const addCostRow = () => {
@@ -1506,6 +1508,7 @@ function App() {
           }
         }
         try { await invoke("mark_pool_invoice_used", { invoiceId: r.invoice.invoice_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
+        try { if (authUser) await markPoolUsedRemote(r.invoice.invoice_id, serial); } catch (e) { console.error("markPoolUsedRemote failed", e); }
       }
     }
     if (updated.some((e, i) => e && e.attached_invoice !== (formRef.current.import_entries ?? [])[i]?.attached_invoice)) {
@@ -1544,7 +1547,41 @@ function App() {
   const loadPool = async () => {
     setPoolLoading(true);
     try {
-      const list = await invoke<any[]>("list_invoice_pool");
+      let list: any[];
+      if (authUser) {
+        try {
+          const remote = await listPoolRemote();
+          if (remote.length > 0) {
+            const mapped = remote.map((r: any) => ({
+              invoice_id: r.invoice_id,
+              uuid: r.uuid || "",
+              seller_tax_id: r.seller_tax_id || "",
+              seller_name: r.seller_name || "",
+              buyer_tax_id: r.buyer_tax_id || "",
+              buyer_name: r.buyer_name || "",
+              issue_date: r.issue_date || "",
+              currency: r.currency || "",
+              net_amount: r.net_amount || 0,
+              total_vat: r.total_vat || 0,
+              total_wht: r.total_wht || 0,
+              grand_total: r.grand_total || 0,
+              lines_json: r.lines_json || "[]",
+              raw_xml: r.raw_xml || "",
+              file_name: r.file_name || "",
+              status: r.status || "available",
+              used_by_snapshot_id: null,
+              used_by_label: r.used_by_label || "",
+              delete_requested_at: r.delete_requested_at || null,
+              delete_requested_by: r.delete_requested_by || "",
+              created_at: r.created_at || new Date().toISOString(),
+            }));
+            await invoke("sync_pool_from_remote", { invoices: mapped });
+          }
+        } catch (e) {
+          console.error("sync remote pool failed", e);
+        }
+      }
+      list = await invoke<any[]>("list_invoice_pool");
       setPoolList(list);
     } catch (e) {
       console.error("list_invoice_pool failed", e);
@@ -1588,9 +1625,13 @@ function App() {
     }];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
+    const serial = ((formRef.current.doc_serial) || "").trim();
     try {
-      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: ((formRef.current.doc_serial) || "").trim() });
+      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: serial });
     } catch {}
+    try {
+      if (authUser) await markPoolUsedRemote(invoiceId, serial);
+    } catch (e) { console.error("markPoolUsedRemote failed", e); }
     await loadPool();
     // Compare every pool-attached invoice still in this document against the
     // bank document fields, so adding multiple invoices one-by-one always shows
@@ -1611,6 +1652,9 @@ function App() {
   const unclaimPoolInvoice = async (invoiceId: string) => {
     try {
       await invoke("mark_pool_invoice_available", { invoiceId });
+      try {
+        if (authUser) await markPoolAvailableRemote(invoiceId);
+      } catch (e) { console.error("markPoolAvailableRemote failed", e); }
       loadPool();
     } catch (e: any) {
       showAlert(`${t("解除认领失败", "Unclaim failed")}: ${e.message || e}`);
@@ -1628,6 +1672,13 @@ function App() {
       if (filePaths.length === 0) return;
       const imported = await invoke<any[]>("import_to_pool", { filePaths });
       showAlert(`${t("已导入", "Imported")} ${imported.length} ${t("发票到池", "invoice(s) to pool")}`);
+      if (authUser && imported.length > 0) {
+        try {
+          const local = await invoke<any[]>("list_invoice_pool");
+          const rows = local.filter((l: any) => imported.some((i: any) => i.invoice_id === l.invoice_id));
+          await upsertPoolInvoicesRemote(rows);
+        } catch (e) { console.error("upsert pool remote failed", e); }
+      }
       loadPool();
     } catch (e: any) {
       showAlert(`${t("导入失败", "Import failed")}: ${e.message || e}`);
@@ -1652,10 +1703,50 @@ function App() {
 
   const deletePoolInvoice = async (id: number) => {
     try {
-      await invoke("delete_pool_invoice", { id });
+      const p = poolList.find((x: any) => x.id === id);
+      const invId = p?.invoice_id;
+      if (authUser) {
+        if (isAdminUser) {
+          await invoke("delete_pool_invoice", { id });
+          try { if (invId) await deletePoolInvoiceRemote(invId); } catch (e) { console.error("deletePoolInvoiceRemote failed", e); }
+          showAlert(t("发票已删除", "Invoice deleted"));
+        } else {
+          await invoke("request_pool_delete", { id, requestedBy: authUserId || authUser });
+          try { if (invId) await requestPoolDeleteRemote(invId); } catch (e) { console.error("requestPoolDeleteRemote failed", e); }
+          showAlert(t("删除请求已提交，等待管理员确认", "Delete request submitted, awaiting admin approval"));
+        }
+      } else {
+        await invoke("delete_pool_invoice", { id });
+      }
       loadPool();
     } catch (e: any) {
       showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
+    }
+  };
+
+  const approvePoolDelete = async (id: number) => {
+    try {
+      const p = poolList.find((x: any) => x.id === id);
+      const invId = p?.invoice_id;
+      await invoke("delete_pool_invoice", { id });
+      try { if (invId) await deletePoolInvoiceRemote(invId); } catch (e) { console.error("deletePoolInvoiceRemote failed", e); }
+      showAlert(t("发票已删除", "Invoice deleted"));
+      loadPool();
+    } catch (e: any) {
+      showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
+    }
+  };
+
+  const rejectPoolDelete = async (id: number) => {
+    try {
+      const p = poolList.find((x: any) => x.id === id);
+      const invId = p?.invoice_id;
+      await invoke("reject_pool_delete", { id });
+      try { if (invId) await rejectPoolDeleteRemote(invId); } catch (e) { console.error("rejectPoolDeleteRemote failed", e); }
+      showAlert(t("删除请求已拒绝", "Delete request rejected"));
+      loadPool();
+    } catch (e: any) {
+      showAlert(`${t("拒绝失败", "Reject failed")}: ${e.message || e}`);
     }
   };
 
@@ -2123,8 +2214,10 @@ function App() {
                       <div className="history-empty">{t("发票池为空，导入XML发票以开始", "Pool is empty. Import XML invoices to get started.")}</div>
                     ) : shown.length === 0 ? (
                       <div className="history-empty">{t("无匹配结果", "No matching invoices")}</div>
-                    ) : shown.map((p: any) => (
-                      <div key={p.id} className="history-item" style={p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'}}>
+                    ) : shown.map((p: any) => {
+                      const pendingDelete = p.delete_requested_at != null;
+                      return (
+                      <div key={p.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : (p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'})}>
                         <div style={{minWidth:0}}>
                           <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                             <strong style={{fontSize:12}}>{p.invoice_id}</strong>
@@ -2136,6 +2229,11 @@ function App() {
                               <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
                                 background:'var(--green-bg)',color:'var(--green)',border:'1px solid #bbf7d0'
                               }}>{t("未认领", "Unclaimed")}</span>
+                            )}
+                            {pendingDelete && (
+                              <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
+                                background:'#fef2f2',color:'var(--red)',border:'1px solid #fecaca'
+                              }}>⚠️ {t("待删除", "Pending delete")}</span>
                             )}
                             {p.status === 'used' && p.used_by_label && (
                               <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
@@ -2167,15 +2265,24 @@ function App() {
                               {t("验证", "Validate")}
                             </button>
                           )}
-                          {poolMode !== 'select' && p.status === 'used' && (
+                          {poolMode !== 'select' && p.status === 'used' && !pendingDelete && (
                             <button className="btn-load" onClick={() => unclaimPoolInvoice(p.invoice_id)}>
                               {t("解除认领", "Unclaim")}
                             </button>
                           )}
-                          <button className="btn-delete" onClick={() => deletePoolInvoice(p.id)}>✕</button>
+                          {isAdminUser && pendingDelete && (
+                            <>
+                              <button className="btn-approve" onClick={() => approvePoolDelete(p.id)}>{t("批准", "Approve")}</button>
+                              <button className="btn-reject" onClick={() => rejectPoolDelete(p.id)}>{t("拒绝", "Reject")}</button>
+                            </>
+                          )}
+                          {!pendingDelete && (
+                            <button className="btn-delete" onClick={() => deletePoolInvoice(p.id)}>✕</button>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               );
