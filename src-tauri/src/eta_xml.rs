@@ -349,6 +349,27 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
 
     let mut matched_entry_indices: Vec<usize> = Vec::new();
 
+    // ── Currency alignment ──
+    // The invoice amounts are stored in the sold currency (e.g. USD) while the
+    // form amounts are entered in EGP. For foreign-currency sales invoices, use
+    // the exchange rate typed in the import document to convert the invoice back
+    // to EGP before comparison, so validation matches the same EGP figures.
+    let imported_rate = get_str("import_commercial_rate")
+        .chars().filter(|c| !c.is_whitespace()).collect::<String>()
+        .replace(',', "")
+        .parse::<f64>()
+        .unwrap_or(0.0);
+    let fx_factor = if invoice.currency != "EGP" && imported_rate > 0.0 {
+        imported_rate
+    } else {
+        1.0
+    };
+    let to_egp = |v: f64| (v * fx_factor * 100.0).round() / 100.0;
+    let it_net = to_egp(invoice.net_amount);
+    let it_vat = to_egp(invoice.total_vat);
+    let it_wht = to_egp(invoice.total_wht);
+    let it_grand = to_egp(invoice.grand_total);
+
     // ── Common checks ──
 
     // 1. Buyer tax ID
@@ -425,32 +446,32 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                     .unwrap_or(0.0);
 
                 // Check net amount (amount before VAT)
-                if invoice.net_amount > 0.0 && inv_amt > 0.0 {
+                if it_net > 0.0 && inv_amt > 0.0 {
                     // Form amount could be net or gross — check both
-                    let diff_net = (invoice.net_amount - inv_amt).abs();
-                    let diff_gross = (invoice.grand_total - inv_amt).abs();
+                    let diff_net = (it_net - inv_amt).abs();
+                    let diff_gross = (it_grand - inv_amt).abs();
                     if diff_net > 0.5 && diff_gross > 0.5 {
                         issues.push(ValidationIssue {
                             field: "Invoice Amount".into(),
-                            xml_value: format!("Net: {:.2} / Gross: {:.2}", invoice.net_amount, invoice.grand_total),
+                            xml_value: format!("Net: {:.2} / Gross: {:.2}", it_net, it_grand),
                             form_value: format!("{:.2}", inv_amt),
                             severity: "error".into(),
-                            message: format!("Invoice amount differs — XML net {:.2} / gross {:.2} vs form {:.2}", invoice.net_amount, invoice.grand_total, inv_amt),
+                            message: format!("Invoice amount differs — XML net {:.2} / gross {:.2} vs form {:.2}", it_net, it_grand, inv_amt),
                         });
                     }
                 }
 
                 // Check VAT amount
-                if invoice.total_vat > 0.0 {
+                if it_vat > 0.0 {
                     let form_vat_total = form.get("import_total_vat").and_then(|v| v.as_str())
                         .and_then(|s| s.replace(',', "").parse::<f64>().ok())
                         .unwrap_or(0.0);
                     if form_vat_total > 0.0 {
-                        let diff = (invoice.total_vat - form_vat_total).abs();
+                        let diff = (it_vat - form_vat_total).abs();
                         if diff > 0.5 {
                             issues.push(ValidationIssue {
                                 field: "Total VAT".into(),
-                                xml_value: format!("{:.2}", invoice.total_vat),
+                                xml_value: format!("{:.2}", it_vat),
                                 form_value: format!("{:.2}", form_vat_total),
                                 severity: "error".into(),
                                 message: format!("Total VAT differs by {:.2}", diff),
@@ -460,16 +481,16 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 }
 
                 // Check WHT amount
-                if invoice.total_wht > 0.0 {
+                if it_wht > 0.0 {
                     let form_wht_total = form.get("import_total_wht").and_then(|v| v.as_str())
                         .and_then(|s| s.replace(',', "").parse::<f64>().ok())
                         .unwrap_or(0.0);
                     if form_wht_total > 0.0 {
-                        let diff = (invoice.total_wht - form_wht_total).abs();
+                        let diff = (it_wht - form_wht_total).abs();
                         if diff > 0.5 {
                             issues.push(ValidationIssue {
                                 field: "Total WHT".into(),
-                                xml_value: format!("{:.2}", invoice.total_wht),
+                                xml_value: format!("{:.2}", it_wht),
                                 form_value: format!("{:.2}", form_wht_total),
                                 severity: "error".into(),
                                 message: format!("Total WHT differs by {:.2}", diff),
@@ -570,12 +591,12 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 }
 
                 // Check net amount against the sum of matching entries
-                if invoice.net_amount > 0.0 && form_total > 0.0 {
-                    let diff = (invoice.net_amount - form_total).abs();
+                if it_net > 0.0 && form_total > 0.0 {
+                    let diff = (it_net - form_total).abs();
                     if diff > 0.5 {
                         issues.push(ValidationIssue {
                             field: "Total Net Amount".into(),
-                            xml_value: format!("{:.2}", invoice.net_amount),
+                            xml_value: format!("{:.2}", it_net),
                             form_value: format!("{:.2}", form_total),
                             severity: "error".into(),
                             message: format!("Total net amount differs by {:.2} — sum of matching services is {:.2}", diff, form_total),
@@ -584,12 +605,12 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 }
 
                 // Check total VAT
-                if invoice.total_vat > 0.0 && form_vat_total > 0.0 {
-                    let diff = (invoice.total_vat - form_vat_total).abs();
+                if it_vat > 0.0 && form_vat_total > 0.0 {
+                    let diff = (it_vat - form_vat_total).abs();
                     if diff > 0.5 {
                         issues.push(ValidationIssue {
                             field: "Total VAT".into(),
-                            xml_value: format!("{:.2}", invoice.total_vat),
+                            xml_value: format!("{:.2}", it_vat),
                             form_value: format!("{:.2}", form_vat_total),
                             severity: "error".into(),
                             message: format!("Total VAT differs by {:.2} — expected from matching services", diff),
@@ -598,26 +619,26 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 }
 
                 // Check total WHT
-                if invoice.total_wht > 0.0 && form_wht_total > 0.0 {
-                    let diff = (invoice.total_wht - form_wht_total).abs();
+                if it_wht > 0.0 && form_wht_total > 0.0 {
+                    let diff = (it_wht - form_wht_total).abs();
                     if diff > 0.5 {
                         issues.push(ValidationIssue {
                             field: "Total WHT".into(),
-                            xml_value: format!("{:.2}", invoice.total_wht),
+                            xml_value: format!("{:.2}", it_wht),
                             form_value: format!("{:.2}", form_wht_total),
                             severity: "error".into(),
                             message: format!("Total WHT differs by {:.2} — expected from matching services", diff),
                         });
                     }
-                } else if invoice.total_wht > 0.0 && form_wht_total == 0.0 {
+                } else if it_wht > 0.0 && form_wht_total == 0.0 {
                     issues.push(ValidationIssue {
                         field: "Total WHT".into(),
-                        xml_value: format!("{:.2}", invoice.total_wht),
+                        xml_value: format!("{:.2}", it_wht),
                         form_value: "0.00".into(),
                         severity: "warning".into(),
                         message: "XML invoice has WHT but matching services have none (0% or free_wht)".into(),
                     });
-                } else if form_wht_total > 0.0 && invoice.total_wht == 0.0 {
+                } else if form_wht_total > 0.0 && it_wht == 0.0 {
                     issues.push(ValidationIssue {
                         field: "Total WHT".into(),
                         xml_value: "0.00".into(),
@@ -638,13 +659,14 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                     for (i, xml_line) in invoice.lines.iter().enumerate() {
                         let entry = matched[i];
                         let (egp, _amt, _rate, vat_rate, _wht_rate, _free_wht) = entry_numbers(entry);
-                        if xml_line.line_total > 0.0 && egp > 0.0 && (xml_line.line_total - egp).abs() > 0.5 {
+                        let line_ttl = to_egp(xml_line.line_total);
+                        if line_ttl > 0.0 && egp > 0.0 && (line_ttl - egp).abs() > 0.5 {
                             issues.push(ValidationIssue {
                                 field: format!("Line {} Amount", i + 1),
-                                xml_value: format!("{:.2}", xml_line.line_total),
+                                xml_value: format!("{:.2}", line_ttl),
                                 form_value: format!("{:.2}", egp),
                                 severity: "error".into(),
-                                message: format!("Line amount differs by {:.2} (form amount × rate)", (xml_line.line_total - egp).abs()),
+                                message: format!("Line amount differs by {:.2} (form amount × rate)", (line_ttl - egp).abs()),
                             });
                         }
                         if xml_line.vat_rate > 0.0 && vat_rate > 0.0 && (xml_line.vat_rate - vat_rate).abs() > 0.5 {
@@ -685,15 +707,17 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 let inv_amt = inv.get("amount").and_then(|v| v.as_str())
                     .and_then(|s| s.replace(',', "").parse::<f64>().ok())
                     .unwrap_or(0.0);
-                if inv_amt > 0.0 && invoice.grand_total > 0.0 {
-                    let diff = (invoice.grand_total - inv_amt).abs();
-                    if diff > 0.5 {
+                if inv_amt > 0.0 && it_grand > 0.0 {
+                    // Form amount could be net or gross — check both
+                    let diff_net = (it_net - inv_amt).abs();
+                    let diff_gross = (it_grand - inv_amt).abs();
+                    if diff_net > 0.5 && diff_gross > 0.5 {
                         issues.push(ValidationIssue {
                             field: "Commercial Invoice Amount".into(),
-                            xml_value: format!("{:.2}", invoice.grand_total),
+                            xml_value: format!("Net: {:.2} / Gross: {:.2}", it_net, it_grand),
                             form_value: format!("{:.2}", inv_amt),
                             severity: "error".into(),
-                            message: format!("Commercial invoice amount differs by {:.2}", diff),
+                            message: format!("Commercial invoice amount differs — XML net {:.2} / gross {:.2} vs form {:.2}", it_net, it_grand, inv_amt),
                         });
                     }
                 }
@@ -926,5 +950,44 @@ mod tests {
         assert_eq!(inv.total_vat, 140.0);
         assert_eq!(inv.grand_total, 1140.0);
         assert_eq!(inv.lines[0].line_total, 1000.0);
+    }
+
+    #[test]
+    fn validates_usd_invoice_in_egp_against_form_rate() {
+        // USD invoice (341 net, 47.74 VAT). The import doc is filled in EGP using
+        // import_commercial_rate. Validation must convert the invoice back to EGP
+        // at that rate before comparing.
+        let xml = r#"<document>
+  <internalId>EGSOKAM260000812</internalId>
+  <issuerId>202487288</issuerId>
+  <receiverId>100489095</receiverId>
+  <netAmount>17933.19</netAmount>
+  <total>20443.84</total>
+  <document>
+    {"invoiceLines":[{"description":"Import shipment services","quantity":1,
+      "unitValue":{"currencySold":"USD","amountEGP":17933.19,"amountSold":341,"currencyExchangeRate":52.59},
+      "netTotal":17933.19,"taxableItems":[{"taxType":"T1","amount":2510.65,"subType":"V009","rate":14}]}],
+     "taxTotals":[{"taxType":"T1","amount":2510.65}],
+     "netAmount":17933.19,"totalAmount":20443.84}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.currency, "USD");
+
+        // Form is in EGP. Rate 54.66 typed on the import doc. 341 * 54.66 = 18639.06.
+        let form = r#"{
+            "doc_type": "import",
+            "buyer_tax_id": "100489095",
+            "seller_tax_ids": ["202487288"],
+            "import_commercial_rate": "54.66",
+            "import_total_vat": "2609.47",
+            "import_total_wht": "0",
+            "invoices": [{"invoice_no": "EGSOKAM260000812", "amount": "18639.06"}],
+            "import_entries": [
+                {"service_name": "MSC Import Inv: EGSOKAM260000812", "amount": "341", "rate": "54.66", "vat_rate": "14%", "wht_rate": "0%", "free_wht": false}
+            ]
+        }"#;
+        let res = validate_eta_against_form(&inv, form).unwrap();
+        assert!(res.is_valid, "should pass after EGP conversion: {:#?}", res.issues);
     }
 }
