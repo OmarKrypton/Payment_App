@@ -672,6 +672,7 @@ function App() {
       matcher(t("发票含税−WHT vs 净应付(9A)", "Invoices+VAT−WHT vs Net Payable (9A)"), totals.net + totals.vat - totals.wht, computed.c_9A, fmtShort),
     ];
     const shown = comparisons.filter(c => c.active);
+    const hasInvoices = (data.invoices ?? []).length > 0;
     return (
     <div className="card">
       <h3>{t("发票", "Invoices")}</h3>
@@ -713,7 +714,7 @@ function App() {
         <button className="btn-add" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
         <button className="btn-add" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
       </div>
-      {shown.length > 0 && (
+      {hasInvoices && shown.length > 0 && (
         <div className="invoice-compare">
           <div style={{fontWeight:600,fontSize:11,marginBottom:6}}>{t("与文档字段对比", "Comparison vs Document Fields")}</div>
           {shown.map((c, i) => (
