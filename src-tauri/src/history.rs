@@ -40,6 +40,8 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
             status TEXT DEFAULT 'available',
             used_by_snapshot_id INTEGER,
             used_by_label TEXT DEFAULT '',
+            delete_requested_at TEXT DEFAULT NULL,
+            delete_requested_by TEXT DEFAULT '',
             created_at TEXT NOT NULL
         )",
         [],
@@ -64,6 +66,14 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
     }
     if !cols.iter().any(|c| c == "file_name") {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN file_name TEXT DEFAULT ''", [])
+            .map_err(|e| e.to_string())?;
+    }
+    if !cols.iter().any(|c| c == "delete_requested_at") {
+        conn.execute("ALTER TABLE eta_invoices ADD COLUMN delete_requested_at TEXT DEFAULT NULL", [])
+            .map_err(|e| e.to_string())?;
+    }
+    if !cols.iter().any(|c| c == "delete_requested_by") {
+        conn.execute("ALTER TABLE eta_invoices ADD COLUMN delete_requested_by TEXT DEFAULT ''", [])
             .map_err(|e| e.to_string())?;
     }
     Ok(conn)
@@ -185,9 +195,12 @@ pub struct PoolInvoice {
     pub status: String,
     pub used_by_snapshot_id: Option<i64>,
     pub used_by_label: String,
+    #[serde(default)]
+    pub delete_requested_at: Option<String>,
+    #[serde(default)]
+    pub delete_requested_by: String,
     pub created_at: String,
 }
-
 pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<i64, String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let lines_json = serde_json::to_string(&invoice.lines).unwrap_or_else(|_| "[]".to_string());
@@ -222,7 +235,7 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
 pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     let mut result = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_snapshot_id, used_by_label, created_at FROM eta_invoices ORDER BY created_at DESC")
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -246,7 +259,9 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
                 status: row.get(16)?,
                 used_by_snapshot_id: row.get(17)?,
                 used_by_label: row.get(18)?,
-                created_at: row.get(19)?,
+                delete_requested_at: row.get(19)?,
+                delete_requested_by: row.get(20)?,
+                created_at: row.get(21)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -275,5 +290,60 @@ pub fn mark_invoice_available(conn: &Connection, invoice_id: &str) -> Result<(),
 pub fn delete_from_pool(conn: &Connection, id: i64) -> Result<(), String> {
     conn.execute("DELETE FROM eta_invoices WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn request_pool_delete(conn: &Connection, id: i64, requested_by: &str) -> Result<(), String> {
+    let now = chrono::Local::now().to_rfc3339();
+    conn.execute(
+        "UPDATE eta_invoices SET delete_requested_at = ?1, delete_requested_by = ?2 WHERE id = ?3 AND delete_requested_at IS NULL",
+        params![now, requested_by, id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn reject_pool_delete(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE eta_invoices SET delete_requested_at = NULL, delete_requested_by = '' WHERE id = ?1",
+        params![id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Upsert an invoice pulled from the shared Supabase pool into local SQLite so
+// that local validation/attach operations work even for invoices imported by
+// other users. Keeps raw_xml so validate_from_pool can re-parse fresh.
+pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+         ON CONFLICT(invoice_id) DO UPDATE SET
+            uuid = excluded.uuid,
+            seller_tax_id = excluded.seller_tax_id,
+            seller_name = excluded.seller_name,
+            buyer_tax_id = excluded.buyer_tax_id,
+            buyer_name = excluded.buyer_name,
+            issue_date = excluded.issue_date,
+            currency = excluded.currency,
+            net_amount = excluded.net_amount,
+            total_vat = excluded.total_vat,
+            total_wht = excluded.total_wht,
+            grand_total = excluded.grand_total,
+            lines_json = excluded.lines_json,
+            raw_xml = excluded.raw_xml,
+            file_name = excluded.file_name,
+            status = excluded.status,
+            used_by_label = excluded.used_by_label,
+            delete_requested_at = excluded.delete_requested_at,
+            delete_requested_by = excluded.delete_requested_by",
+        params![
+            inv.invoice_id, inv.uuid, inv.seller_tax_id, inv.seller_name,
+            inv.buyer_tax_id, inv.buyer_name, inv.issue_date, inv.currency,
+            inv.net_amount, inv.total_vat, inv.total_wht, inv.grand_total,
+            inv.lines_json, inv.raw_xml, inv.file_name, inv.status,
+            inv.used_by_label, inv.delete_requested_at, inv.delete_requested_by,
+            inv.created_at,
+        ],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }

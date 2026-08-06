@@ -164,6 +164,30 @@ fn delete_pool_invoice(state: tauri::State<'_, DbState>, id: i64) -> Result<(), 
 }
 
 #[tauri::command]
+fn request_pool_delete(state: tauri::State<'_, DbState>, id: i64, requested_by: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::request_pool_delete(conn, id, &requested_by)
+}
+
+#[tauri::command]
+fn reject_pool_delete(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::reject_pool_delete(conn, id)
+}
+
+#[tauri::command]
+fn sync_pool_from_remote(state: tauri::State<'_, DbState>, invoices: Vec<history::PoolInvoice>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    for inv in &invoices {
+        history::sync_pool_from_remote(conn, inv)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn validate_from_pool(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>, form_json: String) -> Result<Vec<eta_xml::ValidationResult>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -308,6 +332,9 @@ pub fn run() {
             mark_pool_invoice_used,
             mark_pool_invoice_available,
             delete_pool_invoice,
+            request_pool_delete,
+            reject_pool_delete,
+            sync_pool_from_remote,
             validate_from_pool,
         ])
         .run(tauri::generate_context!())

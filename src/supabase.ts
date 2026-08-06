@@ -128,3 +128,115 @@ export async function rejectDeleteSnapshot(id: number): Promise<void> {
     .eq("id", id);
   if (error) throw error;
 }
+
+export interface PoolInvoiceRow {
+  id: number;
+  invoice_id: string;
+  uuid: string;
+  seller_tax_id: string;
+  seller_name: string;
+  buyer_tax_id: string;
+  buyer_name: string;
+  issue_date: string;
+  currency: string;
+  net_amount: number;
+  total_vat: number;
+  total_wht: number;
+  grand_total: number;
+  lines_json: string;
+  raw_xml: string;
+  file_name: string;
+  status: string;
+  used_by_label: string;
+  delete_requested_at: string | null;
+  delete_requested_by: string | null;
+  created_at: string;
+}
+
+export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { data, error } = await supabase
+    .from("pool_invoices")
+    .select("id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (rows.length === 0) return;
+  const upserts = rows.map((r) => ({
+    invoice_id: r.invoice_id,
+    uuid: r.uuid || "",
+    seller_tax_id: r.seller_tax_id || "",
+    seller_name: r.seller_name || "",
+    buyer_tax_id: r.buyer_tax_id || "",
+    buyer_name: r.buyer_name || "",
+    issue_date: r.issue_date || "",
+    currency: r.currency || "",
+    net_amount: r.net_amount || 0,
+    total_vat: r.total_vat || 0,
+    total_wht: r.total_wht || 0,
+    grand_total: r.grand_total || 0,
+    lines_json: r.lines_json || "[]",
+    raw_xml: r.raw_xml || "",
+    file_name: r.file_name || "",
+  }));
+  const { error } = await supabase
+    .from("pool_invoices")
+    .upsert(upserts, { onConflict: "invoice_id" });
+  if (error) throw error;
+}
+
+export async function markPoolUsedRemote(invoiceId: string, usedByLabel: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ status: "used", used_by_label: usedByLabel })
+    .eq("invoice_id", invoiceId);
+  if (error) throw error;
+}
+
+export async function markPoolAvailableRemote(invoiceId: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ status: "available", used_by_label: "" })
+    .eq("invoice_id", invoiceId);
+  if (error) throw error;
+}
+
+export async function deletePoolInvoiceRemote(invoiceId: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("pool_invoices")
+    .delete()
+    .eq("invoice_id", invoiceId);
+  if (error) throw error;
+}
+
+export async function requestPoolDeleteRemote(invoiceId: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ delete_requested_at: new Date().toISOString(), delete_requested_by: session.user.id })
+    .eq("invoice_id", invoiceId);
+  if (error) throw error;
+}
+
+export async function rejectPoolDeleteRemote(invoiceId: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ delete_requested_at: null, delete_requested_by: null })
+    .eq("invoice_id", invoiceId);
+  if (error) throw error;
+}
