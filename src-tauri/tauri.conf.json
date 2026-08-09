@@ -33,6 +33,15 @@
       "icons/icon.icns",
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWR0EplPb+3iUUBdB+jqEYGIYSwsE9yBko1GeAqOmDU9XOpPgSpDBLqi",
+      "endpoints": [
+        "https://github.com/OmarKrypton/Payment_App/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

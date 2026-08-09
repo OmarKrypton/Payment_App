@@ -300,6 +300,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DbState(Mutex::new(None)))
         .setup(|app| {
             let app_dir = app.path().app_data_dir().expect("no app data dir");
