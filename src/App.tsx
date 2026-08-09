@@ -466,7 +466,7 @@ function App() {
       recalc(parsed);
       saveConfig();
       hideOverlay();
-      showAlert(t("PDF导入成功", "PDF imported successfully"));
+      showAlert(t("PDF上传成功", "PDF uploaded successfully"));
     });
     return () => { unlisten.then(f => f()); };
   }, [recalc, t, saveConfig, hideOverlay]);
@@ -475,7 +475,7 @@ function App() {
   useEffect(() => {
     const unlisten = listen<{status: string, message: string}>("import-error", (event) => {
       hideOverlay();
-      showAlert(`${t("导入失败", "Import failed")}: ${event.payload.message}`);
+      showAlert(`${t("上传失败", "Upload failed")}: ${event.payload.message}`);
     });
     return () => { unlisten.then(f => f()); };
   }, [t, hideOverlay]);
@@ -1180,7 +1180,7 @@ function App() {
         overlay.style.display = 'flex';
         void overlay.offsetHeight;
       }
-      setProgressMsg(t("正在准备导入...", "Preparing import..."));
+      setProgressMsg(t("正在准备上传...", "Preparing upload..."));
       importTimerRef.current = setTimeout(() => {
         hideOverlay();
         console.warn("import timed out, overlay auto-hidden");
@@ -1671,7 +1671,7 @@ function App() {
         .filter(Boolean);
       if (filePaths.length === 0) return;
       const imported = await invoke<any[]>("import_to_pool", { filePaths });
-      showAlert(`${t("已导入", "Imported")} ${imported.length} ${t("发票到池", "invoice(s) to pool")}`);
+      showAlert(`${t("已上传", "Uploaded")} ${imported.length} ${t("发票到池", "invoice(s) to pool")}`);
       if (authUser && imported.length > 0) {
         try {
           const local = await invoke<any[]>("list_invoice_pool");
@@ -1681,7 +1681,7 @@ function App() {
       }
       loadPool();
     } catch (e: any) {
-      showAlert(`${t("导入失败", "Import failed")}: ${e.message || e}`);
+      showAlert(`${t("上传失败", "Upload failed")}: ${e.message || e}`);
     }
   };
 
@@ -1765,7 +1765,7 @@ function App() {
       <div ref={overlayRef} className="loading-overlay" style={{ display: 'none' }}>
         <div className="loading-modal">
           <div className="loading-spinner" />
-          <p className="loading-message">{progressMsg || t("正在导入PDF，请稍候...", "Importing PDF, please wait...")}</p>
+          <p className="loading-message">{progressMsg || t("正在上传PDF，请稍候...", "Uploading PDF, please wait...")}</p>
         </div>
       </div>
       {modalMsg !== null && (
@@ -1912,12 +1912,12 @@ function App() {
           </button>
           <div className="sidebar-export-group">
             <button onClick={() => setShowImportMenu(!showImportMenu)} style={{width:'100%'}}>
-              <IconImport /> {t("导入", "Import")} <IconChevronDown size={12} style={{marginLeft:'auto', transition:'transform 0.2s', transform: showImportMenu ? 'rotate(0deg)' : 'rotate(180deg)'}} />
+              <IconImport /> {t("上传", "Upload")} <IconChevronDown size={12} style={{marginLeft:'auto', transition:'transform 0.2s', transform: showImportMenu ? 'rotate(0deg)' : 'rotate(180deg)'}} />
             </button>
             {showImportMenu && (
               <div className="sidebar-export-dropdown">
                 <button onClick={() => { setShowImportMenu(false); importPdf(); }}>
-                  <IconReport /> {t("导入PDF", "Import PDF")}
+                  <IconReport /> {t("上传PDF", "Upload PDF")}
                 </button>
                 <button onClick={() => { setShowImportMenu(false); openPool(); }}>
                   <IconInvoice /> {t("发票池", "Invoice Pool")}
@@ -2163,7 +2163,7 @@ function App() {
               <button className="modal-close" onClick={() => setShowPool(false)}>✕</button>
             </div>
             <div style={{display:'flex',gap:8,marginBottom:10}}>
-              <button className="btn-add" onClick={importToPool}>+ {t("导入XML", "Import XML")}</button>
+              <button className="btn-add" onClick={importToPool}>+ {t("上传XML", "Upload XML")}</button>
               {poolMode === 'validate' && (
                 <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => {
                   const available = poolList.filter((p: any) => p.status === 'available');
@@ -2214,7 +2214,7 @@ function App() {
                     {poolLoading ? (
                       <div className="history-empty">{t("加载中...", "Loading...")}</div>
                     ) : poolList.length === 0 ? (
-                      <div className="history-empty">{t("发票池为空，导入XML发票以开始", "Pool is empty. Import XML invoices to get started.")}</div>
+                      <div className="history-empty">{t("发票池为空，上传XML发票以开始", "Pool is empty. Upload XML invoices to get started.")}</div>
                     ) : shown.length === 0 ? (
                       <div className="history-empty">{t("无匹配结果", "No matching invoices")}</div>
                     ) : shown.map((p: any) => {
