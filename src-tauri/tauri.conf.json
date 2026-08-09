@@ -38,7 +38,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWR0EplPb+3iUUBdB+jqEYGIYSwsE9yBko1GeAqOmDU9XOpPgSpDBLqi",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxRTJFRDZGNEY5OTEyNzQKUldSMEVwbFBiKzNpVVVCZEIranFFWUdJWVN3c0U5eUJrbzFHZUFxT21EVTlYT3BQZ1NwREJMcWkK",
       "endpoints": [
         "https://github.com/OmarKrypton/Payment_App/releases/latest/download/latest.json"
       ]
