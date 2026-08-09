@@ -694,7 +694,14 @@ function App() {
       matcher(t("VAT率 vs 设定税率", "VAT Rate vs Set VAT Rate"), invVatRate, docVatRate, n => `${n.toFixed(1)}%`, docVatRate > 0),
       matcher(t("WHT vs 本期WHT", "WHT vs Current WHT Amount"), totals.wht, computed.c_6B, fmtShort, computed.c_6B > 0 || totals.wht > 0),
       matcher(t("WHT率 vs 设定税率", "WHT Rate vs Set WHT Rate"), invWhtRate, docWhtRate, n => `${n.toFixed(1)}%`, docWhtRate > 0),
-      matcher(t("发票含税−WHT vs 净应付(9A)", "Invoices+VAT−WHT vs Net Payable (9A)"), totals.net + totals.vat - totals.wht, computed.c_9A, fmtShort),
+      {
+        label: t("本期实付 vs 净应付(9A)", "Current Paid vs Net Payable (9A)"),
+        active: computed.c_9A > 0 || computed.c_10A > 0,
+        inv: computed.c_10A,
+        doc: computed.c_9A,
+        ok: computed.c_10A <= computed.c_9A + 0.5,
+        fmtV: fmtShort,
+      },
     ];
     const shown = comparisons.filter(c => c.active);
     const hasInvoices = (data.invoices ?? []).length > 0;
