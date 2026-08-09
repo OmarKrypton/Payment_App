@@ -671,3 +671,128 @@ pub fn export_invoice_summary(
     workbook.save(path).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+pub fn export_validation_report(
+    results: &[crate::eta_xml::ValidationResult],
+    path: &str,
+) -> Result<(), String> {
+    let mut workbook = Workbook::new();
+
+    let title_fmt = Format::new()
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(0xB91C1C))
+        .set_bold()
+        .set_font_size(14);
+    let section_fmt = Format::new()
+        .set_bold()
+        .set_font_size(11)
+        .set_font_color(Color::White)
+        .set_background_color(Color::RGB(0xB91C1C))
+        .set_border(FormatBorder::Thin);
+    let bold_fmt = Format::new()
+        .set_bold()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin);
+    let normal_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin);
+    let num_fmt = Format::new()
+        .set_font_size(10)
+        .set_num_format("#,##0.00")
+        .set_border(FormatBorder::Thin);
+    let ok_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin)
+        .set_background_color(Color::RGB(0xD1FAE5));
+    let err_fmt = Format::new()
+        .set_font_size(10)
+        .set_border(FormatBorder::Thin)
+        .set_background_color(Color::RGB(0xFEE2E2));
+
+    // ── Sheet 1: Summary ──
+    let summary = workbook.add_worksheet();
+    summary.set_name("Summary").map_err(|e| e.to_string())?;
+    for (ci, w) in [(0u16, 30u16), (1, 30), (2, 10), (3, 14), (4, 14), (5, 14), (6, 14), (7, 12), (8, 12)] {
+        summary.set_column_width(ci, w).map_err(|e| e.to_string())?;
+    }
+    summary.merge_range(0, 0, 0, 8, "ETA Validation Report", &title_fmt)
+        .map_err(|e| e.to_string())?;
+
+    let mut r = 2u32;
+    let headers = [
+        "Invoice ID", "Seller", "Currency", "Net", "VAT", "WHT", "Total", "Status", "Issues",
+    ];
+    for (ci, h) in headers.iter().enumerate() {
+        summary.write_with_format(r, ci as u16, *h, &section_fmt)
+            .map_err(|e| e.to_string())?;
+    }
+    r += 1;
+
+    let mut total_net = 0.0;
+    let mut total_vat = 0.0;
+    let mut total_wht = 0.0;
+    let mut total_grand = 0.0;
+    for res in results {
+        let inv = &res.invoice;
+        let errs = res.issues.iter().filter(|i| i.severity == "error").count();
+        let warns = res.issues.iter().filter(|i| i.severity == "warning").count();
+        let status = if res.is_valid { "PASS" } else if errs == 0 { "WARN" } else { "FAIL" };
+        let status_fmt = if res.is_valid { ok_fmt.clone() } else { err_fmt.clone() };
+        let issue_summary = format!("{} errors, {} warnings", errs, warns);
+
+        summary.write_with_format(r, 0, &inv.invoice_id, &normal_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 1, &inv.seller_name, &normal_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 2, &inv.currency, &normal_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 3, inv.net_amount, &num_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 4, inv.total_vat, &num_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 5, inv.total_wht, &num_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 6, inv.grand_total, &num_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 7, status, &status_fmt).map_err(|e| e.to_string())?;
+        summary.write_with_format(r, 8, &issue_summary, &normal_fmt).map_err(|e| e.to_string())?;
+
+        total_net += inv.net_amount;
+        total_vat += inv.total_vat;
+        total_wht += inv.total_wht;
+        total_grand += inv.grand_total;
+        r += 1;
+    }
+    r += 1;
+    summary.write_with_format(r, 2, "TOTAL", &bold_fmt).map_err(|e| e.to_string())?;
+    summary.write_with_format(r, 3, total_net, &num_fmt).map_err(|e| e.to_string())?;
+    summary.write_with_format(r, 4, total_vat, &num_fmt).map_err(|e| e.to_string())?;
+    summary.write_with_format(r, 5, total_wht, &num_fmt).map_err(|e| e.to_string())?;
+    summary.write_with_format(r, 6, total_grand, &num_fmt).map_err(|e| e.to_string())?;
+
+    // ── Sheet 2: Issues ──
+    let issues = workbook.add_worksheet();
+    issues.set_name("Issues").map_err(|e| e.to_string())?;
+    for (ci, w) in [(0u16, 30u16), (1, 22), (2, 30), (3, 30), (4, 50), (5, 10)] {
+        issues.set_column_width(ci, w).map_err(|e| e.to_string())?;
+    }
+    issues.merge_range(0, 0, 0, 5, "Validation Issues (details)", &title_fmt)
+        .map_err(|e| e.to_string())?;
+
+    let mut ri = 2u32;
+    let iheaders = ["Invoice ID", "Field", "XML Value", "Form Value", "Message", "Severity"];
+    for (ci, h) in iheaders.iter().enumerate() {
+        issues.write_with_format(ri, ci as u16, *h, &section_fmt)
+            .map_err(|e| e.to_string())?;
+    }
+    ri += 1;
+
+    for res in results {
+        for issue in &res.issues {
+            let sev_fmt = if issue.severity == "error" { err_fmt.clone() } else { ok_fmt.clone() };
+            issues.write_with_format(ri, 0, &res.invoice.invoice_id, &normal_fmt).map_err(|e| e.to_string())?;
+            issues.write_with_format(ri, 1, &issue.field, &normal_fmt).map_err(|e| e.to_string())?;
+            issues.write_with_format(ri, 2, &issue.xml_value, &normal_fmt).map_err(|e| e.to_string())?;
+            issues.write_with_format(ri, 3, &issue.form_value, &normal_fmt).map_err(|e| e.to_string())?;
+            issues.write_with_format(ri, 4, &issue.message, &normal_fmt).map_err(|e| e.to_string())?;
+            issues.write_with_format(ri, 5, &issue.severity, &sev_fmt).map_err(|e| e.to_string())?;
+            ri += 1;
+        }
+    }
+
+    workbook.save(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
