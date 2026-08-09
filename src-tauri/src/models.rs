@@ -79,6 +79,8 @@ pub struct FormData {
     pub audit_notes: String,
     pub vat_manual: bool,
     pub wht_manual: bool,
+    #[serde(default)]
+    pub wht_manual_amount: bool,
     pub oth_manual: bool,
     pub soc_manual: bool,
     pub invoices: Vec<InvoiceData>,
@@ -159,6 +161,7 @@ impl Default for FormData {
             audit_notes: String::new(),
             vat_manual: false,
             wht_manual: false,
+            wht_manual_amount: false,
             oth_manual: false,
             soc_manual: false,
             invoices: vec![],

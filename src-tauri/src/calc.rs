@@ -85,7 +85,9 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let c_5D = c_5A + c_5B - c_5C;
 
     let c_6A = gv("val_6A");
-    let c_6B = if data.wht_manual {
+    let c_6B = if data.wht_manual_amount {
+        parse_amt(&data.val_6B)
+    } else if data.wht_manual {
         compute_rate_total(&data.wht_rows)
     } else {
         (c_1B * gv("wht_rate") / 100.0 * 100.0).round() / 100.0
