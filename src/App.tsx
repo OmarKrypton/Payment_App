@@ -60,6 +60,7 @@ interface FormData {
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
   final_decision: string; conditional_reason: string; reject_reason: string; auditor: string;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
+  wht_manual_amount: boolean;
   invoices: InvoiceData[];
   vat_rows: RateRow[]; wht_rows: RateRow[]; oth_rows: RateRow[]; soc_rows: RateRow[];
   import_commercial_amount: string; import_cost_1: string; import_cost_2: string; import_cost_3: string;
@@ -102,7 +103,7 @@ const EMPTY_FORM: FormData = {
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
-  vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
+  vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
   wht_rows: [{ amount: "0.00", rate: "0%" }],
@@ -129,7 +130,7 @@ const DEFAULT_FORM: FormData = {
   check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
-  vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false,
+  vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
   wht_rows: [{ amount: "0.00", rate: "0%" }],
@@ -611,13 +612,22 @@ function App() {
     <div className="card">
       <h3>{t("6. 预提税", "6. WHT")}</h3>
       <Input label={t("期初累计预提税", "Initial accum. WHT")} value={data.val_6A} onChange={v => updateField("val_6A", v)} confidence={ocrConf("val_6A")} />
-      <div className="section-header">
+      <div className="section-header" style={{flexWrap:'wrap',gap:8}}>
         <label className="toggle">
           <input type="checkbox" checked={data.wht_manual} onChange={() => toggleManual("wht_manual")} />
           {t("多税率", "Multi-Rate")}
         </label>
+        <label className="toggle">
+          <input type="checkbox" checked={data.wht_manual_amount} onChange={() => toggleManual("wht_manual_amount")} />
+          {t("手动金额", "Manual Amount")}
+        </label>
       </div>
-      {data.wht_manual ? (
+      {data.wht_manual_amount ? (
+        <>
+          <Input label={t("本期预提税（手动，可为负值）", "Current WHT (manual, may be negative)")} value={data.val_6B} onChange={v => updateField("val_6B", v)} confidence={ocrConf("val_6B")} />
+          <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
+        </>
+      ) : data.wht_manual ? (
         <>
           {renderRateRows(data.wht_rows, "wht_rows", ["0%", "1%", "3%", "5%"])}
           <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
