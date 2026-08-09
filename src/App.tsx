@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemote, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemote, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 
 interface OcrFieldInfo {
@@ -28,6 +28,7 @@ interface ImportEntry {
   vat_rate: string;
   temp_labour: boolean;
   attached_invoice: string;
+  seller_tax_id?: string;
 }
 
 interface InvoiceData {
@@ -315,7 +316,31 @@ function App() {
   const [poolSearch, setPoolSearch] = useState("");
   const [poolTab, setPoolTab] = useState<"unclaimed" | "claimed">("unclaimed");
   const [poolMode, setPoolMode] = useState<"validate" | "select">("validate");
+  const [poolSelected, setPoolSelected] = useState<Set<string>>(new Set());
+  const [poolDateFrom, setPoolDateFrom] = useState("");
+  const [poolDateTo, setPoolDateTo] = useState("");
+  const [poolSeller, setPoolSeller] = useState("all");
+  const [poolCurrency, setPoolCurrency] = useState("all");
+  const [resultSearch, setResultSearch] = useState("");
   const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
+
+  // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
+  // prefill with the last-used rates for that seller).
+  const [sellerRates, setSellerRates] = useState<Record<string, { vat: string; wht: string; rate: string }>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("seller_rates") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const rememberSellerRates = (taxId: string, rates: { vat: string; wht: string; rate: string }) => {
+    if (!taxId) return;
+    setSellerRates(prev => {
+      const next = { ...prev, [taxId]: rates };
+      try { localStorage.setItem("seller_rates", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
@@ -613,7 +638,7 @@ function App() {
       <h3>{t("8 & 12. 其他扣款与社保", "8 & 12. Others & Social")}</h3>
       <h4>{t("其他扣款", "Other Deductions")}</h4>
       <Input label={t("期初其他扣款", "Initial other")} value={data.val_8A} onChange={v => updateField("val_8A", v)} />
-      <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%"]} onChange={v => updateField("oth_rate", v)} />
+      <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%", "0.45%"]} onChange={v => updateField("oth_rate", v)} />
       <Computed label={t("本期其他扣款", "Current other")} value={computed.c_8B} />
       <Computed label={t("期末累计其他扣款", "Ending other")} value={computed.c_8C} highlight />
 
@@ -747,14 +772,42 @@ function App() {
     }
   };
 
+  const sellerTaxForService = (serviceName: string): string => {
+    const name = serviceName || "";
+    const found = poolList.find((p: any) =>
+      p.invoice_id && name.toUpperCase().includes((p.invoice_id).toUpperCase())
+    );
+    return found?.seller_tax_id || "";
+  };
+
   const addImportEntry = () => {
-    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false, attached_invoice: "" }];
+    const arr = [...(data.import_entries ?? []), { service_name: "", amount: "0.00", rate: "", free_wht: false, wht_rate: "0%", vat_rate: "14%", temp_labour: false, attached_invoice: "", seller_tax_id: "" }];
     formRef.current = { ...formRef.current, import_entries: arr };
     recalc(formRef.current);
   };
   const updImportEntry = (i: number, k: string, v: any) => {
     updateNested("import_entries", i, k, v);
-    if (k === "service_name") updateNested("import_entries", i, "attached_invoice", "");
+    const entry = { ...(formRef.current.import_entries ?? [])[i], [k]: v };
+    if (k === "service_name") {
+      // When a service names an invoice from the pool, prefill VAT/WHT/rate from
+      // the memory of the matching seller (last used).
+      const taxId = sellerTaxForService(v);
+      if (taxId && sellerRates[taxId]) {
+        const mem = sellerRates[taxId];
+        updateNested("import_entries", i, "vat_rate", mem.vat || entry.vat_rate);
+        updateNested("import_entries", i, "wht_rate", mem.wht || entry.wht_rate);
+        if (mem.rate) updateNested("import_entries", i, "rate", mem.rate);
+        updateNested("import_entries", i, "seller_tax_id", taxId);
+        entry.vat_rate = mem.vat || entry.vat_rate;
+        entry.wht_rate = mem.wht || entry.wht_rate;
+        entry.seller_tax_id = taxId;
+      }
+      updateNested("import_entries", i, "attached_invoice", "");
+    }
+    if (k === "vat_rate" || k === "wht_rate" || k === "rate") {
+      const taxId = entry.seller_tax_id || sellerTaxForService(entry.service_name);
+      if (taxId) rememberSellerRates(taxId, { vat: entry.vat_rate || "14%", wht: entry.wht_rate || "0%", rate: entry.rate || "" });
+    }
   };
   const delImportEntry = (i: number) => {
     const inv = (formRef.current.import_entries ?? [])[i];
@@ -1504,7 +1557,7 @@ function App() {
       if (r.is_valid && indices.length > 0) {
         for (const idx of indices) {
           if (updated[idx] && !updated[idx].attached_invoice) {
-            updated[idx] = { ...updated[idx], attached_invoice: r.invoice.invoice_id };
+            updated[idx] = { ...updated[idx], attached_invoice: r.invoice.invoice_id, seller_tax_id: r.invoice.seller_tax_id || updated[idx].seller_tax_id || "" };
           }
         }
         try { await invoke("mark_pool_invoice_used", { invoiceId: r.invoice.invoice_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
@@ -1595,6 +1648,7 @@ function App() {
     setShowPool(true);
     setPoolSearch("");
     setPoolTab("unclaimed");
+    setPoolSelected(new Set());
     loadPool();
   };
 
@@ -1603,6 +1657,7 @@ function App() {
     setShowPool(true);
     setPoolSearch("");
     setPoolTab("unclaimed");
+    setPoolSelected(new Set());
     loadPool();
   };
 
@@ -1646,6 +1701,56 @@ function App() {
       }
     } catch (e: any) {
       showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+    }
+  };
+
+  const attachBatchFromPool = async (invoiceIds: string[]) => {
+    const ids = Array.from(new Set(invoiceIds));
+    if (ids.length === 0) return;
+    const currentInvoices = [...(formRef.current.invoices ?? [])];
+    const already = ids.filter(id => currentInvoices.some(inv => inv.invoice_no === id));
+    const fresh = ids.filter(id => !already.includes(id));
+    if (fresh.length === 0) {
+      showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
+      return;
+    }
+    const arr = [
+      ...currentInvoices,
+      ...fresh.map((invoiceId) => {
+        const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+        return {
+          invoice_no: invoiceId,
+          seller_tax_id: p?.seller_tax_id || "",
+          amount: (p?.net_amount ?? 0).toFixed(2),
+          vat: (p?.total_vat ?? 0).toFixed(2),
+          wht: (p?.total_wht ?? 0).toFixed(2),
+          company_name: p?.seller_name || "",
+          attached_invoice: invoiceId,
+        };
+      }),
+    ];
+    formRef.current = { ...formRef.current, invoices: arr };
+    await recalc(formRef.current);
+    const serial = ((formRef.current.doc_serial) || "").trim();
+    try {
+      await invoke("mark_pool_invoices_used", { invoiceIds: fresh, snapshotId: 0, snapshotLabel: serial });
+    } catch {}
+    try {
+      if (authUser) await markPoolsUsedRemote(fresh, serial);
+    } catch (e) { console.error("markPoolsUsedRemote failed", e); }
+    await loadPool();
+    if (fresh.length > 0) {
+      try {
+        const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
+        const attached = arr.filter(inv => poolIds.has(inv.invoice_no)).map(inv => inv.invoice_no);
+        if (attached.length > 0) {
+          const formJson = JSON.stringify(formRef.current);
+          const results = await invoke<any[]>("validate_from_pool", { invoiceIds: attached, formJson });
+          setEtaResult(results);
+        }
+      } catch (e: any) {
+        showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+      }
     }
   };
 
@@ -1698,6 +1803,18 @@ function App() {
       setShowPool(false);
     } catch (e: any) {
       showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+    }
+  };
+
+  const exportValidationReport = async () => {
+    if (!etaResult || etaResult.length === 0) return;
+    try {
+      const path = await save({ defaultPath: "Validation_Report.xlsx", filters: [{ name: "Excel", extensions: ["xlsx"] }] });
+      if (!path) return;
+      await invoke("export_validation_report", { results: etaResult, filePath: path });
+      showAlert(t("报告已导出", "Report exported"));
+    } catch (e: any) {
+      showAlert(`${t("导出失败", "Export failed")}: ${e.message || e}`);
     }
   };
 
@@ -2071,13 +2188,40 @@ function App() {
           <div className="modal" style={{width:700, maxHeight:'85vh'}} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{t("ETA XML 验证结果", "ETA XML Validation Result")} ({etaResult.length} {t("发票", "invoices")})</h3>
-              <button className="modal-close" onClick={() => setEtaResult(null)}>✕</button>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <button className="btn-add" style={{background:'var(--accent)'}} onClick={exportValidationReport}>
+                  {t("导出报告", "Export Report")}
+                </button>
+                <button className="modal-close" onClick={() => setEtaResult(null)}>✕</button>
+              </div>
+            </div>
+
+            <div style={{marginBottom:10}}>
+              <input
+                className="field-input"
+                style={{width:'100%',boxSizing:'border-box'}}
+                placeholder={t("搜索发票ID或卖方...", "Search invoices...")}
+                value={resultSearch}
+                onChange={e => setResultSearch(e.target.value)}
+              />
             </div>
 
             {(() => {
-              const totalErrors = etaResult.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "error").length, 0);
-              const totalWarnings = etaResult.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "warning").length, 0);
-              const allValid = etaResult.every((r: any) => r.is_valid);
+              const rq = resultSearch.trim().toLowerCase();
+              const shownResults = rq ? etaResult.filter((r: any) => {
+                const hay = [r.invoice.invoice_id || "", r.invoice.seller_name || "", r.invoice.seller_tax_id || ""].join(" ").toLowerCase();
+                return hay.includes(rq);
+              }) : etaResult;
+              const totalErrors = shownResults.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "error").length, 0);
+              const totalWarnings = shownResults.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "warning").length, 0);
+              const allValid = shownResults.every((r: any) => r.is_valid);
+              if (shownResults.length !== etaResult.length) {
+                return (
+                  <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:10}}>
+                    {t("显示", "Showing")} {shownResults.length} / {etaResult.length}
+                  </div>
+                );
+              }
               return (
                 <div style={{display:'flex',gap:12,marginBottom:16}}>
                   <div style={{flex:1,padding:'10px 14px',borderRadius:8,background:allValid?'var(--green-bg)':'var(--red-bg)',border:`1px solid ${allValid?'#bbf7d0':'#fecaca'}`,textAlign:'center'}}>
@@ -2097,7 +2241,13 @@ function App() {
             })()}
 
             <div style={{display:'flex',flexDirection:'column',gap:12,maxHeight:'calc(85vh - 180px)',overflowY:'auto'}}>
-              {etaResult.map((r: any, idx: number) => {
+              {(() => {
+                const rq = resultSearch.trim().toLowerCase();
+                const shownResults = rq ? etaResult.filter((r: any) => {
+                  const hay = [r.invoice.invoice_id || "", r.invoice.seller_name || "", r.invoice.seller_tax_id || ""].join(" ").toLowerCase();
+                  return hay.includes(rq);
+                }) : etaResult;
+                return shownResults.map((r: any, idx: number) => {
                 const errorCount = r.issues.filter((i: any) => i.severity === "error").length;
                 const warnCount = r.issues.filter((i: any) => i.severity === "warning").length;
                 return (
@@ -2149,7 +2299,8 @@ function App() {
                   </div>
                 </div>
                 );
-              })}
+                });
+              })()}
             </div>
           </div>
         </div>
@@ -2186,16 +2337,42 @@ function App() {
             />
             {(() => {
               const q = poolSearch.trim().toLowerCase();
+              const sellers = Array.from(new Set(poolList.map((p: any) => p.seller_tax_id).filter(Boolean))) as string[];
+              const currencies = Array.from(new Set(poolList.map((p: any) => p.currency || 'EGP').filter(Boolean))) as string[];
               const filtered = poolList.filter((p: any) => {
-                if (!q) return true;
-                const hay = [p.invoice_id, p.seller_tax_id, p.seller_name, p.file_name || "", p.used_by_label || ""].join(" ").toLowerCase();
-                return hay.includes(q);
+                if (q) {
+                  const hay = [p.invoice_id, p.seller_tax_id, p.seller_name, p.file_name || "", p.used_by_label || ""].join(" ").toLowerCase();
+                  if (!hay.includes(q)) return false;
+                }
+                if (poolSeller !== 'all' && (p.seller_tax_id || '') !== poolSeller) return false;
+                if (poolCurrency !== 'all' && (p.currency || 'EGP') !== poolCurrency) return false;
+                if (poolDateFrom && p.issue_date && p.issue_date < poolDateFrom) return false;
+                if (poolDateTo && p.issue_date && p.issue_date > poolDateTo) return false;
+                return true;
               });
               const unclaimed = filtered.filter((p: any) => p.status === 'available');
               const claimed = filtered.filter((p: any) => p.status === 'used');
               const shown = poolTab === 'unclaimed' ? unclaimed : claimed;
+              const selectedIds = shown.filter((p: any) => p.status === 'available' && poolSelected.has(p.invoice_id)).map((p: any) => p.invoice_id);
+              const allVisibleSelected = shown.length > 0 && shown.every((p: any) => p.status !== 'available' || poolSelected.has(p.invoice_id));
+              const toggleVisible = () => {
+                const next = new Set(poolSelected);
+                shown.forEach((p: any) => {
+                  if (p.status === 'available') {
+                    if (allVisibleSelected) next.delete(p.invoice_id);
+                    else next.add(p.invoice_id);
+                  }
+                });
+                setPoolSelected(next);
+              };
               const segStyle = (active: boolean): React.CSSProperties => ({
                 flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 11,
+                background: active ? 'var(--accent)' : 'transparent',
+                color: active ? '#fff' : 'var(--text-secondary)',
+                border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
+              });
+              const chipStyle = (active: boolean): React.CSSProperties => ({
+                padding: '3px 8px', borderRadius: 12, cursor: 'pointer', fontWeight: 600, fontSize: 11,
                 background: active ? 'var(--accent)' : 'transparent',
                 color: active ? '#fff' : 'var(--text-secondary)',
                 border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
@@ -2210,6 +2387,44 @@ function App() {
                       {t("已认领", "Claimed")} ({claimed.length})
                     </button>
                   </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+                    {poolTab === 'unclaimed' && (
+                      <button className="btn-load" onClick={toggleVisible} disabled={shown.length === 0}>
+                        {allVisibleSelected ? t("取消全选", "Deselect all") : t("全选", "Select all")}
+                      </button>
+                    )}
+                    {selectedIds.length > 0 && (
+                      <>
+                        {poolMode === 'validate' ? (
+                          <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => validateFromPool(selectedIds)}>
+                            {t("验证选中", "Validate Selected")} ({selectedIds.length})
+                          </button>
+                        ) : (
+                          <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => attachBatchFromPool(selectedIds)}>
+                            {t("添加选中", "Attach Selected")} ({selectedIds.length})
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {poolTab === 'unclaimed' && (
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                      <select className="field-input" style={{width:130}} value={poolCurrency} onChange={e => setPoolCurrency(e.target.value)}>
+                        <option value="all">{t("所有货币", "All currencies")}</option>
+                        {currencies.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <select className="field-input" style={{width:170}} value={poolSeller} onChange={e => setPoolSeller(e.target.value)}>
+                        <option value="all">{t("所有卖方", "All sellers")}</option>
+                        {sellers.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <input className="field-input" style={{width:110}} type="date" value={poolDateFrom} onChange={e => setPoolDateFrom(e.target.value)} />
+                      <span style={{color:'var(--text-muted)',fontSize:11}}>–</span>
+                      <input className="field-input" style={{width:110}} type="date" value={poolDateTo} onChange={e => setPoolDateTo(e.target.value)} />
+                      <button style={chipStyle(poolSeller === 'all' && poolCurrency === 'all' && !poolDateFrom && !poolDateTo)} onClick={() => { setPoolSeller('all'); setPoolCurrency('all'); setPoolDateFrom(''); setPoolDateTo(''); }}>
+                        {t("重置", "Reset")}
+                      </button>
+                    </div>
+                  )}
                   <div className="history-list" style={poolLoading ? {opacity:0.5} : {}}>
                     {poolLoading ? (
                       <div className="history-empty">{t("加载中...", "Loading...")}</div>
@@ -2221,6 +2436,19 @@ function App() {
                       const pendingDelete = p.delete_requested_at != null;
                       return (
                       <div key={p.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : (p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'})}>
+                        {poolTab === 'unclaimed' && p.status === 'available' && (
+                          <input
+                            type="checkbox"
+                            style={{margin:2,flexShrink:0,cursor:'pointer',width:14,height:14}}
+                            checked={poolSelected.has(p.invoice_id)}
+                            onChange={() => {
+                              const next = new Set(poolSelected);
+                              if (next.has(p.invoice_id)) next.delete(p.invoice_id);
+                              else next.add(p.invoice_id);
+                              setPoolSelected(next);
+                            }}
+                          />
+                        )}
                         <div style={{minWidth:0}}>
                           <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                             <strong style={{fontSize:12}}>{p.invoice_id}</strong>

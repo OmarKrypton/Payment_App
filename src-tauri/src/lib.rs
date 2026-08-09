@@ -104,6 +104,11 @@ fn export_invoice_summary(invoices: Vec<InvoiceSummaryRow>, date_from: String, d
 }
 
 #[tauri::command]
+fn export_validation_report(results: Vec<eta_xml::ValidationResult>, file_path: String) -> Result<(), String> {
+    excel::export_validation_report(&results, &file_path)
+}
+
+#[tauri::command]
 fn validate_eta_xml(file_paths: Vec<String>, form_json: String) -> Result<Vec<eta_xml::ValidationResult>, String> {
     let mut results = Vec::new();
     for path in &file_paths {
@@ -147,6 +152,13 @@ fn mark_pool_invoice_used(state: tauri::State<'_, DbState>, invoice_id: String, 
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     history::mark_invoice_used(conn, &invoice_id, snapshot_id, &snapshot_label)
+}
+
+#[tauri::command]
+fn mark_pool_invoices_used(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>, snapshot_id: i64, snapshot_label: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::mark_invoices_used(conn, &invoice_ids, snapshot_id, &snapshot_label)
 }
 
 #[tauri::command]
@@ -326,10 +338,12 @@ pub fn run() {
             check_serial_exists,
             export_excel,
             export_invoice_summary,
+            export_validation_report,
             validate_eta_xml,
             import_to_pool,
             list_invoice_pool,
             mark_pool_invoice_used,
+            mark_pool_invoices_used,
             mark_pool_invoice_available,
             delete_pool_invoice,
             request_pool_delete,

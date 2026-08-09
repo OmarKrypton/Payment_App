@@ -279,6 +279,16 @@ pub fn mark_invoice_used(conn: &Connection, invoice_id: &str, snapshot_id: i64, 
     Ok(())
 }
 
+pub fn mark_invoices_used(conn: &Connection, invoice_ids: &[String], snapshot_id: i64, snapshot_label: &str) -> Result<(), String> {
+    for invoice_id in invoice_ids {
+        conn.execute(
+            "UPDATE eta_invoices SET status = 'used', used_by_snapshot_id = ?1, used_by_label = ?2 WHERE invoice_id = ?3",
+            params![snapshot_id, snapshot_label, invoice_id],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn mark_invoice_available(conn: &Connection, invoice_id: &str) -> Result<(), String> {
     conn.execute(
         "UPDATE eta_invoices SET status = 'available', used_by_snapshot_id = NULL, used_by_label = '' WHERE invoice_id = ?1",

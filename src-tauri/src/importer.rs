@@ -621,7 +621,7 @@ fn cross_validate(data: &mut FormData, extras: &HashMap<String, String>) {
 
     if data.oth_rate == "0%" || data.oth_rate.is_empty() {
         let v = extras.get("val_8B").map(|s| parse_f64(s)).unwrap_or(0.0);
-        if v > 0.0 && !match_ratio(v / v1b, &["0.15%", "0.3%", "0%"], &mut data.oth_rate) {
+        if v > 0.0 && !match_ratio(v / v1b, &["0.15%", "0.3%", "0.45%", "0%"], &mut data.oth_rate) {
             data.oth_rate = fmt_pct(v / v1b);
         }
     }

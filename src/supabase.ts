@@ -201,6 +201,17 @@ export async function markPoolUsedRemote(invoiceId: string, usedByLabel: string)
   if (error) throw error;
 }
 
+export async function markPoolsUsedRemote(invoiceIds: string[], usedByLabel: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (invoiceIds.length === 0) return;
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ status: "used", used_by_label: usedByLabel })
+    .in("invoice_id", invoiceIds);
+  if (error) throw error;
+}
+
 export async function markPoolAvailableRemote(invoiceId: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
