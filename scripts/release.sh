@@ -24,7 +24,14 @@ conf.version = v;
 fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2) + '\n');
 "
 
-sed -i "0,/^version = /s//version = \"$NEW_VERSION\"/" src-tauri/Cargo.toml
+node -e "
+const fs = require('fs');
+const v = '$NEW_VERSION';
+const toml = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+const fixed = toml.replace(/(^version\s*=\s*\")[^\"]*(\".*$)/m, '$1' + v + '$2');
+if (fixed === toml) { console.error('No [package] version line found in Cargo.toml'); process.exit(1); }
+fs.writeFileSync('src-tauri/Cargo.toml', fixed);
+"
 
 echo "Version bumped to $NEW_VERSION in package.json, tauri.conf.json, Cargo.toml"
 echo "Next: git add -A && git commit -m 'Release v$NEW_VERSION' && git tag v$NEW_VERSION && git push && git push --tags"
