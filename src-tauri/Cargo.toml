@@ -1,12 +1,12 @@
 [package]
-name = "cscec-payment"
+name = "vouchify"
 version = "0.2.0"
-description = "CSCEC Payment Voucher — Settlement Calculation App"
+description = "Vouchify — Voucher & Settlement Calculation App"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "cscec_payment_lib"
+name = "vouchify_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

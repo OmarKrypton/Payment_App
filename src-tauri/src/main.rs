@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    cscec_payment_lib::run()
+    vouchify_lib::run()
 }

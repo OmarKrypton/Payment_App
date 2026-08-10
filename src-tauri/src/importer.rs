@@ -1159,7 +1159,7 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
             let trimmed = t.trim().to_string();
             if !trimmed.is_empty() {
                 // Debug: write pdftotext output for comparison
-                let debug_pte = std::env::temp_dir().join("cscec_debug_pdftotext.txt");
+                let debug_pte = std::env::temp_dir().join("vouchify_debug_pdftotext.txt");
                 let _ = std::fs::write(&debug_pte, &trimmed);
                 build_form_data(&trimmed, &[], "", progress).ok()
             } else {
@@ -1169,7 +1169,7 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
 
     // Fall back to OCR pipeline
     call_progress(progress, "render", "Rendering PDF pages with pdftoppm...");
-    let tmp_dir = std::env::temp_dir().join(format!("cscec_ocr_{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("vouchify_ocr_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
     let output_prefix = tmp_dir.join("page");
@@ -1267,7 +1267,7 @@ pub fn import_pdf_with_progress(file_path: &str, progress: &Option<ProgressFn>) 
     let debug_text: String = pass_texts.iter().enumerate()
         .map(|(i, t)| format!("=== PASS {} ===\n{}\n", i+1, t))
         .collect();
-    let debug_path = std::env::temp_dir().join("cscec_debug_ocr.txt");
+    let debug_path = std::env::temp_dir().join("vouchify_debug_ocr.txt");
     let _ = std::fs::write(&debug_path, &debug_text);
 
     let mut data = build_form_data(&text, &pass_texts, &high_quality_text, progress)?;

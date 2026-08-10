@@ -73,7 +73,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet1.set_column_width(1, 55).map_err(|e| e.to_string())?;
         sheet1.set_column_width(2, 25).map_err(|e| e.to_string())?;
 
-        sheet1.merge_range(0, 0, 0, 2, "CSCEC - Payment Voucher Settlement", &title_fmt)
+        sheet1.merge_range(0, 0, 0, 2, "Vouchify - Payment Voucher Settlement", &title_fmt)
             .map_err(|e| e.to_string())?;
         sheet1.write_with_format(1, 1, format!("Doc: {}  |  Buyer TAX ID: {}  |  Seller TAX IDs: {}", data.doc_serial, data.buyer_tax_id, data.seller_tax_ids.join(", ")), &info_fmt)
             .map_err(|e| e.to_string())?;
@@ -408,7 +408,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         let mut r3 = 0u32;
 
         // Title
-        sheet3.merge_range(r3, 0, r3, 10, "CSCEC - Import Calculation", &title_fmt)
+        sheet3.merge_range(r3, 0, r3, 10, "Vouchify - Import Calculation", &title_fmt)
             .map_err(|e| e.to_string())?;
         r3 += 1;
 
@@ -572,7 +572,7 @@ pub fn export_invoice_summary(
     sheet.set_column_width(4, 12).map_err(|e| e.to_string())?;
 
     // Title
-    sheet.merge_range(0, 0, 0, 4, "CSCEC - Invoice Registry", &title_fmt)
+    sheet.merge_range(0, 0, 0, 4, "Vouchify - Invoice Registry", &title_fmt)
         .map_err(|e| e.to_string())?;
 
     // Period info

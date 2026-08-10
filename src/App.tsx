@@ -1128,7 +1128,7 @@ function App() {
   }, [t, recalc]);
 
   const exportExcel = async () => {
-    const path = await save({ defaultPath: `${data.doc_serial || "CSCEC_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
+    const path = await save({ defaultPath: `${data.doc_serial || "Vouchify_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
     if (path) {
       await invoke("export_excel", { data, computed, filePath: path });
       showAlert(t("导出成功", "Export successful"));
@@ -1927,10 +1927,10 @@ function App() {
         <div className="sidebar-header">
           <div className="brand">
             <div className="brand-icon">
-              <img src="/assets/cscec.png" alt="CSCEC" />
+              <img src="/assets/vouchify.svg" alt="Vouchify" />
             </div>
             <div className="brand-text">
-              <h2>CSCEC</h2>
+              <h2>Vouchify</h2>
               <p>{t("付款凭证", "Payment Voucher")}</p>
             </div>
           </div>
