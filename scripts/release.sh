@@ -28,7 +28,7 @@ node -e "
 const fs = require('fs');
 const v = '$NEW_VERSION';
 const toml = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
-const fixed = toml.replace(/(^version\s*=\s*\")[^\"]*(\".*$)/m, '$1' + v + '$2');
+const fixed = toml.replace(/(^version\s*=\s*\")[^\"]*(\".*$)/m, '\$1' + v + '\$2');
 if (fixed === toml) { console.error('No [package] version line found in Cargo.toml'); process.exit(1); }
 fs.writeFileSync('src-tauri/Cargo.toml', fixed);
 "
