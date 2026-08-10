@@ -1,4 +1,4 @@
-# CSCEC Payment Voucher — Install Dependencies (Windows)
+# Vouchify — Install Dependencies (Windows)
 # Run in PowerShell as Administrator
 # Requires: winget (built into Windows 10 1709+ / Windows 11)
 
