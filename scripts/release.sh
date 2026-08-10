@@ -31,7 +31,12 @@ const toml = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
 const fixed = toml.replace(/(^version\s*=\s*\")[^\"]*(\".*$)/m, '\$1' + v + '\$2');
 if (fixed === toml) { console.error('No [package] version line found in Cargo.toml'); process.exit(1); }
 fs.writeFileSync('src-tauri/Cargo.toml', fixed);
+
+const lock = fs.readFileSync('src-tauri/Cargo.lock', 'utf8');
+const lockFixed = lock.replace(/\[\[package\]\]\nname = \"vouchify\"\nversion = \"[^\"]*\"/, '[[package]]\nname = \"vouchify\"\nversion = \"' + v + '\"');
+if (lockFixed === lock) { console.error('No vouchify package block found in Cargo.lock'); process.exit(1); }
+fs.writeFileSync('src-tauri/Cargo.lock', lockFixed);
 "
 
-echo "Version bumped to $NEW_VERSION in package.json, tauri.conf.json, Cargo.toml"
+echo "Version bumped to $NEW_VERSION in package.json, tauri.conf.json, Cargo.toml, Cargo.lock"
 echo "Next: git add -A && git commit -m 'Release v$NEW_VERSION' && git tag v$NEW_VERSION && git push && git push --tags"
