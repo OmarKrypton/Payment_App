@@ -5,6 +5,7 @@ mod excel;
 mod history;
 mod importer;
 mod models;
+mod native_update;
 
 use models::{CalcResult, FormData, HistoryEntry};
 use excel::InvoiceSummaryRow;
@@ -351,6 +352,8 @@ pub fn run() {
             reject_pool_delete,
             sync_pool_from_remote,
             validate_from_pool,
+            native_update::check_native_update,
+            native_update::install_native_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
