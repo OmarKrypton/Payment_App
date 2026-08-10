@@ -1,23 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2F6FED"/>
-      <stop offset="1" stop-color="#1E40AF"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E40AF"/>
+      <stop offset="1" stop-color="#172A6E"/>
     </linearGradient>
-    <linearGradient id="chk" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#2563EB"/>
-      <stop offset="1" stop-color="#7C3AED"/>
-    </linearGradient>
+    <mask id="notch">
+      <rect x="0" y="0" width="1024" height="1024" fill="#ffffff"/>
+      <circle cx="256" cy="452" r="34" fill="#000000"/>
+      <circle cx="256" cy="572" r="34" fill="#000000"/>
+      <circle cx="768" cy="452" r="34" fill="#000000"/>
+      <circle cx="768" cy="572" r="34" fill="#000000"/>
+    </mask>
   </defs>
 
-  <rect x="0" y="0" width="1024" height="1024" rx="220" fill="url(#bg)"/>
-  <rect x="46" y="46" width="932" height="932" rx="182" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="12"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect x="40" y="40" width="944" height="944" rx="184" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="10"/>
 
-  <g transform="translate(300,336)">
-    <path d="M0 0 h400 q20 0 20 20 v130 l-108 88 h-312 q-20 0 -20 -20 v-178 q0 -20 20 -20 z" fill="#ffffff"/>
-    <path d="M420 0 v130 l-108 88 v-218 z" fill="#dce4f6"/>
-    <line x1="48" y1="160" x2="272" y2="160" stroke="#c9d3ea" stroke-width="15" stroke-linecap="round" stroke-dasharray="2 40"/>
+  <g mask="url(#notch)">
+    <rect x="256" y="320" width="512" height="384" rx="48" fill="#ffffff"/>
   </g>
 
-  <path d="M372 484 Q468 548 524 522 Q606 470 688 406" fill="none" stroke="url(#chk)" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="340" y1="380" x2="508" y2="380" stroke="#d5dae6" stroke-width="20" stroke-linecap="round"/>
+  <line x1="340" y1="444" x2="470" y2="444" stroke="#d5dae6" stroke-width="20" stroke-linecap="round"/>
+  <line x1="340" y1="700" x2="508" y2="700" stroke="#d5dae6" stroke-width="20" stroke-linecap="round"/>
+  <line x1="340" y1="636" x2="470" y2="636" stroke="#d5dae6" stroke-width="20" stroke-linecap="round"/>
+
+  <g transform="translate(512,540) rotate(-12)">
+    <circle r="168" fill="none" stroke="#2563EB" stroke-opacity="0.35" stroke-width="12" stroke-dasharray="18 26"/>
+    <circle r="118" fill="none" stroke="#2563EB" stroke-width="3"/>
+    <text x="0" y="46" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="92" font-weight="bold" fill="#2563EB" letter-spacing="6">PAID</text>
+  </g>
 </svg>
