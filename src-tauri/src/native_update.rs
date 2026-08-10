@@ -31,6 +31,7 @@ fn ensure_rustls_provider() {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn is_elf(b: &[u8]) -> bool {
     b.len() > 4 && b[0] == 0x7f && b[1] == b'E' && b[2] == b'L' && b[3] == b'F'
 }
