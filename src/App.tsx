@@ -1535,6 +1535,7 @@ function App() {
       formRef.current = parsed;
       await recalc(parsed);
       await reconcilePillsFromPool();
+      await restoreClaimsFromDocument();
     } catch (e) {
       console.error("loadSnapshot failed", e);
     }
@@ -1638,6 +1639,32 @@ function App() {
         await recalc(formRef.current);
       }
     } catch {}
+  };
+
+  // The document is the source of truth for claims. When a pool is wiped or a
+  // sync is lost, the pool may show "available" invoices that this document
+  // already references. This re-asserts those claims in the local pool and in
+  // Supabase so they never have to be manually reclaimed after a restore.
+  const restoreClaimsFromDocument = async (): Promise<number> => {
+    const form = formRef.current;
+    const serial = ((form.doc_serial) || "").trim();
+    const ids = new Set<string>();
+    (form.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
+    (form.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
+    if (ids.size === 0) return 0;
+    let list: any[] = [];
+    try { list = await invoke<any[]>("list_invoice_pool"); } catch { return 0; }
+    const poolIds = new Set(list.map(p => p.invoice_id));
+    const toClaim = [...ids].filter(id => poolIds.has(id));
+    if (toClaim.length === 0) return 0;
+    try {
+      await invoke("mark_pool_invoices_used", { invoiceIds: toClaim, snapshotId: 0, snapshotLabel: serial });
+    } catch {}
+    try {
+      if (authUser) await markPoolsUsedRemote(toClaim, serial);
+    } catch (e) { console.error("restore claims remote failed", e); }
+    try { await loadPool(); } catch {}
+    return toClaim.length;
   };
 
   const loadPool = async () => {
@@ -2371,6 +2398,12 @@ function App() {
                   validateFromPool(available.map((p: any) => p.invoice_id));
                 }}>{t("验证所有可用发票", "Validate All Available")}</button>
               )}
+              <button className="btn-add" style={{background:'#7c3aed'}} onClick={async () => {
+                const n = await restoreClaimsFromDocument();
+                showAlert(n > 0
+                  ? `${t("已认领", "Claimed")} ${n} ${t("张本文档引用的发票", "invoice(s) referenced by this document")}`
+                  : t("本文档没有可恢复的发票", "No recoverable invoices for this document"));
+              }}>{t("恢复本文档认领", "Restore Doc Claims")}</button>
             </div>
             {poolMode === 'select' && (
               <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:8}}>
