@@ -354,6 +354,7 @@ pub fn run() {
             validate_from_pool,
             native_update::check_native_update,
             native_update::install_native_update,
+            native_update::update_source,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

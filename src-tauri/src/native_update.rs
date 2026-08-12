@@ -37,6 +37,15 @@ fn is_elf(b: &[u8]) -> bool {
 }
 
 #[tauri::command]
+pub fn update_source() -> &'static str {
+    if std::env::var("APPIMAGE").is_ok() {
+        "appimage"
+    } else {
+        "native"
+    }
+}
+
+#[tauri::command]
 pub async fn check_native_update() -> NativeUpdateInfo {
     ensure_rustls_provider();
 
