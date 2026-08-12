@@ -1,10 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemote, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
+import { checkForUpdate, performUpdate } from "./update";
 
 interface OcrFieldInfo {
   field: string;
@@ -289,6 +291,8 @@ const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boo
 function App() {
   const [tab, setTab] = useState<"bank" | "final_decision" | "import">("bank");
   const [lang, setLang] = useState<"zh" | "en">("zh");
+  const [appVersion, setAppVersion] = useState("");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const t = useCallback((zh: string, en: string) => lang === "zh" ? zh : en, [lang]);
   const formRef = useRef<FormData>(DEFAULT_FORM);
   const [computed, setComputed] = useState<CalcResult>(EMPTY_CALC);
@@ -427,6 +431,28 @@ function App() {
       } catch {}
     })();
   }, []);
+
+  // Load app version for display in the sidebar
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
+
+  const handleCheckUpdate = async () => {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      const res = await checkForUpdate();
+      if (res.available) {
+        await performUpdate();
+      } else {
+        showAlert(t("已是最新版本", "You're up to date"));
+      }
+    } catch (e: any) {
+      showAlert(`${t("检查更新失败", "Update check failed")}: ${e.message || e}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   // Close export dropdown when clicking outside
   useEffect(() => {
@@ -2028,6 +2054,12 @@ function App() {
             </div>
           )}
           <div style={{marginTop:10,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.06)',textAlign:'center'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:6}}>
+              <span style={{fontSize:10,color:'rgba(255,255,255,0.35)'}}>{appVersion ? `v${appVersion}` : ""}</span>
+              <button style={{fontSize:10,padding:'2px 8px',borderRadius:6,border:'1px solid rgba(255,255,255,0.12)',background:'transparent',color:'rgba(255,255,255,0.4)',cursor:'pointer'}} onClick={handleCheckUpdate} disabled={checkingUpdate}>
+                {checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}
+              </button>
+            </div>
             <button style={{fontSize:10,padding:'4px 12px',borderRadius:6,border:'1px solid rgba(255,255,255,0.12)',background:'transparent',color:'rgba(255,255,255,0.4)',cursor:'pointer'}} onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
               {lang === "zh" ? "English" : "中文"}
             </button>
