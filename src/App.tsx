@@ -616,7 +616,7 @@ function App() {
     <div className="card">
       <h3>{t("4. 保留金", "4. Retention")}</h3>
       <Input label={t("期初保留金", "Initial retention")} value={data.val_4A} onChange={v => updateField("val_4A", v)} confidence={ocrConf("val_4A")} />
-      <Select label={t("保留金率", "Retention rate")} value={data.ret_rate} options={["0%", "0.5%", "3%", "5%", "10%"]} onChange={v => updateField("ret_rate", v)} />
+      <Select label={t("保留金率", "Retention rate")} value={data.ret_rate} options={["0%", "0.5%", "3%", "5%", "10%", "15%"]} onChange={v => updateField("ret_rate", v)} />
       <Computed label={t("本期应扣保留金", "Current deduction")} value={computed.c_4B} />
       <Input label={t("本期返还保留金", "Current return")} value={data.val_4C} onChange={v => updateField("val_4C", v)} confidence={ocrConf("val_4C")} />
       <Computed label={t("期末保留金余额", "Ending balance")} value={computed.c_4D} highlight />
