@@ -56,7 +56,13 @@ body {
   flex-direction: column;
   padding: 0;
   user-select: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
 
 .sidebar-header {
   padding: 24px 20px 20px;
@@ -183,6 +189,7 @@ body {
   margin-top: auto;
   border-top: 1px solid rgba(255,255,255,0.06);
   padding-top: 10px;
+  flex-shrink: 0;
 }
 
 .sidebar-actions button {
@@ -1088,6 +1095,18 @@ body {
   .card-grid { grid-template-columns: 1fr; }
   .sidebar { width: 200px; min-width: 200px; }
   .content { padding: 12px; }
+}
+
+/* Compact sidebar + tighter spacing on short windows so the action
+   buttons at the bottom stay visible without scrolling. */
+@media (max-height: 800px) {
+  .sidebar-header { padding: 14px 16px 12px; }
+  .sidebar-metrics { padding: 8px 12px 2px; }
+  .metric { padding: 7px 10px; }
+  .sidebar-nav { padding: 6px 12px; }
+  .sidebar-sync { padding: 8px 12px !important; }
+  .sidebar-actions { padding: 6px 12px 12px; gap: 3px; }
+  .sidebar-actions button { padding: 6px 12px; }
 }
 
 /* ── Scrollbar ── */
