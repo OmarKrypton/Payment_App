@@ -304,6 +304,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DbState(Mutex::new(None)))
         .setup(|app| {
+            // Size the window to fit the monitor's available work area so the
+            // app is not clipped on smaller displays (e.g. 1366x768 laptops).
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(Some(monitor)) = win.current_monitor() {
+                    let scale = monitor.scale_factor();
+                    let area = monitor.work_area();
+                    let avail_w = area.size.width as f64 / scale;
+                    let avail_h = area.size.height as f64 / scale;
+                    let target_w = avail_w.min(1400.0).max(900.0);
+                    let target_h = avail_h.min(900.0).max(640.0);
+                    let _ = win.set_size(tauri::LogicalSize::new(target_w, target_h));
+                    let _ = win.center();
+                }
+            }
+
             let app_dir = app.path().app_data_dir().expect("no app data dir");
             std::fs::create_dir_all(&app_dir).expect("failed to create app data dir");
             let db_path = app_dir.join("history.db");

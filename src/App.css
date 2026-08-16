@@ -1075,6 +1075,21 @@ body {
   gap: 12px;
 }
 
+/* ── Responsive: smaller displays ── */
+@media (max-width: 1280px) {
+  .content { padding: 16px; }
+  .card { padding: 14px 16px; }
+  .sidebar { width: 220px; min-width: 220px; }
+  .doc-serial-row { padding: 10px 14px; }
+}
+
+@media (max-width: 1050px) {
+  .card-row { grid-template-columns: 1fr; }
+  .card-grid { grid-template-columns: 1fr; }
+  .sidebar { width: 200px; min-width: 200px; }
+  .content { padding: 12px; }
+}
+
 /* ── Scrollbar ── */
 .content { scrollbar-width: thin; }
 .content::-webkit-scrollbar { width: 6px; }
