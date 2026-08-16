@@ -64,7 +64,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v${VERSION}" --jq '.id')
+          RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[] | select(.tag_name=="v'"$VERSION"'") | .id' | head -1)
           if [ -z "$RELEASE_ID" ]; then
             echo "release for v${VERSION} not found" >&2
             exit 1
