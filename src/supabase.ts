@@ -205,6 +205,8 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
     lines_json: r.lines_json || "[]",
     raw_xml: r.raw_xml || "",
     file_name: r.file_name || "",
+    status: r.status || "available",
+    used_by_label: r.used_by_label || "",
   }));
   const { error } = await supabase
     .from("pool_invoices")
