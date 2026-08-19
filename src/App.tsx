@@ -1707,6 +1707,9 @@ function App() {
       } catch (e) { console.error("listSnapshotsRemote failed in restoreAllClaims", e); }
     }
     if (docs.length === 0) return 0;
+    // Make sure the local pool is up to date first so claims can target
+    // invoices that exist in the cloud but not yet in local SQLite.
+    try { await syncPoolRemote(); } catch {}
     let list: any[] = [];
     try { list = await invoke<any[]>("list_invoice_pool"); } catch { return 0; }
     const poolIds = new Set(list.map(p => p.invoice_id));
@@ -1730,9 +1733,22 @@ function App() {
   // local-only invoices up to Supabase. Runs on login/session-restore and when
   // the pool modal opens, so invoices imported on one device (even while logged
   // out) eventually reach every other device.
+  // Bidirectional pool sync. Push happens FIRST so local-only invoices AND local
+  // claim state (used/label) reach the cloud before the pull can overwrite the
+  // local rows with stale remote state. This converges every device to the full
+  // union of invoices and preserves claims made on any device.
   const syncPoolRemote = async (): Promise<void> => {
     if (!authUser) return;
     try {
+      // 1) Push ALL local invoices (not just missing) with full claim state so
+      //    local-only imports and local claims are never lost.
+      const localAll = await invoke<any[]>("list_invoice_pool");
+      if (localAll.length > 0) {
+        try {
+          await upsertPoolInvoicesRemote(localAll);
+        } catch (e) { console.error("upsert pool remote failed", e); }
+      }
+      // 2) Pull the (now updated) cloud pool into local SQLite.
       const remote = await listPoolRemote();
       if (remote.length > 0) {
         const mapped = remote.map((r: any) => ({
@@ -1760,14 +1776,6 @@ function App() {
         }));
         await invoke("sync_pool_from_remote", { invoices: mapped });
       }
-      // Push local-only invoices (e.g. imported while logged out or before this
-      // account was set up) up to Supabase so they appear on other PCs.
-      const localAll = await invoke<any[]>("list_invoice_pool");
-      const remoteIds = new Set(remote.map(r => r.invoice_id));
-      const missing = localAll.filter(l => !remoteIds.has(l.invoice_id));
-      if (missing.length > 0) {
-        try { await upsertPoolInvoicesRemote(missing); } catch (e) { console.error("upsert missing pool remote failed", e); }
-      }
     } catch (e) {
       console.error("sync remote pool failed", e);
     }
@@ -1788,7 +1796,8 @@ function App() {
 
   // Auto-sync the pool whenever a user logs in (or a saved session is restored)
   // so invoices imported on any device reach the cloud without needing to open
-  // the pool modal first.
+  // the pool modal first. Also refreshes periodically so a device that was
+  // offline (or opened before the cloud was updated) still converges.
   const didInitPoolSync = useRef<string | null>(null);
   useEffect(() => {
     if (!authUser) { didInitPoolSync.current = null; return; }
@@ -1798,6 +1807,14 @@ function App() {
       try { await syncPoolRemote(); } catch (e) { console.error("auto pool sync failed", e); }
     };
     run();
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    const id = setInterval(() => {
+      syncPoolRemote().catch((e) => console.error("periodic pool sync failed", e));
+    }, 60_000);
+    return () => clearInterval(id);
   }, [authUser]);
 
   const openPool = () => {
