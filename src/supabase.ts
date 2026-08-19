@@ -182,7 +182,10 @@ export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
         if (error) throw error;
         return data;
       });
-  return fetchAllPooled(build);
+  // Rows carry full raw_xml (tens of KB each), so keep pages small to stay
+  // under Supabase's response size limit; the pagination loop still returns
+  // every invoice.
+  return fetchAllPooled(build, 50);
 }
 
 export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<void> {
@@ -208,10 +211,19 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
     status: r.status || "available",
     used_by_label: r.used_by_label || "",
   }));
-  const { error } = await supabase
-    .from("pool_invoices")
-    .upsert(upserts, { onConflict: "invoice_id" });
-  if (error) throw error;
+  // Chunk the upload: a single request carrying every invoice (with full
+  // raw_xml) can exceed Supabase's request body limit and fail wholesale,
+  // which previously left the cloud copy missing whichever device had more
+  // invoices. Batches of ~20 keep each request well under the limit and let
+  // partial failures be retried independently.
+  const PAGE = 20;
+  for (let i = 0; i < upserts.length; i += PAGE) {
+    const chunk = upserts.slice(i, i + PAGE);
+    const { error } = await supabase
+      .from("pool_invoices")
+      .upsert(chunk, { onConflict: "invoice_id" });
+    if (error) throw error;
+  }
 }
 
 export async function markPoolUsedRemote(invoiceId: string, usedByLabel: string): Promise<void> {
