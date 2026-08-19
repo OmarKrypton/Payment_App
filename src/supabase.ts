@@ -188,6 +188,22 @@ export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
   return fetchAllPooled(build, 50);
 }
 
+export async function listPoolRemoteMeta(): Promise<{ invoice_id: string; status: string; used_by_label: string }[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const build = (from: number, to: number) =>
+    supabase
+      .from("pool_invoices")
+      .select("invoice_id, status, used_by_label")
+      .order("created_at", { ascending: false })
+      .range(from, to)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        return data;
+      });
+  return fetchAllPooled(build, 2000);
+}
+
 export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
