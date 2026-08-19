@@ -1726,52 +1726,58 @@ function App() {
     return claimed;
   };
 
+  // Bidirectional pool sync: pull the cloud pool into local SQLite AND push any
+  // local-only invoices up to Supabase. Runs on login/session-restore and when
+  // the pool modal opens, so invoices imported on one device (even while logged
+  // out) eventually reach every other device.
+  const syncPoolRemote = async (): Promise<void> => {
+    if (!authUser) return;
+    try {
+      const remote = await listPoolRemote();
+      if (remote.length > 0) {
+        const mapped = remote.map((r: any) => ({
+          invoice_id: r.invoice_id,
+          uuid: r.uuid || "",
+          seller_tax_id: r.seller_tax_id || "",
+          seller_name: r.seller_name || "",
+          buyer_tax_id: r.buyer_tax_id || "",
+          buyer_name: r.buyer_name || "",
+          issue_date: r.issue_date || "",
+          currency: r.currency || "",
+          net_amount: r.net_amount || 0,
+          total_vat: r.total_vat || 0,
+          total_wht: r.total_wht || 0,
+          grand_total: r.grand_total || 0,
+          lines_json: r.lines_json || "[]",
+          raw_xml: r.raw_xml || "",
+          file_name: r.file_name || "",
+          status: r.status || "available",
+          used_by_snapshot_id: null,
+          used_by_label: r.used_by_label || "",
+          delete_requested_at: r.delete_requested_at || null,
+          delete_requested_by: r.delete_requested_by || "",
+          created_at: r.created_at || new Date().toISOString(),
+        }));
+        await invoke("sync_pool_from_remote", { invoices: mapped });
+      }
+      // Push local-only invoices (e.g. imported while logged out or before this
+      // account was set up) up to Supabase so they appear on other PCs.
+      const localAll = await invoke<any[]>("list_invoice_pool");
+      const remoteIds = new Set(remote.map(r => r.invoice_id));
+      const missing = localAll.filter(l => !remoteIds.has(l.invoice_id));
+      if (missing.length > 0) {
+        try { await upsertPoolInvoicesRemote(missing); } catch (e) { console.error("upsert missing pool remote failed", e); }
+      }
+    } catch (e) {
+      console.error("sync remote pool failed", e);
+    }
+  };
+
   const loadPool = async () => {
     setPoolLoading(true);
     try {
-      let list: any[];
-      if (authUser) {
-        try {
-          const remote = await listPoolRemote();
-          if (remote.length > 0) {
-            const mapped = remote.map((r: any) => ({
-              invoice_id: r.invoice_id,
-              uuid: r.uuid || "",
-              seller_tax_id: r.seller_tax_id || "",
-              seller_name: r.seller_name || "",
-              buyer_tax_id: r.buyer_tax_id || "",
-              buyer_name: r.buyer_name || "",
-              issue_date: r.issue_date || "",
-              currency: r.currency || "",
-              net_amount: r.net_amount || 0,
-              total_vat: r.total_vat || 0,
-              total_wht: r.total_wht || 0,
-              grand_total: r.grand_total || 0,
-              lines_json: r.lines_json || "[]",
-              raw_xml: r.raw_xml || "",
-              file_name: r.file_name || "",
-              status: r.status || "available",
-              used_by_snapshot_id: null,
-              used_by_label: r.used_by_label || "",
-              delete_requested_at: r.delete_requested_at || null,
-              delete_requested_by: r.delete_requested_by || "",
-              created_at: r.created_at || new Date().toISOString(),
-            }));
-            await invoke("sync_pool_from_remote", { invoices: mapped });
-          }
-          // Push local-only invoices (e.g. imported while logged out or before
-          // this account was set up) up to Supabase so they appear on other PCs.
-          const localAll = await invoke<any[]>("list_invoice_pool");
-          const remoteIds = new Set(remote.map(r => r.invoice_id));
-          const missing = localAll.filter(l => !remoteIds.has(l.invoice_id));
-          if (missing.length > 0) {
-            try { await upsertPoolInvoicesRemote(missing); } catch (e) { console.error("upsert missing pool remote failed", e); }
-          }
-        } catch (e) {
-          console.error("sync remote pool failed", e);
-        }
-      }
-      list = await invoke<any[]>("list_invoice_pool");
+      await syncPoolRemote();
+      const list = await invoke<any[]>("list_invoice_pool");
       setPoolList(list);
     } catch (e) {
       console.error("list_invoice_pool failed", e);
@@ -1779,6 +1785,20 @@ function App() {
     }
     setPoolLoading(false);
   };
+
+  // Auto-sync the pool whenever a user logs in (or a saved session is restored)
+  // so invoices imported on any device reach the cloud without needing to open
+  // the pool modal first.
+  const didInitPoolSync = useRef<string | null>(null);
+  useEffect(() => {
+    if (!authUser) { didInitPoolSync.current = null; return; }
+    if (didInitPoolSync.current === authUser) return;
+    didInitPoolSync.current = authUser;
+    const run = async () => {
+      try { await syncPoolRemote(); } catch (e) { console.error("auto pool sync failed", e); }
+    };
+    run();
+  }, [authUser]);
 
   const openPool = () => {
     setPoolMode("validate");

@@ -38,10 +38,19 @@ fn is_elf(b: &[u8]) -> bool {
 
 #[tauri::command]
 pub fn update_source() -> &'static str {
-    if std::env::var("APPIMAGE").is_ok() {
-        "appimage"
-    } else {
-        "native"
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("APPIMAGE").is_ok() {
+            "appimage"
+        } else {
+            "native"
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Windows/macOS: the raw-binary native updater is Linux-only, so route
+        // through the tauri-plugin-updater path.
+        "plugin"
     }
 }
 
