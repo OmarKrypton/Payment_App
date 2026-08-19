@@ -1667,6 +1667,65 @@ function App() {
     return toClaim.length;
   };
 
+  // Bulk re-assert claims across every saved document (local + remote) so that
+  // claims and their serial indicators survive a pool wipe, a fresh install, or
+  // a sync failure. Scans all snapshots, extracts invoice references + serial,
+  // and marks those invoices used in the local pool and in Supabase.
+  const restoreAllClaims = async (): Promise<number> => {
+    let claimed = 0;
+    let scanned = 0;
+    let docs: { serial: string; ids: Set<string> }[] = [];
+    // Local snapshots
+    try {
+      const local = await invoke<HistoryEntry[]>("list_history", { search: "" });
+      for (const h of local) {
+        try {
+          const json = await invoke<string>("load_history", { id: h.id });
+          const parsed = JSON.parse(json);
+          const serial = ((parsed.doc_serial) || h.label || "").trim();
+          const ids = new Set<string>();
+          (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
+          (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
+          if (ids.size > 0) docs.push({ serial, ids });
+        } catch (e) { console.error("parse local snapshot failed", h.id, e); }
+      }
+    } catch (e) { console.error("list_history failed in restoreAllClaims", e); }
+    // Remote snapshots
+    if (authUser) {
+      try {
+        const remote = await listSnapshotsRemote("");
+        for (const r of remote) {
+          try {
+            const parsed = JSON.parse(r.data_json);
+            const serial = ((parsed.doc_serial) || r.label || "").trim();
+            const ids = new Set<string>();
+            (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
+            (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
+            if (ids.size > 0) docs.push({ serial, ids });
+          } catch (e) { console.error("parse remote snapshot failed", r.id, e); }
+        }
+      } catch (e) { console.error("listSnapshotsRemote failed in restoreAllClaims", e); }
+    }
+    if (docs.length === 0) return 0;
+    let list: any[] = [];
+    try { list = await invoke<any[]>("list_invoice_pool"); } catch { return 0; }
+    const poolIds = new Set(list.map(p => p.invoice_id));
+    for (const doc of docs) {
+      const toClaim = [...doc.ids].filter(id => poolIds.has(id));
+      if (toClaim.length === 0) continue;
+      scanned += toClaim.length;
+      try {
+        await invoke("mark_pool_invoices_used", { invoiceIds: toClaim, snapshotId: 0, snapshotLabel: doc.serial });
+      } catch {}
+      try {
+        if (authUser) await markPoolsUsedRemote(toClaim, doc.serial);
+      } catch (e) { console.error("restoreAllClaims remote failed", e); }
+      claimed += toClaim.length;
+    }
+    try { await loadPool(); } catch {}
+    return claimed;
+  };
+
   const loadPool = async () => {
     setPoolLoading(true);
     try {
@@ -1699,6 +1758,14 @@ function App() {
               created_at: r.created_at || new Date().toISOString(),
             }));
             await invoke("sync_pool_from_remote", { invoices: mapped });
+          }
+          // Push local-only invoices (e.g. imported while logged out or before
+          // this account was set up) up to Supabase so they appear on other PCs.
+          const localAll = await invoke<any[]>("list_invoice_pool");
+          const remoteIds = new Set(remote.map(r => r.invoice_id));
+          const missing = localAll.filter(l => !remoteIds.has(l.invoice_id));
+          if (missing.length > 0) {
+            try { await upsertPoolInvoicesRemote(missing); } catch (e) { console.error("upsert missing pool remote failed", e); }
           }
         } catch (e) {
           console.error("sync remote pool failed", e);
@@ -2404,6 +2471,12 @@ function App() {
                   ? `${t("已认领", "Claimed")} ${n} ${t("张本文档引用的发票", "invoice(s) referenced by this document")}`
                   : t("本文档没有可恢复的发票", "No recoverable invoices for this document"));
               }}>{t("恢复本文档认领", "Restore Doc Claims")}</button>
+              <button className="btn-add" style={{background:'#db2777'}} onClick={async () => {
+                const n = await restoreAllClaims();
+                showAlert(n > 0
+                  ? `${t("已恢复", "Restored")} ${n} ${t("张发票在所有已保存文档中的认领", "invoice claim(s) across all saved documents")}`
+                  : t("没有可恢复的发票", "No recoverable invoices"));
+              }}>{t("恢复全部文档认领", "Restore All Claims")}</button>
             </div>
             {poolMode === 'select' && (
               <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:8}}>
