@@ -3,7 +3,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch, exit } from "@tauri-apps/plugin-process";
 import { ask } from "@tauri-apps/plugin-dialog";
 
-export type UpdateSource = "native" | "appimage" | "unknown";
+export type UpdateSource = "native" | "appimage" | "plugin" | "unknown";
 
 export interface UpdateCheckResult {
   available: boolean;
@@ -13,17 +13,16 @@ export interface UpdateCheckResult {
 export async function getUpdateSource(): Promise<UpdateSource> {
   try {
     const src = await invoke<string>("update_source");
-    return src === "native" ? "native" : src === "appimage" ? "appimage" : "unknown";
+    return src === "native" ? "native" : src === "appimage" ? "appimage" : src === "plugin" ? "plugin" : "unknown";
   } catch {
     return "unknown";
   }
 }
 
-// Native Linux builds self-update by downloading the vouchify-linux-x86_64
-// asset and swapping the executable. AppImage builds use the plugin updater.
-// The two are never mixed: the plugin updater would replace a native binary
-// with an AppImage (grey screen on this system), and installing the raw ELF
-// over an AppImage would break AppImage launches.
+// The plugin updater works on Windows (NSIS/MSI), macOS, and Linux AppImage.
+// The native updater is Linux-ELF-only. The two are never mixed: the plugin
+// updater would replace a native binary with an AppImage (grey screen on this
+// system), and installing the raw ELF over an AppImage would break AppImage.
 async function applyNative(version: string): Promise<boolean> {
   const yes = await ask(
     `A new version (${version}) is available. Update now?`,
@@ -51,7 +50,7 @@ async function applyPlugin(): Promise<boolean> {
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   const source = await getUpdateSource();
 
-  if (source === "appimage" || source === "unknown") {
+  if (source === "appimage" || source === "plugin" || source === "unknown") {
     try {
       const update = await check();
       if (update) return { available: true, message: `v${update.version}` };
@@ -81,7 +80,7 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
 export async function performUpdate(): Promise<boolean> {
   const source = await getUpdateSource();
 
-  if (source === "appimage" || source === "unknown") {
+  if (source === "appimage" || source === "plugin" || source === "unknown") {
     try {
       return await applyPlugin();
     } catch {
