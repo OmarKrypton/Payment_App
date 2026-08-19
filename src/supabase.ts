@@ -50,19 +50,35 @@ export async function saveSnapshotRemote(label: string, notes: string, dataJson:
   return data.id;
 }
 
+async function fetchAllPooled<T>(build: (from: number, to: number) => PromiseLike<T[]>, pageSize = 1000): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const page = await build(from, from + pageSize - 1);
+    if (!page) break;
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all;
+}
+
 export async function listSnapshotsRemote(search?: string): Promise<SnapshotRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  let query = supabase
-    .from("snapshots")
-    .select("id, label, notes, data_json, created_at, user_id, delete_requested_at, delete_requested_by")
-    .order("created_at", { ascending: false });
-  if (search) {
-    query = query.ilike("label", `%${search}%`);
-  }
-  const { data, error } = await query;
-  if (error) throw error;
-  return data ?? [];
+  const build = (from: number, to: number) => {
+    let query = supabase
+      .from("snapshots")
+      .select("id, label, notes, data_json, created_at, user_id, delete_requested_at, delete_requested_by")
+      .order("created_at", { ascending: false })
+      .range(from, to);
+    if (search) {
+      query = query.ilike("label", `%${search}%`);
+    }
+    return query.then(({ data, error }) => {
+      if (error) throw error;
+      return data;
+    });
+  };
+  return fetchAllPooled(build);
 }
 
 export async function loadSnapshotRemote(id: number): Promise<string> {
@@ -156,12 +172,17 @@ export interface PoolInvoiceRow {
 export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const { data, error } = await supabase
-    .from("pool_invoices")
-    .select("id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at")
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return data ?? [];
+  const build = (from: number, to: number) =>
+    supabase
+      .from("pool_invoices")
+      .select("id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at")
+      .order("created_at", { ascending: false })
+      .range(from, to)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        return data;
+      });
+  return fetchAllPooled(build);
 }
 
 export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<void> {
