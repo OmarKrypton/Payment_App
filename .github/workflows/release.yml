@@ -28,15 +28,21 @@ jobs:
 
       - name: Install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
-        timeout-minutes: 20
+        timeout-minutes: 25
         run: |
-          # apt on GH runners occasionally hangs (known infra issue). Retry and
-          # use more robust acquire options to avoid getting stuck forever.
+          # The azure.archive.ubuntu.com mirror on GH runners frequently stalls
+          # on large downloads (libwebkit2gtk). Force the main archive mirror
+          # which is far more reliable, then install with retries + timeouts.
           export DEBIAN_FRONTEND=noninteractive
-          APT="apt-get -o Acquire::Retries=10 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Acquire::ftp::Timeout=60"
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null || true
+          sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo sed -i 's|security.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          sudo sed -i 's|security.ubuntu.com|archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null || true
+          APT="apt-get -o Acquire::Retries=10 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 -o Acquire::ftp::Timeout=60 -o Acquire::http::Pipeline-Depth=0"
           sudo $APT update
           for i in 1 2 3; do
-            sudo $APT install -y --no-install-recommends \
+            timeout 600 sudo $APT install -y --no-install-recommends \
               libwebkit2gtk-4.1-dev libgtk-3-dev \
               libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev \
               libjavascriptcoregtk-4.1-dev && break
