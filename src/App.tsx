@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemote, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemote, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -1733,22 +1733,37 @@ function App() {
   // local-only invoices up to Supabase. Runs on login/session-restore and when
   // the pool modal opens, so invoices imported on one device (even while logged
   // out) eventually reach every other device.
-  // Bidirectional pool sync. Push happens FIRST so local-only invoices AND local
-  // claim state (used/label) reach the cloud before the pull can overwrite the
-  // local rows with stale remote state. This converges every device to the full
-  // union of invoices and preserves claims made on any device.
+  // Bidirectional pool sync. Claim state is STICKY: a "used" claim (with
+  // serial) is never downgraded by stale "available" local state from another
+  // device. Local-only invoices are pushed up; local claims propagate up; but
+  // an available local row never overwrites an existing remote claim. The pull
+  // then brings the authoritative cloud state (including every claim) down to
+  // local SQLite, converging every device to the full union.
   const syncPoolRemote = async (): Promise<void> => {
     if (!authUser) return;
     try {
-      // 1) Push ALL local invoices (not just missing) with full claim state so
-      //    local-only imports and local claims are never lost.
+      // 1) Push local invoices up, but only when safe:
+      //    - invoice not yet in the cloud (local-only import), or
+      //    - local is a claim (used) that the cloud doesn't have yet.
+      //    Never push "available" over an existing cloud claim.
       const localAll = await invoke<any[]>("list_invoice_pool");
-      if (localAll.length > 0) {
+      const remoteMeta = await listPoolRemoteMeta();
+      const remoteById = new Map(remoteMeta.map((r) => [r.invoice_id, r]));
+      const toPush = localAll.filter((l) => {
+        const r = remoteById.get(l.invoice_id);
+        if (!r) return true;
+        if (l.status === "used") {
+          return r.status !== "used" || (r.used_by_label || "") !== (l.used_by_label || "");
+        }
+        return false;
+      });
+      if (toPush.length > 0) {
         try {
-          await upsertPoolInvoicesRemote(localAll);
+          await upsertPoolInvoicesRemote(toPush);
         } catch (e) { console.error("upsert pool remote failed", e); }
       }
-      // 2) Pull the (now updated) cloud pool into local SQLite.
+      // 2) Pull the (now updated) cloud pool into local SQLite. The cloud is
+      //    authoritative for claim state.
       const remote = await listPoolRemote();
       if (remote.length > 0) {
         const mapped = remote.map((r: any) => ({
