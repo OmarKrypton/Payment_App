@@ -1294,6 +1294,7 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [isSerialDuplicate, setIsSerialDuplicate] = useState(false);
   const historyOverlayRef = useRef<HTMLDivElement>(null);
+  const [hoverTip, setHoverTip] = useState<{ x: number; y: number; content: string } | null>(null);
 
   const showHistoryModal = async () => {
     if (historyOverlayRef.current) {
@@ -2440,8 +2441,35 @@ function App() {
                 const pendingDelete = h.delete_requested_at != null;
                 const decisionColor = h.final_decision === "approve" ? "var(--green)" : h.final_decision === "conditional" ? "var(--orange)" : h.final_decision === "reject" ? "var(--red)" : "";
                 const auditorName = h.auditor ? h.auditor.split("@")[0] : "";
+                const hoverText = (() => {
+                  try {
+                    const p = JSON.parse(h.data_json || "{}");
+                    const taxIds = Array.from(new Set([...(p.seller_tax_ids || []), p.seller_tax_id || ""].filter(Boolean))) as string[];
+                    const companies = Array.from(new Set((p.invoices || []).map((inv: any) => inv.company_name).filter(Boolean))) as string[];
+                    const invoices = Array.from(new Set((p.invoices || []).map((inv: any) => inv.invoice_no).filter(Boolean))) as string[];
+                    const importEntries = (p.import_entries || []).filter((e: any) => e && e.attached_invoice);
+                    if (p.doc_type === "import") {
+                      importEntries.forEach((e: any) => { if (e.seller_tax_id) taxIds.push(e.seller_tax_id); if (e.attached_invoice) invoices.push(e.attached_invoice); });
+                    }
+                    const uniqTax = Array.from(new Set(taxIds));
+                    const uniqCo = Array.from(new Set(companies));
+                    const uniqInv = Array.from(new Set(invoices));
+                    const lines: string[] = [];
+                    if (uniqTax.length > 0) lines.push(`${t("卖方税号", "Seller TAX ID")}: ${uniqTax.join(", ")}`);
+                    if (uniqCo.length > 0) lines.push(`${t("公司名称", "Company")}: ${uniqCo.join(", ")}`);
+                    if (uniqInv.length > 0) lines.push(`${t("发票", "Invoices")}: ${uniqInv.join(", ")}`);
+                    if (p.doc_type === "import" && importEntries.length > 0) {
+                      lines.push(`${t("附加发票", "Attached")}: ${Array.from(new Set(importEntries.map((e: any) => e.attached_invoice))).join(", ")}`);
+                    }
+                    return lines.length > 0 ? lines.join("\n") : "";
+                  } catch { return ""; }
+                })();
                 return (
-                <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}>
+                <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}
+                  onMouseMove={hoverText ? (e) => {
+                    setHoverTip({ x: e.clientX, y: e.clientY, content: hoverText });
+                  } : undefined}
+                  onMouseLeave={hoverText ? () => setHoverTip(null) : undefined}>
                   <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
                     {decisionColor && <span className="decision-dot" style={{background:decisionColor,flexShrink:0}} title={h.final_decision} />}
                     <div style={{minWidth:0}}>
@@ -2478,8 +2506,28 @@ function App() {
               });
             })()}
           </div>
+</div>
         </div>
-      </div>
+
+      {hoverTip && (
+        <div style={{
+          position: 'fixed',
+          left: hoverTip.x + 14,
+          top: hoverTip.y + 14,
+          zIndex: 10000,
+          maxWidth: 420,
+          whiteSpace: 'pre-line',
+          background: 'var(--bg-card, #1e1e2e)',
+          color: 'var(--text-primary, #fff)',
+          border: '1px solid var(--accent)',
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+          padding: '10px 12px',
+          fontSize: 11,
+          lineHeight: 1.5,
+          pointerEvents: 'none',
+        }}>{hoverTip.content}</div>
+      )}
 
       {showInvoiceExport && (
         <div style={{
