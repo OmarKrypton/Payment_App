@@ -174,6 +174,7 @@ pub fn check_serial_exists(conn: &Connection, serial: &str) -> Result<bool, Stri
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PoolInvoice {
+    #[serde(default)]
     pub id: i64,
     pub invoice_id: String,
     pub uuid: String,
