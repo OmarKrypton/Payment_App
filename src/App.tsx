@@ -318,6 +318,7 @@ function App() {
   const [showPool, setShowPool] = useState(false);
   const [poolList, setPoolList] = useState<any[]>([]);
   const [poolLoading, setPoolLoading] = useState(false);
+  const [poolSyncInfo, setPoolSyncInfo] = useState<{ ok: boolean; local: number; cloud: number; pushed: number; pulled: number; error?: string }>({ ok: true, local: 0, cloud: 0, pushed: 0, pulled: 0 });
   const [poolSearch, setPoolSearch] = useState("");
   const [poolTab, setPoolTab] = useState<"unclaimed" | "claimed">("unclaimed");
   const [poolMode, setPoolMode] = useState<"validate" | "select">("validate");
@@ -1740,14 +1741,22 @@ function App() {
   // then brings the authoritative cloud state (including every claim) down to
   // local SQLite, converging every device to the full union.
   const syncPoolRemote = async (): Promise<void> => {
-    if (!authUser) return;
+    const info: { ok: boolean; local: number; cloud: number; pushed: number; pulled: number; error?: string } = { ok: true, local: 0, cloud: 0, pushed: 0, pulled: 0 };
+    if (!authUser) {
+      info.error = "not logged in (authUser null)";
+      info.ok = false;
+      setPoolSyncInfo(info);
+      return;
+    }
     try {
       // 1) Push local invoices up, but only when safe:
       //    - invoice not yet in the cloud (local-only import), or
       //    - local is a claim (used) that the cloud doesn't have yet.
       //    Never push "available" over an existing cloud claim.
       const localAll = await invoke<any[]>("list_invoice_pool");
+      info.local = localAll.length;
       const remoteMeta = await listPoolRemoteMeta();
+      info.cloud = remoteMeta.length;
       const remoteById = new Map(remoteMeta.map((r) => [r.invoice_id, r]));
       const toPush = localAll.filter((l) => {
         const r = remoteById.get(l.invoice_id);
@@ -1757,14 +1766,17 @@ function App() {
         }
         return false;
       });
+      info.pushed = toPush.length;
       if (toPush.length > 0) {
         try {
           await upsertPoolInvoicesRemote(toPush);
-        } catch (e) { console.error("upsert pool remote failed", e); }
+        } catch (e) { console.error("upsert pool remote failed", e); info.error = `upsert: ${(e as any)?.message || e}`; }
       }
       // 2) Pull the (now updated) cloud pool into local SQLite. The cloud is
       //    authoritative for claim state.
       const remote = await listPoolRemote();
+      info.cloud = remote.length;
+      info.pulled = remote.length;
       if (remote.length > 0) {
         const mapped = remote.map((r: any) => ({
           invoice_id: r.invoice_id,
@@ -1789,10 +1801,22 @@ function App() {
           delete_requested_by: r.delete_requested_by || "",
           created_at: r.created_at || new Date().toISOString(),
         }));
-        await invoke("sync_pool_from_remote", { invoices: mapped });
+        // Chunk the pull too: sending every invoice (with full raw_xml) in a
+        // single Tauri invoke produces a multi-MB IPC payload that can fail
+        // silently, leaving the cloud rows stranded. Small batches keep each
+        // invoke well within IPC limits.
+        const PAGE = 10;
+        for (let i = 0; i < mapped.length; i += PAGE) {
+          const chunk = mapped.slice(i, i + PAGE);
+          await invoke("sync_pool_from_remote", { invoices: chunk });
+        }
       }
     } catch (e) {
       console.error("sync remote pool failed", e);
+      info.error = `sync: ${(e as any)?.message || e}`;
+    } finally {
+      info.ok = !info.error;
+      setPoolSyncInfo(info);
     }
   };
 
@@ -2529,6 +2553,18 @@ function App() {
                   ? `${t("已恢复", "Restored")} ${n} ${t("张发票在所有已保存文档中的认领", "invoice claim(s) across all saved documents")}`
                   : t("没有可恢复的发票", "No recoverable invoices"));
               }}>{t("恢复全部文档认领", "Restore All Claims")}</button>
+              <button className="btn-add" style={{background:'#0ea5e9'}} onClick={async () => {
+                setPoolLoading(true);
+                await syncPoolRemote();
+                try { setPoolList(await invoke<any[]>("list_invoice_pool")); } catch (e) { console.error(e); }
+                setPoolLoading(false);
+              }}>{t("同步云端", "Sync Now")}</button>
+            </div>
+            <div style={{fontSize:11, marginBottom:8, padding:'4px 8px', borderRadius:6,
+              background: poolSyncInfo.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.15)',
+              color: poolSyncInfo.ok ? 'var(--text)' : '#ef4444', fontFamily:'monospace'}}>
+              sync: local={poolSyncInfo.local} cloud={poolSyncInfo.cloud} pushed={poolSyncInfo.pushed} pulled={poolSyncInfo.pulled}
+              {poolSyncInfo.error && <div style={{color:'#ef4444', marginTop:2}}>ERROR: {poolSyncInfo.error}</div>}
             </div>
             {poolMode === 'select' && (
               <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:8}}>
