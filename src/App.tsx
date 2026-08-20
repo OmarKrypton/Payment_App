@@ -1130,6 +1130,7 @@ function App() {
             );
           })}
           <button className="btn-add" onClick={addImportEntry} style={{marginTop:8}}>+ {t("添加服务商", "Add Provider")}</button>
+          <button className="btn-load" onClick={openPoolForSelect} style={{marginTop:8, marginLeft:8}}>{t("从发票池添加", "Add from Pool")}</button>
         </div>
         <div className="card" style={{background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
           <h3>{t("进口汇总", "Import Summary")}</h3>
@@ -1898,7 +1899,90 @@ function App() {
     loadPool();
   };
 
+  const poolToImportEntry = (p: any) => {
+    const net = p.net_amount ?? 0;
+    const vatPct = net > 0 ? Math.round(((p.total_vat ?? 0) / net) * 100) : 14;
+    const whtPct = net > 0 ? Math.round(((p.total_wht ?? 0) / net) * 100) : 0;
+    return {
+      service_name: `${p.seller_name || p.invoice_id} ${p.invoice_id}`.trim(),
+      amount: net.toFixed(2),
+      rate: "",
+      free_wht: false,
+      wht_rate: `${whtPct}%`,
+      vat_rate: `${vatPct}%`,
+      temp_labour: false,
+      attached_invoice: p.invoice_id,
+      seller_tax_id: p.seller_tax_id || "",
+    };
+  };
+
+  const attachImportEntryFromPool = async (invoiceId: string) => {
+    const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+    if (!p) return;
+    const current = [...(formRef.current.import_entries ?? [])];
+    if (current.some((e: any) => e.attached_invoice === invoiceId)) {
+      showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
+      return;
+    }
+    const arr = [...current, poolToImportEntry(p)];
+    formRef.current = { ...formRef.current, import_entries: arr };
+    await recalc(formRef.current);
+    await markPoolClaimed(invoiceId);
+  };
+
+  const attachBatchImportEntriesFromPool = async (invoiceIds: string[]) => {
+    const ids = Array.from(new Set(invoiceIds));
+    if (ids.length === 0) return;
+    const current = [...(formRef.current.import_entries ?? [])];
+    const already = ids.filter(id => current.some((e: any) => e.attached_invoice === id));
+    const fresh = ids.filter(id => !already.includes(id));
+    if (fresh.length === 0) {
+      showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
+      return;
+    }
+    const freshEntries = fresh.map((invoiceId) => {
+      const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+      return p ? poolToImportEntry(p) : null;
+    }).filter((e: any) => e !== null) as any[];
+    const arr = [...current, ...freshEntries];
+    formRef.current = { ...formRef.current, import_entries: arr };
+    await recalc(formRef.current);
+    const serial = ((formRef.current.doc_serial) || "draft").trim();
+    try {
+      await invoke("mark_pool_invoices_used", { invoiceIds: fresh, snapshotId: 0, snapshotLabel: serial });
+    } catch {}
+    try {
+      if (authUser) await markPoolsUsedRemote(fresh, serial);
+    } catch (e) { console.error("markPoolsUsedRemote failed", e); }
+    await loadPool();
+    if (fresh.length > 0) {
+      try {
+        const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
+        const attached = arr.filter((e: any) => poolIds.has(e.attached_invoice)).map((e: any) => e.attached_invoice);
+        if (attached.length > 0) {
+          const formJson = JSON.stringify(formRef.current);
+          const results = await invoke<any[]>("validate_from_pool", { invoiceIds: attached, formJson });
+          setEtaResult(results);
+        }
+      } catch (e: any) {
+        showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+      }
+    }
+  };
+
+  const markPoolClaimed = async (invoiceId: string) => {
+    const serial = ((formRef.current.doc_serial) || "draft").trim();
+    try {
+      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: serial });
+    } catch {}
+    try {
+      if (authUser) await markPoolUsedRemote(invoiceId, serial);
+    } catch (e) { console.error("markPoolUsedRemote failed", e); }
+    await loadPool();
+  };
+
   const attachFromPool = async (invoiceId: string) => {
+    if (data.doc_type === "import") return attachImportEntryFromPool(invoiceId);
     const p = poolList.find((x: any) => x.invoice_id === invoiceId);
     if (!p) return;
     const currentInvoices = [...(formRef.current.invoices ?? [])];
@@ -1942,6 +2026,7 @@ function App() {
   };
 
   const attachBatchFromPool = async (invoiceIds: string[]) => {
+    if (data.doc_type === "import") return attachBatchImportEntriesFromPool(invoiceIds);
     const ids = Array.from(new Set(invoiceIds));
     if (ids.length === 0) return;
     const currentInvoices = [...(formRef.current.invoices ?? [])];
