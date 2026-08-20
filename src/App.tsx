@@ -1648,7 +1648,7 @@ function App() {
   // Supabase so they never have to be manually reclaimed after a restore.
   const restoreClaimsFromDocument = async (): Promise<number> => {
     const form = formRef.current;
-    const serial = ((form.doc_serial) || "").trim();
+    const serial = ((form.doc_serial) || "draft").trim();
     const ids = new Set<string>();
     (form.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
     (form.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
@@ -1683,7 +1683,7 @@ function App() {
         try {
           const json = await invoke<string>("load_history", { id: h.id });
           const parsed = JSON.parse(json);
-          const serial = ((parsed.doc_serial) || h.label || "").trim();
+          const serial = ((parsed.doc_serial) || h.label || "draft").trim();
           const ids = new Set<string>();
           (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
           (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
@@ -1698,7 +1698,7 @@ function App() {
         for (const r of remote) {
           try {
             const parsed = JSON.parse(r.data_json);
-            const serial = ((parsed.doc_serial) || r.label || "").trim();
+            const serial = ((parsed.doc_serial) || r.label || "draft").trim();
             const ids = new Set<string>();
             (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
             (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
@@ -1811,6 +1811,16 @@ function App() {
           await invoke("sync_pool_from_remote", { invoices: chunk });
         }
       }
+      // 3) Clean up claims that have no serial. A "used" row without a serial
+      //    label is meaningless (the serial links the invoice to a document),
+      //    so downgrade them to available locally AND in the cloud so stale
+      //    "claimed, no serial" rows never linger across devices.
+      const cleaned = await invoke<number>("clean_unlabelled_claims");
+      if (cleaned > 0) console.log(`downgraded ${cleaned} unlabelled claims to available`);
+      const unlabelledRemote = remoteMeta.filter((r) => r.status === "used" && !(r.used_by_label || ""));
+      for (const u of unlabelledRemote) {
+        try { await markPoolAvailableRemote(u.invoice_id); } catch (e) { console.error("clean remote claim failed", u.invoice_id, e); }
+      }
     } catch (e) {
       console.error("sync remote pool failed", e);
       info.error = `sync: ${(e as any)?.message || e}`;
@@ -1893,7 +1903,7 @@ function App() {
     }];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
-    const serial = ((formRef.current.doc_serial) || "").trim();
+    const serial = ((formRef.current.doc_serial) || "draft").trim();
     try {
       await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: serial });
     } catch {}
@@ -1944,7 +1954,7 @@ function App() {
     ];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
-    const serial = ((formRef.current.doc_serial) || "").trim();
+    const serial = ((formRef.current.doc_serial) || "draft").trim();
     try {
       await invoke("mark_pool_invoices_used", { invoiceIds: fresh, snapshotId: 0, snapshotLabel: serial });
     } catch {}

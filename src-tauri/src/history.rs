@@ -298,6 +298,17 @@ pub fn mark_invoice_available(conn: &Connection, invoice_id: &str) -> Result<(),
     Ok(())
 }
 
+/// Downgrades any claim that has no serial label back to available. A claim
+/// without a serial is meaningless (the serial is what links the invoice to a
+/// document), so such rows must not linger as "used".
+pub fn clean_unlabelled_claims(conn: &Connection) -> Result<usize, String> {
+    conn.execute(
+        "UPDATE eta_invoices SET status = 'available', used_by_snapshot_id = NULL, used_by_label = ''
+         WHERE status = 'used' AND (used_by_label IS NULL OR used_by_label = '')",
+        [],
+    ).map_err(|e| e.to_string())
+}
+
 pub fn delete_from_pool(conn: &Connection, id: i64) -> Result<(), String> {
     conn.execute("DELETE FROM eta_invoices WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;

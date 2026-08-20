@@ -170,6 +170,13 @@ fn mark_pool_invoice_available(state: tauri::State<'_, DbState>, invoice_id: Str
 }
 
 #[tauri::command]
+fn clean_unlabelled_claims(state: tauri::State<'_, DbState>) -> Result<usize, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::clean_unlabelled_claims(conn)
+}
+
+#[tauri::command]
 fn delete_pool_invoice(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -362,6 +369,7 @@ pub fn run() {
             mark_pool_invoice_used,
             mark_pool_invoices_used,
             mark_pool_invoice_available,
+            clean_unlabelled_claims,
             delete_pool_invoice,
             request_pool_delete,
             reject_pool_delete,
