@@ -1358,6 +1358,7 @@ function App() {
             id: r.id,
             label: r.label,
             notes: r.notes,
+            data_json: r.data_json,
             created_at: new Date(r.created_at).toLocaleString(),
             owner: r.user_id,
             delete_requested_at: r.delete_requested_at,
