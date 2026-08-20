@@ -188,6 +188,25 @@ export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
   return fetchAllPooled(build, 50);
 }
 
+export async function listPoolRemoteByIds(ids: string[]): Promise<PoolInvoiceRow[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (ids.length === 0) return [];
+  const PAGE = 50;
+  const all: PoolInvoiceRow[] = [];
+  for (let i = 0; i < ids.length; i += PAGE) {
+    const chunk = ids.slice(i, i + PAGE);
+    const { data, error } = await supabase
+      .from("pool_invoices")
+      .select("id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at")
+      .in("invoice_id", chunk)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    if (data) all.push(...data);
+  }
+  return all;
+}
+
 export async function listPoolRemoteMeta(): Promise<{ invoice_id: string; status: string; used_by_label: string }[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
@@ -270,6 +289,17 @@ export async function markPoolAvailableRemote(invoiceId: string): Promise<void> 
     .from("pool_invoices")
     .update({ status: "available", used_by_label: "" })
     .eq("invoice_id", invoiceId);
+  if (error) throw error;
+}
+
+export async function markPoolsAvailableRemote(invoiceIds: string[]): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (invoiceIds.length === 0) return;
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ status: "available", used_by_label: "" })
+    .in("invoice_id", invoiceIds);
   if (error) throw error;
 }
 

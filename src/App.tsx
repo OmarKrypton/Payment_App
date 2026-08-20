@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemote, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -1741,11 +1741,14 @@ function App() {
   // then brings the authoritative cloud state (including every claim) down to
   // local SQLite, converging every device to the full union.
   const syncPoolRemote = async (): Promise<void> => {
+    if (poolSyncInFlight.current) return;
+    poolSyncInFlight.current = true;
     const info: { ok: boolean; local: number; cloud: number; pushed: number; pulled: number; error?: string } = { ok: true, local: 0, cloud: 0, pushed: 0, pulled: 0 };
     if (!authUser) {
       info.error = "not logged in (authUser null)";
       info.ok = false;
       setPoolSyncInfo(info);
+      poolSyncInFlight.current = false;
       return;
     }
     try {
@@ -1772,10 +1775,19 @@ function App() {
           await upsertPoolInvoicesRemote(toPush);
         } catch (e) { console.error("upsert pool remote failed", e); info.error = `upsert: ${(e as any)?.message || e}`; }
       }
-      // 2) Pull the (now updated) cloud pool into local SQLite. The cloud is
-      //    authoritative for claim state.
-      const remote = await listPoolRemote();
-      info.cloud = remote.length;
+      // 2) Pull only the remote rows that differ from local state (missing
+      //    locally, or claim state changed). This avoids re-downloading the
+      //    entire pool (with full raw_xml) on every sync, which was slowing
+      //    the app down as the pool grew.
+      const localById = new Map(localAll.map((l) => [l.invoice_id, l]));
+      const changedRemote = remoteMeta.filter((r) => {
+        const l = localById.get(r.invoice_id);
+        if (!l) return true;
+        return (l.status || "available") !== (r.status || "available") ||
+               (l.used_by_label || "") !== (r.used_by_label || "");
+      });
+      const remote = changedRemote.length > 0 ? await listPoolRemoteByIds(changedRemote.map((r) => r.invoice_id)) : [];
+      info.cloud = remoteMeta.length;
       info.pulled = remote.length;
       if (remote.length > 0) {
         const mapped = remote.map((r: any) => ({
@@ -1818,8 +1830,8 @@ function App() {
       const cleaned = await invoke<number>("clean_unlabelled_claims");
       if (cleaned > 0) console.log(`downgraded ${cleaned} unlabelled claims to available`);
       const unlabelledRemote = remoteMeta.filter((r) => r.status === "used" && !(r.used_by_label || ""));
-      for (const u of unlabelledRemote) {
-        try { await markPoolAvailableRemote(u.invoice_id); } catch (e) { console.error("clean remote claim failed", u.invoice_id, e); }
+      if (unlabelledRemote.length > 0) {
+        try { await markPoolsAvailableRemote(unlabelledRemote.map((u) => u.invoice_id)); } catch (e) { console.error("clean remote claims failed", e); }
       }
     } catch (e) {
       console.error("sync remote pool failed", e);
@@ -1827,6 +1839,7 @@ function App() {
     } finally {
       info.ok = !info.error;
       setPoolSyncInfo(info);
+      poolSyncInFlight.current = false;
     }
   };
 
@@ -1848,6 +1861,7 @@ function App() {
   // the pool modal first. Also refreshes periodically so a device that was
   // offline (or opened before the cloud was updated) still converges.
   const didInitPoolSync = useRef<string | null>(null);
+  const poolSyncInFlight = useRef(false);
   useEffect(() => {
     if (!authUser) { didInitPoolSync.current = null; return; }
     if (didInitPoolSync.current === authUser) return;
