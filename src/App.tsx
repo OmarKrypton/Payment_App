@@ -1129,8 +1129,10 @@ function App() {
               </div>
             );
           })}
-          <button className="btn-add" onClick={addImportEntry} style={{marginTop:8}}>+ {t("添加服务商", "Add Provider")}</button>
-          <button className="btn-load" onClick={openPoolForSelect} style={{marginTop:8, marginLeft:8}}>{t("从发票池添加", "Add from Pool")}</button>
+          <div style={{display:'flex',gap:8,marginTop:8}}>
+          <button className="btn-add" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
+          <button className="btn-add" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+        </div>
         </div>
         <div className="card" style={{background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
           <h3>{t("进口汇总", "Import Summary")}</h3>
