@@ -1294,7 +1294,6 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [isSerialDuplicate, setIsSerialDuplicate] = useState(false);
   const historyOverlayRef = useRef<HTMLDivElement>(null);
-  const [hoverTip, setHoverTip] = useState<{ x: number; y: number; content: string } | null>(null);
 
   const showHistoryModal = async () => {
     if (historyOverlayRef.current) {
@@ -2442,66 +2441,79 @@ function App() {
                 const pendingDelete = h.delete_requested_at != null;
                 const decisionColor = h.final_decision === "approve" ? "var(--green)" : h.final_decision === "conditional" ? "var(--orange)" : h.final_decision === "reject" ? "var(--red)" : "";
                 const auditorName = h.auditor ? h.auditor.split("@")[0] : "";
-                const hoverText = (() => {
+                const snapInfo = (() => {
                   try {
                     const p = JSON.parse(h.data_json || "{}");
-                    const taxIds = Array.from(new Set([...(p.seller_tax_ids || []), p.seller_tax_id || ""].filter(Boolean))) as string[];
-                    const companies = Array.from(new Set((p.invoices || []).map((inv: any) => inv.company_name).filter(Boolean))) as string[];
-                    const invoices = Array.from(new Set((p.invoices || []).map((inv: any) => inv.invoice_no).filter(Boolean))) as string[];
-                    const importEntries = (p.import_entries || []).filter((e: any) => e && e.attached_invoice);
-                    if (p.doc_type === "import") {
-                      importEntries.forEach((e: any) => { if (e.seller_tax_id) taxIds.push(e.seller_tax_id); if (e.attached_invoice) invoices.push(e.attached_invoice); });
+                    const isImport = p.doc_type === "import";
+                    const taxSet = new Set<string>();
+                    const coSet = new Set<string>();
+                    const invSet = new Set<string>();
+                    if (isImport) {
+                      (p.import_entries || []).forEach((e: any) => {
+                        if (e.attached_invoice) invSet.add(e.attached_invoice);
+                        if (e.seller_tax_id) taxSet.add(e.seller_tax_id);
+                      });
+                    } else {
+                      (p.seller_tax_ids || []).forEach((x: string) => x && taxSet.add(x));
+                      if (p.seller_tax_id) taxSet.add(p.seller_tax_id);
+                      (p.invoices || []).forEach((inv: any) => {
+                        if (inv.invoice_no) invSet.add(inv.invoice_no);
+                        if (inv.company_name) coSet.add(inv.company_name);
+                        if (inv.seller_tax_id) taxSet.add(inv.seller_tax_id);
+                      });
                     }
-                    const uniqTax = Array.from(new Set(taxIds));
-                    const uniqCo = Array.from(new Set(companies));
-                    const uniqInv = Array.from(new Set(invoices));
-                    const lines: string[] = [];
-                    if (uniqTax.length > 0) lines.push(`${t("卖方税号", "Seller TAX ID")}: ${uniqTax.join(", ")}`);
-                    if (uniqCo.length > 0) lines.push(`${t("公司名称", "Company")}: ${uniqCo.join(", ")}`);
-                    if (uniqInv.length > 0) lines.push(`${t("发票", "Invoices")}: ${uniqInv.join(", ")}`);
-                    if (p.doc_type === "import" && importEntries.length > 0) {
-                      lines.push(`${t("附加发票", "Attached")}: ${Array.from(new Set(importEntries.map((e: any) => e.attached_invoice))).join(", ")}`);
-                    }
-                    return lines.length > 0 ? lines.join("\n") : "";
-                  } catch { return ""; }
+                    const rows: { label: string; value: string }[] = [];
+                    if (taxSet.size > 0) rows.push({ label: t("卖方税号", "Seller TAX ID"), value: Array.from(taxSet).join(", ") });
+                    if (coSet.size > 0) rows.push({ label: t("公司名称", "Company"), value: Array.from(coSet).join(", ") });
+                    if (invSet.size > 0) rows.push({ label: t("发票", "Invoices"), value: Array.from(invSet).join(", ") });
+                    return rows;
+                  } catch { return [] as { label: string; value: string }[]; }
                 })();
                 return (
-                <div key={h.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : undefined}
-                  onMouseMove={hoverText ? (e) => {
-                    setHoverTip({ x: e.clientX, y: e.clientY, content: hoverText });
-                  } : undefined}
-                  onMouseLeave={hoverText ? () => setHoverTip(null) : undefined}>
-                  <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
-                    {decisionColor && <span className="decision-dot" style={{background:decisionColor,flexShrink:0}} title={h.final_decision} />}
-                    <div style={{minWidth:0}}>
-                      <strong style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.label}</strong>
-                      <p><small>
-                        {h.created_at}
-                        {auditorName ? ` · ${auditorName}` : ''}
-                        {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
-                        {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
-                      </small></p>
+                <div key={h.id} className="history-item" style={{flexDirection:'column',alignItems:'stretch',justifyContent:'flex-start',gap:6,...(pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : {})}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                      {decisionColor && <span className="decision-dot" style={{background:decisionColor,flexShrink:0}} title={h.final_decision} />}
+                      <div style={{minWidth:0}}>
+                        <strong style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.label}</strong>
+                        <p><small>
+                          {h.created_at}
+                          {auditorName ? ` · ${auditorName}` : ''}
+                          {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
+                          {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
+                        </small></p>
+                      </div>
+                    </div>
+                    <div className="history-actions">
+                      <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
+                      {(isOwn || isAdminUser) && !pendingDelete && (
+                        <button className="btn-approve" onClick={() => startOverwrite(h.id)} title={t("加载并覆盖此快照（重置审核决定）", "Load & overwrite this snapshot (resets decision)")}>{t("覆盖", "Overwrite")}</button>
+                      )}
+                      {isAdminUser && pendingDelete && (
+                        <>
+                          <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
+                          <button className="btn-reject" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
+                        </>
+                      )}
+                      {isAdminUser && !pendingDelete && (
+                        <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
+                      )}
+                      {!isAdminUser && authUser && !pendingDelete && (
+                        <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
+                      )}
+                      {!authUser && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
                     </div>
                   </div>
-                  <div className="history-actions">
-                    <button className="btn-load" onClick={() => loadSnapshot(h.id)}>Load</button>
-                    {(isOwn || isAdminUser) && !pendingDelete && (
-                      <button className="btn-approve" onClick={() => startOverwrite(h.id)} title={t("加载并覆盖此快照（重置审核决定）", "Load & overwrite this snapshot (resets decision)")}>{t("覆盖", "Overwrite")}</button>
-                    )}
-                    {isAdminUser && pendingDelete && (
-                      <>
-                        <button className="btn-approve" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
-                        <button className="btn-reject" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
-                      </>
-                    )}
-                    {isAdminUser && !pendingDelete && (
-                      <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>
-                    )}
-                    {!isAdminUser && authUser && !pendingDelete && (
-                      <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
-                    )}
-                    {!authUser && <button className="btn-delete" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
-                  </div>
+                  {snapInfo.length > 0 && (
+                    <div style={{borderTop:'1px dashed var(--border)',paddingTop:6,fontSize:11,color:'var(--text-secondary)',display:'grid',gap:2,wordBreak:'break-all'}}>
+                      {snapInfo.map((r, i) => (
+                        <div key={i}>
+                          <span style={{color:'var(--accent)',fontWeight:600}}>{r.label}: </span>
+                          <span style={{userSelect:'text'}}>{r.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 );
               });
@@ -2509,26 +2521,6 @@ function App() {
           </div>
 </div>
         </div>
-
-      {hoverTip && (
-        <div style={{
-          position: 'fixed',
-          left: hoverTip.x + 14,
-          top: hoverTip.y + 14,
-          zIndex: 10000,
-          maxWidth: 420,
-          whiteSpace: 'pre-line',
-          background: 'var(--bg-card, #1e1e2e)',
-          color: 'var(--text-primary, #fff)',
-          border: '1px solid var(--accent)',
-          borderRadius: 8,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-          padding: '10px 12px',
-          fontSize: 11,
-          lineHeight: 1.5,
-          pointerEvents: 'none',
-        }}>{hoverTip.content}</div>
-      )}
 
       {showInvoiceExport && (
         <div style={{
