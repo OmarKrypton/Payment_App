@@ -294,22 +294,32 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
             }
             // Identity fields may only exist in the embedded JSON
             if invoice.invoice_id.is_empty() {
-                invoice.invoice_id = parsed.get("internalId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                invoice.invoice_id = parsed.get("internalId").and_then(|v| v.as_str())
+                    .or_else(|| parsed.get("internalID").and_then(|v| v.as_str()))
+                    .unwrap_or("").to_string();
             }
             if invoice.uuid.is_empty() {
                 invoice.uuid = parsed.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
             }
             if invoice.seller_tax_id.is_empty() {
-                invoice.seller_tax_id = parsed.get("issuerId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                invoice.seller_tax_id = parsed.get("issuerId").and_then(|v| v.as_str())
+                    .or_else(|| parsed.pointer("/issuer/id").and_then(|v| v.as_str()))
+                    .unwrap_or("").to_string();
             }
             if invoice.seller_name.is_empty() {
-                invoice.seller_name = parsed.get("issuerName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                invoice.seller_name = parsed.get("issuerName").and_then(|v| v.as_str())
+                    .or_else(|| parsed.pointer("/issuer/name").and_then(|v| v.as_str()))
+                    .unwrap_or("").to_string();
             }
             if invoice.buyer_tax_id.is_empty() {
-                invoice.buyer_tax_id = parsed.get("receiverId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                invoice.buyer_tax_id = parsed.get("receiverId").and_then(|v| v.as_str())
+                    .or_else(|| parsed.pointer("/receiver/id").and_then(|v| v.as_str()))
+                    .unwrap_or("").to_string();
             }
             if invoice.buyer_name.is_empty() {
-                invoice.buyer_name = parsed.get("receiverName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                invoice.buyer_name = parsed.get("receiverName").and_then(|v| v.as_str())
+                    .or_else(|| parsed.pointer("/receiver/name").and_then(|v| v.as_str()))
+                    .unwrap_or("").to_string();
             }
             if invoice.issue_date.is_empty() {
                 invoice.issue_date = parsed.get("dateTimeIssued").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -750,6 +760,34 @@ mod tests {
         assert!(service_matches_invoice("A4 KPI CC 0206ADT", "0206ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0205ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026", "0206ADT"));
+    }
+
+    #[test]
+    fn parses_extension_bundle_format() {
+        // Browser-extension exports wrap the ETA JSON in <document><document>…
+        // with the JSON FIRST and no <uuid>/<internalId>/<issuerId> wrapper
+        // elements; identity must fall back to the nested JSON keys.
+        let xml = r#"<document><document>{
+      "issuer": { "type": "B", "id": "761776869", "name": "تويار لتجاره الجمله والتجزئه" },
+      "receiver": { "type": "B", "id": "100489095", "name": "الشركه الصينيه" },
+      "documentType": "i",
+      "dateTimeIssued": "2026-07-24T14:29:00Z",
+      "internalID": "62",
+      "invoiceLines": [
+        {"description":"cable","quantity":10,"unitValue":{"currencySold":"EGP","amountEGP":105,"amountSold":0},
+         "netTotal":1050,"taxableItems":[{"taxType":"T1","amount":147,"subType":"V009","rate":14}]}
+      ],
+      "taxTotals":[{"taxType":"T1","amount":147,"subType":"V009"}],
+      "netAmount":1050,"totalAmount":1197
+    }</document><issuerName>تويار لتجاره الجمله والتجزئه</issuerName><receiverId>100489095</receiverId><receiverName>الشركه الصينيه</receiverName><dateTimeIssued>2026-07-24T14:29:00Z</dateTimeIssued><totalSales>1050</totalSales><netAmount>1050</netAmount><total>1197</total><status>Valid</status></document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.invoice_id, "62");
+        assert_eq!(inv.seller_tax_id, "761776869");
+        assert_eq!(inv.buyer_tax_id, "100489095");
+        assert_eq!(inv.net_amount, 1050.0);
+        assert_eq!(inv.total_vat, 147.0);
+        assert_eq!(inv.grand_total, 1197.0);
+        assert_eq!(inv.lines.len(), 1);
     }
 
     #[test]
