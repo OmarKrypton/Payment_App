@@ -37,6 +37,7 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
             lines_json TEXT DEFAULT '[]',
             raw_xml TEXT DEFAULT '',
             file_name TEXT DEFAULT '',
+            doc_status TEXT DEFAULT 'Valid',
             status TEXT DEFAULT 'available',
             used_by_snapshot_id INTEGER,
             used_by_label TEXT DEFAULT '',
@@ -74,6 +75,10 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
     }
     if !cols.iter().any(|c| c == "delete_requested_by") {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN delete_requested_by TEXT DEFAULT ''", [])
+            .map_err(|e| e.to_string())?;
+    }
+    if !cols.iter().any(|c| c == "doc_status") {
+        conn.execute("ALTER TABLE eta_invoices ADD COLUMN doc_status TEXT DEFAULT 'Valid'", [])
             .map_err(|e| e.to_string())?;
     }
     Ok(conn)
@@ -193,6 +198,10 @@ pub struct PoolInvoice {
     pub raw_xml: String,
     #[serde(default)]
     pub file_name: String,
+    /// Document state from ETA: Valid / Rejected / Cancelled. Rejected or
+    /// cancelled invoices stay visible but can never be claimed or validated.
+    #[serde(default = "default_doc_status", deserialize_with = "deserialize_doc_status")]
+    pub doc_status: String,
     pub status: String,
     pub used_by_snapshot_id: Option<i64>,
     pub used_by_label: String,
@@ -202,12 +211,22 @@ pub struct PoolInvoice {
     pub delete_requested_by: String,
     pub created_at: String,
 }
+
+fn default_doc_status() -> String { "Valid".to_string() }
+
+fn deserialize_doc_status<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = serde::Deserialize::deserialize(d)?;
+    Ok(opt.filter(|s| !s.is_empty()).unwrap_or_else(default_doc_status))
+}
 pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<i64, String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let lines_json = serde_json::to_string(&invoice.lines).unwrap_or_else(|_| "[]".to_string());
     conn.execute(
-        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 'available', ?16)
+        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'available', ?17)
          ON CONFLICT(invoice_id) DO UPDATE SET
             uuid = excluded.uuid,
             seller_tax_id = excluded.seller_tax_id,
@@ -222,12 +241,15 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
             grand_total = excluded.grand_total,
             lines_json = excluded.lines_json,
             raw_xml = excluded.raw_xml,
-            file_name = excluded.file_name",
+            file_name = excluded.file_name,
+            doc_status = excluded.doc_status",
         params![
             invoice.invoice_id, invoice.uuid, invoice.seller_tax_id, invoice.seller_name,
             invoice.buyer_tax_id, invoice.buyer_name, invoice.issue_date, invoice.currency,
             invoice.net_amount, invoice.total_vat, invoice.total_wht, invoice.grand_total,
-            lines_json, raw_xml, file_name, now
+            lines_json, raw_xml, file_name,
+            if invoice.doc_status.is_empty() { "Valid".to_string() } else { invoice.doc_status.clone() },
+            now
         ],
     ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
@@ -236,7 +258,7 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
 pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     let mut result = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices ORDER BY created_at DESC")
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -257,12 +279,16 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
                 lines_json: row.get(13)?,
                 raw_xml: row.get(14)?,
                 file_name: row.get(15)?,
-                status: row.get(16)?,
-                used_by_snapshot_id: row.get(17)?,
-                used_by_label: row.get(18)?,
-                delete_requested_at: row.get(19)?,
-                delete_requested_by: row.get(20)?,
-                created_at: row.get(21)?,
+                doc_status: {
+                    let s: String = row.get(16)?;
+                    if s.is_empty() { "Valid".to_string() } else { s }
+                },
+                status: row.get(17)?,
+                used_by_snapshot_id: row.get(18)?,
+                used_by_label: row.get(19)?,
+                delete_requested_at: row.get(20)?,
+                delete_requested_by: row.get(21)?,
+                created_at: row.get(22)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -337,8 +363,8 @@ pub fn reject_pool_delete(conn: &Connection, id: i64) -> Result<(), String> {
 // other users. Keeps raw_xml so validate_from_pool can re-parse fresh.
 pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT(invoice_id) DO UPDATE SET
             uuid = excluded.uuid,
             seller_tax_id = excluded.seller_tax_id,
@@ -354,6 +380,7 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
             lines_json = excluded.lines_json,
             raw_xml = excluded.raw_xml,
             file_name = excluded.file_name,
+            doc_status = CASE WHEN excluded.doc_status IS NULL OR excluded.doc_status = '' THEN eta_invoices.doc_status ELSE excluded.doc_status END,
             status = excluded.status,
             used_by_label = excluded.used_by_label,
             delete_requested_at = excluded.delete_requested_at,
@@ -362,8 +389,8 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
             inv.invoice_id, inv.uuid, inv.seller_tax_id, inv.seller_name,
             inv.buyer_tax_id, inv.buyer_name, inv.issue_date, inv.currency,
             inv.net_amount, inv.total_vat, inv.total_wht, inv.grand_total,
-            inv.lines_json, inv.raw_xml, inv.file_name, inv.status,
-            inv.used_by_label, inv.delete_requested_at, inv.delete_requested_by,
+            inv.lines_json, inv.raw_xml, inv.file_name, inv.doc_status,
+            inv.status, inv.used_by_label, inv.delete_requested_at, inv.delete_requested_by,
             inv.created_at,
         ],
     ).map_err(|e| e.to_string())?;

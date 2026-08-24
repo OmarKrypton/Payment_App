@@ -1158,10 +1158,15 @@ function App() {
   }, [t, recalc]);
 
   const exportExcel = async () => {
-    const path = await save({ defaultPath: `${data.doc_serial || "Vouchify_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
-    if (path) {
-      await invoke("export_excel", { data, computed, filePath: path });
-      showAlert(t("导出成功", "Export successful"));
+    try {
+      const path = await save({ defaultPath: `${data.doc_serial || "Vouchify_Settlement"}.xlsx`, filters: [{ name: "Excel", extensions: ["xlsx"] }] });
+      if (path) {
+        await invoke("export_excel", { data, computed, filePath: path });
+        showAlert(t("导出成功", "Export successful"));
+      }
+    } catch (e) {
+      console.error("export_excel failed", e);
+      showAlert(`${t("导出失败", "Export failed")}: ${String(e)}`);
     }
   };
 
@@ -1788,7 +1793,8 @@ function App() {
         const l = localById.get(r.invoice_id);
         if (!l) return true;
         return (l.status || "available") !== (r.status || "available") ||
-               (l.used_by_label || "") !== (r.used_by_label || "");
+               (l.used_by_label || "") !== (r.used_by_label || "") ||
+               (l.doc_status || "Valid") !== (r.doc_status || "Valid");
       });
       const remote = changedRemote.length > 0 ? await listPoolRemoteByIds(changedRemote.map((r) => r.invoice_id)) : [];
       info.cloud = remoteMeta.length;
@@ -1810,6 +1816,7 @@ function App() {
           lines_json: r.lines_json || "[]",
           raw_xml: r.raw_xml || "",
           file_name: r.file_name || "",
+          doc_status: r.doc_status || "Valid",
           status: r.status || "available",
           used_by_snapshot_id: null,
           used_by_label: r.used_by_label || "",
@@ -1922,6 +1929,10 @@ function App() {
   const attachImportEntryFromPool = async (invoiceId: string) => {
     const p = poolList.find((x: any) => x.invoice_id === invoiceId);
     if (!p) return;
+    if (p.doc_status && p.doc_status !== "Valid") {
+      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${invoiceId}`);
+      return;
+    }
     const current = [...(formRef.current.import_entries ?? [])];
     if (current.some((e: any) => e.attached_invoice === invoiceId)) {
       showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
@@ -1938,9 +1949,15 @@ function App() {
     if (ids.length === 0) return;
     const current = [...(formRef.current.import_entries ?? [])];
     const already = ids.filter(id => current.some((e: any) => e.attached_invoice === id));
-    const fresh = ids.filter(id => !already.includes(id));
+    const fresh = ids.filter(id => !already.includes(id) && isInvoiceUsable(id));
+    const blockedCount = ids.length - already.length - fresh.length;
+    if (blockedCount > 0) {
+      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
+    }
     if (fresh.length === 0) {
-      showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
+      if (blockedCount === 0) {
+        showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
+      }
       return;
     }
     const freshEntries = fresh.map((invoiceId) => {
@@ -1988,6 +2005,10 @@ function App() {
     if (data.doc_type === "import") return attachImportEntryFromPool(invoiceId);
     const p = poolList.find((x: any) => x.invoice_id === invoiceId);
     if (!p) return;
+    if (p.doc_status && p.doc_status !== "Valid") {
+      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${invoiceId}`);
+      return;
+    }
     const currentInvoices = [...(formRef.current.invoices ?? [])];
     if (currentInvoices.some(inv => inv.invoice_no === invoiceId)) {
       showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
@@ -2034,9 +2055,15 @@ function App() {
     if (ids.length === 0) return;
     const currentInvoices = [...(formRef.current.invoices ?? [])];
     const already = ids.filter(id => currentInvoices.some(inv => inv.invoice_no === id));
-    const fresh = ids.filter(id => !already.includes(id));
+    const fresh = ids.filter(id => !already.includes(id) && isInvoiceUsable(id));
+    const blockedCount = ids.length - already.length - fresh.length;
+    if (blockedCount > 0) {
+      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
+    }
     if (fresh.length === 0) {
-      showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
+      if (blockedCount === 0) {
+        showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
+      }
       return;
     }
     const arr = [
@@ -2122,9 +2149,19 @@ function App() {
     }
   };
 
+  const isInvoiceUsable = (invoiceId: string) => {
+    const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+    return !p || !p.doc_status || p.doc_status === "Valid";
+  };
+
   const validateFromPool = async (invoiceIds: string[]) => {
     if (!(data.doc_serial || "").trim()) {
       showAlert(t("请先输入本文档的文档编号（序列号）", "Please enter a serial number for this document first"));
+      return;
+    }
+    const unusable = invoiceIds.filter(id => !isInvoiceUsable(id));
+    if (unusable.length > 0) {
+      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${unusable.join(", ")}`);
       return;
     }
     try {
@@ -2695,7 +2732,7 @@ function App() {
               <button className="btn-add" onClick={importToPool}>+ {t("上传XML", "Upload XML")}</button>
               {poolMode === 'validate' && (
                 <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => {
-                  const available = poolList.filter((p: any) => p.status === 'available');
+                  const available = poolList.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid");
                   if (available.length === 0) { showAlert(t("没有可用发票", "No available invoices")); return; }
                   validateFromPool(available.map((p: any) => p.invoice_id));
                 }}>{t("验证所有可用发票", "Validate All Available")}</button>
@@ -2755,12 +2792,12 @@ function App() {
               const unclaimed = filtered.filter((p: any) => p.status === 'available');
               const claimed = filtered.filter((p: any) => p.status === 'used');
               const shown = poolTab === 'unclaimed' ? unclaimed : claimed;
-              const selectedIds = shown.filter((p: any) => p.status === 'available' && poolSelected.has(p.invoice_id)).map((p: any) => p.invoice_id);
-              const allVisibleSelected = shown.length > 0 && shown.every((p: any) => p.status !== 'available' || poolSelected.has(p.invoice_id));
+              const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.invoice_id)).map((p: any) => p.invoice_id);
+              const allVisibleSelected = shown.length > 0 && shown.every((p: any) => p.status !== 'available' || (p.doc_status || "Valid") !== "Valid" || poolSelected.has(p.invoice_id));
               const toggleVisible = () => {
                 const next = new Set(poolSelected);
                 shown.forEach((p: any) => {
-                  if (p.status === 'available') {
+                  if (p.status === 'available' && (p.doc_status || "Valid") === "Valid") {
                     if (allVisibleSelected) next.delete(p.invoice_id);
                     else next.add(p.invoice_id);
                   }
@@ -2836,9 +2873,11 @@ function App() {
                       <div className="history-empty">{t("无匹配结果", "No matching invoices")}</div>
                     ) : shown.map((p: any) => {
                       const pendingDelete = p.delete_requested_at != null;
+                      const docStatus = p.doc_status || "Valid";
+                      const unusable = docStatus !== "Valid";
                       return (
-                      <div key={p.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : (p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'})}>
-                        {poolTab === 'unclaimed' && p.status === 'available' && (
+                      <div key={p.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : unusable ? {opacity:0.6, borderLeft:'3px solid var(--red)'} : (p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'})}>
+                        {poolTab === 'unclaimed' && p.status === 'available' && !unusable && (
                           <input
                             type="checkbox"
                             style={{margin:2,flexShrink:0,cursor:'pointer',width:14,height:14}}
@@ -2854,7 +2893,11 @@ function App() {
                         <div style={{minWidth:0}}>
                           <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                             <strong style={{fontSize:12}}>{p.invoice_id}</strong>
-                            {p.status === 'used' ? (
+                            {unusable ? (
+                              <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
+                                background:'#fef2f2',color:'var(--red)',border:'1px solid #fecaca'
+                              }}>{docStatus === "Cancelled" ? t("已取消", "Cancelled") : t("已拒绝", "Rejected")}</span>
+                            ) : p.status === 'used' ? (
                               <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
                                 background:'#fffbeb',color:'var(--orange)',border:'1px solid #fde68a'
                               }}>{t("已认领", "Claimed")}</span>
@@ -2891,12 +2934,12 @@ function App() {
                           </p>
                         </div>
                         <div className="history-actions">
-                          {poolMode === 'select' && p.status === 'available' && (
+                          {poolMode === 'select' && p.status === 'available' && !unusable && (
                             <button className="btn-load" onClick={() => attachFromPool(p.invoice_id)}>
                               {t("添加", "Add")}
                             </button>
                           )}
-                          {poolMode === 'validate' && p.status === 'available' && (
+                          {poolMode === 'validate' && p.status === 'available' && !unusable && (
                             <button className="btn-load" onClick={() => validateFromPool([p.invoice_id])}>
                               {t("验证", "Validate")}
                             </button>

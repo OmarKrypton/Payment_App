@@ -24,6 +24,10 @@ pub struct EtaInvoice {
     pub seller_name: String,
     pub buyer_tax_id: String,
     pub buyer_name: String,
+    /// Document state from the ETA portal wrapper: Valid / Rejected / Cancelled.
+    /// Anything other than "Valid" makes the invoice visible but unusable.
+    #[serde(default)]
+    pub doc_status: String,
     pub currency: String,
     pub net_amount: f64,
     pub total_vat: f64,
@@ -97,6 +101,7 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         seller_name: String::new(),
         buyer_tax_id: String::new(),
         buyer_name: String::new(),
+        doc_status: "Valid".to_string(),
         currency: "EGP".to_string(),
         net_amount: 0.0,
         total_vat: 0.0,
@@ -159,6 +164,13 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                         "receiverId" => { invoice.buyer_tax_id = text; }
                         "receiverName" => { invoice.buyer_name = text; }
                         "dateTimeIssued" => { invoice.issue_date = text; }
+                        "status" => {
+                            // Portal wrapper status: Valid / Rejected / Cancelled
+                            let lower = text.to_lowercase();
+                            if lower.contains("reject") { invoice.doc_status = "Rejected".to_string(); }
+                            else if lower.contains("cancel") || lower.contains("void") { invoice.doc_status = "Cancelled".to_string(); }
+                            else if !text.is_empty() { invoice.doc_status = "Valid".to_string(); }
+                        }
                         "netAmount" => { invoice.net_amount = parse_f64(&text); }
                         "total" => { invoice.grand_total = parse_f64(&text); }
                         _ => {}
@@ -779,11 +791,12 @@ mod tests {
       ],
       "taxTotals":[{"taxType":"T1","amount":147,"subType":"V009"}],
       "netAmount":1050,"totalAmount":1197
-    }</document><issuerName>تويار لتجاره الجمله والتجزئه</issuerName><receiverId>100489095</receiverId><receiverName>الشركه الصينيه</receiverName><dateTimeIssued>2026-07-24T14:29:00Z</dateTimeIssued><totalSales>1050</totalSales><netAmount>1050</netAmount><total>1197</total><status>Valid</status></document>"#;
+    }</document><issuerName>تويار لتجاره الجمله والتجزئه</issuerName><receiverId>100489095</receiverId><receiverName>الشركه الصينيه</receiverName><dateTimeIssued>2026-07-24T14:29:00Z</dateTimeIssued><totalSales>1050</totalSales><netAmount>1050</netAmount><total>1197</total><status>Rejected</status></document>"#;
         let inv = parse_eta_xml(xml).unwrap();
         assert_eq!(inv.invoice_id, "62");
         assert_eq!(inv.seller_tax_id, "761776869");
         assert_eq!(inv.buyer_tax_id, "100489095");
+        assert_eq!(inv.doc_status, "Rejected", "wrapper status after inner JSON must be picked up");
         assert_eq!(inv.net_amount, 1050.0);
         assert_eq!(inv.total_vat, 147.0);
         assert_eq!(inv.grand_total, 1197.0);

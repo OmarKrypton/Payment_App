@@ -162,6 +162,7 @@ export interface PoolInvoiceRow {
   lines_json: string;
   raw_xml: string;
   file_name: string;
+  doc_status?: string;
   status: string;
   used_by_label: string;
   delete_requested_at: string | null;
@@ -169,17 +170,46 @@ export interface PoolInvoiceRow {
   created_at: string;
 }
 
+// The doc_status column was added later than the base table; until the project
+// has run the ALTER TABLE migration, queries naming it fail. Detect that once
+// and fall back to queries/payloads without the column so sync keeps working.
+let cloudHasDocStatus = true;
+
+function isMissingDocStatusError(e: any): boolean {
+  const msg = String((e && (e.message ?? e)) || "");
+  return msg.includes("doc_status");
+}
+
+function poolSelect(colsBase: string): string {
+  return cloudHasDocStatus ? `${colsBase}, doc_status` : colsBase;
+}
+
 export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
+  const COLS = "id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by";
   const build = (from: number, to: number) =>
     supabase
       .from("pool_invoices")
-      .select("id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at")
+      .select(poolSelect(`${COLS}, created_at`))
       .order("created_at", { ascending: false })
       .range(from, to)
       .then(({ data, error }) => {
-        if (error) throw error;
+        if (error) {
+          if (cloudHasDocStatus && isMissingDocStatusError(error)) {
+            cloudHasDocStatus = false;
+            return supabase
+              .from("pool_invoices")
+              .select(`${COLS}, created_at`)
+              .order("created_at", { ascending: false })
+              .range(from, to)
+              .then((r2: any) => {
+                if (r2.error) throw r2.error;
+                return r2.data;
+              });
+          }
+          throw error;
+        }
         return data;
       });
   // Rows carry full raw_xml (tens of KB each), so keep pages small to stay
@@ -194,30 +224,52 @@ export async function listPoolRemoteByIds(ids: string[]): Promise<PoolInvoiceRow
   if (ids.length === 0) return [];
   const PAGE = 50;
   const all: PoolInvoiceRow[] = [];
+  const COLS = "id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at";
   for (let i = 0; i < ids.length; i += PAGE) {
     const chunk = ids.slice(i, i + PAGE);
-    const { data, error } = await supabase
+    const run = (cols: string) =>
+    supabase
       .from("pool_invoices")
-      .select("id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at")
+      .select(cols)
       .in("invoice_id", chunk)
       .order("created_at", { ascending: false });
-    if (error) throw error;
-    if (data) all.push(...data);
+  let res: any = await run(poolSelect(COLS));
+  if (res.error && cloudHasDocStatus && isMissingDocStatusError(res.error)) {
+    cloudHasDocStatus = false;
+    res = await run(COLS);
+  }
+  if (res.error) throw res.error;
+  if (res.data) all.push(...(res.data as PoolInvoiceRow[]));
   }
   return all;
 }
 
-export async function listPoolRemoteMeta(): Promise<{ invoice_id: string; status: string; used_by_label: string }[]> {
+export async function listPoolRemoteMeta(): Promise<{ invoice_id: string; doc_status?: string; status: string; used_by_label: string }[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
+  const COLS = "invoice_id, status, used_by_label";
   const build = (from: number, to: number) =>
     supabase
       .from("pool_invoices")
-      .select("invoice_id, status, used_by_label")
+      .select(poolSelect(COLS))
       .order("created_at", { ascending: false })
       .range(from, to)
       .then(({ data, error }) => {
-        if (error) throw error;
+        if (error) {
+          if (cloudHasDocStatus && isMissingDocStatusError(error)) {
+            cloudHasDocStatus = false;
+            return supabase
+              .from("pool_invoices")
+              .select(COLS)
+              .order("created_at", { ascending: false })
+              .range(from, to)
+              .then((r2: any) => {
+                if (r2.error) throw r2.error;
+                return r2.data;
+              });
+          }
+          throw error;
+        }
         return data;
       });
   return fetchAllPooled(build, 2000);
@@ -243,6 +295,7 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
     lines_json: r.lines_json || "[]",
     raw_xml: r.raw_xml || "",
     file_name: r.file_name || "",
+    doc_status: r.doc_status || "Valid",
     status: r.status || "available",
     used_by_label: r.used_by_label || "",
   }));
@@ -257,6 +310,17 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
     const { error } = await supabase
       .from("pool_invoices")
       .upsert(chunk, { onConflict: "invoice_id" });
+    if (error && cloudHasDocStatus && isMissingDocStatusError(error)) {
+      // Cloud table predates the doc_status migration; strip and retry so
+      // validity stays a local-only signal until the column exists.
+      cloudHasDocStatus = false;
+      const stripped = chunk.map(({ doc_status: _drop, ...rest }) => rest);
+      const { error: retryError } = await supabase
+        .from("pool_invoices")
+        .upsert(stripped, { onConflict: "invoice_id" });
+      if (retryError) throw retryError;
+      continue;
+    }
     if (error) throw error;
   }
 }

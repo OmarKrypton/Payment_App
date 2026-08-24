@@ -375,7 +375,8 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet2
             .write_with_format(r, 0, "Reason for Conditional Approval", &bold_fmt)
             .map_err(|e| e.to_string())?;
-        sheet2.merge_range(r, 1, r, 1, &data.conditional_reason, &notes_wrap_fmt)
+        sheet2
+            .write_with_format(r, 1, data.conditional_reason.as_str(), &notes_wrap_fmt)
             .map_err(|e| e.to_string())?;
         sheet2.set_row_height(r, 50).map_err(|e| e.to_string())?;
         r += 1;
@@ -384,7 +385,8 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet2
             .write_with_format(r, 0, "Reason for Rejection", &bold_fmt)
             .map_err(|e| e.to_string())?;
-        sheet2.merge_range(r, 1, r, 1, &data.reject_reason, &notes_wrap_fmt)
+        sheet2
+            .write_with_format(r, 1, data.reject_reason.as_str(), &notes_wrap_fmt)
             .map_err(|e| e.to_string())?;
         sheet2.set_row_height(r, 50).map_err(|e| e.to_string())?;
     }
