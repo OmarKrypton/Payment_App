@@ -19,6 +19,7 @@ create table if not exists public.pool_invoices (
   lines_json text not null default '[]',
   raw_xml text not null default '',
   file_name text not null default '',
+  doc_status text not null default 'Valid',
   status text not null default 'available',
   used_by_label text not null default '',
   delete_requested_at timestamptz,
@@ -26,6 +27,9 @@ create table if not exists public.pool_invoices (
   created_at timestamptz not null default now(),
   constraint pool_invoices_invoice_id_key unique (invoice_id)
 );
+
+-- Migration for tables created before doc_status existed (v0.3.23):
+alter table public.pool_invoices add column if not exists doc_status text not null default 'Valid';
 
 alter table public.pool_invoices enable row level security;
 

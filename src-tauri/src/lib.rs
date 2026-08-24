@@ -280,6 +280,7 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>
                 seller_name: pool_inv.seller_name.clone(),
                 buyer_tax_id: pool_inv.buyer_tax_id.clone(),
                 buyer_name: pool_inv.buyer_name.clone(),
+                doc_status: pool_inv.doc_status.clone(),
                 currency: pool_inv.currency.clone(),
                 net_amount: pool_inv.net_amount,
                 total_vat: pool_inv.total_vat,
@@ -428,4 +429,42 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod export_tests {
+    use crate::{calc, excel, models::FormData};
+
+    #[test]
+    fn exports_rejected_and_conditional_documents() {
+        for decision in ["reject", "conditional"] {
+            let mut data = FormData::default();
+            data.doc_type = "import".into();
+            data.doc_serial = format!("TEST-{decision}");
+            data.final_decision = decision.into();
+            if decision == "reject" {
+                data.reject_reason = "Commercial invoice mismatch".into();
+            } else {
+                data.conditional_reason = "Pending SAD document".into();
+            }
+            let computed = calc::recalculate(&data);
+            let out = format!("/tmp/opencode/export_test_{decision}.xlsx");
+            excel::export_excel(&data, &computed, &out)
+                .unwrap_or_else(|e| panic!("export {decision} failed: {e}"));
+        }
+    }
+
+    #[test]
+    fn repro_export_from_real_snapshot() {
+        let Ok(path) = std::env::var("VOUCHIFY_REPRO") else {
+            eprintln!("skipped: VOUCHIFY_REPRO not set");
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read snapshot json");
+        let data: FormData = serde_json::from_str(&raw).expect("deserialize snapshot");
+        println!("deserialize OK, doc_type={:?} decision={:?}", data.doc_type, data.final_decision);
+        let computed = calc::recalculate(&data);
+        excel::export_excel(&data, &computed, "/tmp/opencode/repro_out.xlsx")
+            .expect("export real snapshot");
+    }
 }
