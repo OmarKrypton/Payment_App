@@ -122,23 +122,70 @@ fn validate_eta_xml(file_paths: Vec<String>, form_json: String) -> Result<Vec<et
     Ok(results)
 }
 
+#[derive(Clone, serde::Serialize)]
+struct PoolImportFailure {
+    file: String,
+    error: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct PoolImportResult {
+    imported: Vec<eta_xml::EtaInvoice>,
+    failed: Vec<PoolImportFailure>,
+}
+
+/// Best-effort recovery for exports that omit <uuid>/<internalId> in the XML
+/// wrapper: browser-extension bundles name each file with the ETA UUID as the
+/// final dash-separated token of the file stem.
+fn uuid_from_file_name(path: &str) -> Option<String> {
+    let stem = std::path::Path::new(path).file_stem()?.to_string_lossy().to_string();
+    let token = stem.rsplit('-').next()?.trim().to_string();
+    if token.len() >= 10 && token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        Some(token)
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
-fn import_to_pool(state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> Result<Vec<eta_xml::EtaInvoice>, String> {
+fn import_to_pool(state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> Result<PoolImportResult, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     let mut imported = Vec::new();
+    let mut failed = Vec::new();
     for path in &file_paths {
-        let xml_content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read XML file {}: {}", path, e))?;
-        let invoice = eta_xml::parse_eta_xml(&xml_content)?;
-        let file_name = std::path::Path::new(path)
+        let base_name = std::path::Path::new(path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        history::add_to_pool(conn, &invoice, &xml_content, &file_name)?;
-        imported.push(invoice);
+            .unwrap_or_else(|| path.clone());
+        let xml_content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                failed.push(PoolImportFailure { file: base_name, error: format!("read failed: {}", e) });
+                continue;
+            }
+        };
+        let invoice = match eta_xml::parse_eta_xml(&xml_content) {
+            Ok(mut inv) => {
+                if inv.uuid.is_empty() || inv.invoice_id.is_empty() {
+                    if let Some(token) = uuid_from_file_name(path) {
+                        if inv.uuid.is_empty() { inv.uuid = token.clone(); }
+                        if inv.invoice_id.is_empty() { inv.invoice_id = token; }
+                    }
+                }
+                inv
+            }
+            Err(e) => {
+                failed.push(PoolImportFailure { file: base_name, error: e });
+                continue;
+            }
+        };
+        match history::add_to_pool(conn, &invoice, &xml_content, &base_name) {
+            Ok(_) => imported.push(invoice),
+            Err(e) => failed.push(PoolImportFailure { file: base_name, error: e }),
+        }
     }
-    Ok(imported)
+    Ok(PoolImportResult { imported, failed })
 }
 
 #[tauri::command]

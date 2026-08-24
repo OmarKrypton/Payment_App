@@ -2100,8 +2100,15 @@ function App() {
         .map((f: any) => typeof f === "string" ? f : f.path)
         .filter(Boolean);
       if (filePaths.length === 0) return;
-      const imported = await invoke<any[]>("import_to_pool", { filePaths });
-      showAlert(`${t("已上传", "Uploaded")} ${imported.length} ${t("发票到池", "invoice(s) to pool")}`);
+      const res = await invoke<any>("import_to_pool", { filePaths });
+      const imported: any[] = res.imported || [];
+      const failed: any[] = res.failed || [];
+      let msg = `${t("已上传", "Uploaded")} ${imported.length} ${t("发票到池", "invoice(s) to pool")}`;
+      if (failed.length > 0) {
+        const names = failed.slice(0, 3).map((f: any) => f.file).join(", ");
+        msg += `\n${t("跳过", "Skipped")} ${failed.length}: ${names}${failed.length > 3 ? "…" : ""}`;
+      }
+      showAlert(msg);
       if (authUser && imported.length > 0) {
         try {
           const local = await invoke<any[]>("list_invoice_pool");
