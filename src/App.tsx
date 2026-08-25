@@ -327,6 +327,8 @@ function App() {
   const [poolDateTo, setPoolDateTo] = useState("");
   const [poolSeller, setPoolSeller] = useState("all");
   const [poolCurrency, setPoolCurrency] = useState("all");
+  const [poolDocFilter, setPoolDocFilter] = useState<"all" | "Valid" | "Rejected" | "Cancelled">("all");
+  const [poolImportProgress, setPoolImportProgress] = useState<{ processed: number; total: number; file: string } | null>(null);
   const [resultSearch, setResultSearch] = useState("");
   const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
 
@@ -532,6 +534,14 @@ function App() {
     });
     return () => { unlisten.then(f => f()); };
   }, [t, hideOverlay]);
+
+  // Listen for pool import progress updates
+  useEffect(() => {
+    const unlisten = listen<{ processed: number; total: number; file: string }>("pool-import-progress", (event) => {
+      setPoolImportProgress(event.payload);
+    });
+    return () => { unlisten.then(f => f()); };
+  }, []);
 
   const data = formRef.current;
 
@@ -2119,6 +2129,7 @@ function App() {
   };
 
   const importToPool = async () => {
+    if (poolImportProgress) return;
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ multiple: true, filters: [{ name: "XML", extensions: ["xml"] }] });
@@ -2127,6 +2138,7 @@ function App() {
         .map((f: any) => typeof f === "string" ? f : f.path)
         .filter(Boolean);
       if (filePaths.length === 0) return;
+      setPoolImportProgress({ processed: 0, total: filePaths.length, file: "" });
       const res = await invoke<any>("import_to_pool", { filePaths });
       const imported: any[] = res.imported || [];
       const failed: any[] = res.failed || [];
@@ -2147,6 +2159,7 @@ function App() {
     } catch (e: any) {
       showAlert(`${t("上传失败", "Upload failed")}: ${e.message || e}`);
     }
+    setPoolImportProgress(null);
   };
 
   const isInvoiceUsable = (invoiceId: string) => {
@@ -2728,40 +2741,52 @@ function App() {
               <h3>{t("发票池", "Invoice Pool")}</h3>
               <button className="modal-close" onClick={() => setShowPool(false)}>✕</button>
             </div>
-            <div style={{display:'flex',gap:8,marginBottom:10}}>
-              <button className="btn-add" onClick={importToPool}>+ {t("上传XML", "Upload XML")}</button>
-              {poolMode === 'validate' && (
-                <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => {
-                  const available = poolList.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid");
-                  if (available.length === 0) { showAlert(t("没有可用发票", "No available invoices")); return; }
-                  validateFromPool(available.map((p: any) => p.invoice_id));
-                }}>{t("验证所有可用发票", "Validate All Available")}</button>
-              )}
-              <button className="btn-add" style={{background:'#7c3aed'}} onClick={async () => {
-                const n = await restoreClaimsFromDocument();
-                showAlert(n > 0
-                  ? `${t("已认领", "Claimed")} ${n} ${t("张本文档引用的发票", "invoice(s) referenced by this document")}`
-                  : t("本文档没有可恢复的发票", "No recoverable invoices for this document"));
-              }}>{t("恢复本文档认领", "Restore Doc Claims")}</button>
-              <button className="btn-add" style={{background:'#db2777'}} onClick={async () => {
-                const n = await restoreAllClaims();
-                showAlert(n > 0
-                  ? `${t("已恢复", "Restored")} ${n} ${t("张发票在所有已保存文档中的认领", "invoice claim(s) across all saved documents")}`
-                  : t("没有可恢复的发票", "No recoverable invoices"));
-              }}>{t("恢复全部文档认领", "Restore All Claims")}</button>
-              <button className="btn-add" style={{background:'#0ea5e9'}} onClick={async () => {
+            <div className="pool-toolbar">
+              <button className="btn-add" onClick={importToPool} disabled={!!poolImportProgress}>
+                {poolImportProgress ? t("上传中…", "Uploading…") : `+ ${t("上传XML", "Upload XML")}`}
+              </button>
+              <button className="pool-btn" style={{background:'#0ea5e9',color:'#fff'}} onClick={async () => {
                 setPoolLoading(true);
                 await syncPoolRemote();
                 try { setPoolList(await invoke<any[]>("list_invoice_pool")); } catch (e) { console.error(e); }
                 setPoolLoading(false);
               }}>{t("同步云端", "Sync Now")}</button>
+              <div style={{flex:1}} />
+              <button className="pool-btn" onClick={async () => {
+                const n = await restoreClaimsFromDocument();
+                showAlert(n > 0
+                  ? `${t("已认领", "Claimed")} ${n} ${t("张本文档引用的发票", "invoice(s) referenced by this document")}`
+                  : t("本文档没有可恢复的发票", "No recoverable invoices for this document"));
+              }}>{t("恢复本文档认领", "Restore Doc Claims")}</button>
+              <button className="pool-btn" onClick={async () => {
+                const n = await restoreAllClaims();
+                showAlert(n > 0
+                  ? `${t("已恢复", "Restored")} ${n} ${t("张发票在所有已保存文档中的认领", "invoice claim(s) across all saved documents")}`
+                  : t("没有可恢复的发票", "No recoverable invoices"));
+              }}>{t("恢复全部文档认领", "Restore All Claims")}</button>
             </div>
-            <div style={{fontSize:11, marginBottom:8, padding:'4px 8px', borderRadius:6,
-              background: poolSyncInfo.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.15)',
-              color: poolSyncInfo.ok ? 'var(--text)' : '#ef4444', fontFamily:'monospace'}}>
-              sync: local={poolSyncInfo.local} cloud={poolSyncInfo.cloud} pushed={poolSyncInfo.pushed} pulled={poolSyncInfo.pulled}
-              {poolSyncInfo.error && <div style={{color:'#ef4444', marginTop:2}}>ERROR: {poolSyncInfo.error}</div>}
+            <div className={`pool-syncinfo ${poolSyncInfo.ok ? 'ok' : 'err'}`}>
+              <span>sync: local={poolSyncInfo.local} · cloud={poolSyncInfo.cloud} · ↑{poolSyncInfo.pushed} ↓{poolSyncInfo.pulled}</span>
+              {poolSyncInfo.error && <span style={{marginLeft:8}}>ERROR: {poolSyncInfo.error}</span>}
             </div>
+            {poolImportProgress && (() => {
+              const pp = poolImportProgress;
+              const pct = pp.total > 0 ? Math.round((pp.processed / pp.total) * 100) : 0;
+              return (
+                <div style={{marginBottom:10}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:4,color:'var(--text-secondary)'}}>
+                    <span>{t("正在导入发票到池", "Importing invoices into pool")}…</span>
+                    <span style={{fontFamily:'var(--font-mono)',fontWeight:600}}>{pp.processed}/{pp.total} ({pct}%)</span>
+                  </div>
+                  <div className="pool-progress-track">
+                    <div className="pool-progress-fill" style={{width:`${pct}%`}} />
+                  </div>
+                  {pp.file && (
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>📄 {pp.file}</div>
+                  )}
+                </div>
+              );
+            })()}
             {poolMode === 'select' && (
               <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:8}}>
                 {t("选择要附加到本文档的发票（点击“添加”将其加入发票列表并标记为已认领）", "Select invoices to attach to this document. Click \"Add\" to include them in the invoice list and mark them as claimed.")}
@@ -2778,7 +2803,7 @@ function App() {
               const q = poolSearch.trim().toLowerCase();
               const sellers = Array.from(new Set(poolList.map((p: any) => p.seller_tax_id).filter(Boolean))) as string[];
               const currencies = Array.from(new Set(poolList.map((p: any) => p.currency || 'EGP').filter(Boolean))) as string[];
-              const filtered = poolList.filter((p: any) => {
+              const base = poolList.filter((p: any) => {
                 if (q) {
                   const hay = [p.invoice_id, p.seller_tax_id, p.seller_name, p.file_name || "", p.used_by_label || ""].join(" ").toLowerCase();
                   if (!hay.includes(q)) return false;
@@ -2789,79 +2814,72 @@ function App() {
                 if (poolDateTo && p.issue_date && p.issue_date > poolDateTo) return false;
                 return true;
               });
+              const statusCounts = { Valid: 0, Rejected: 0, Cancelled: 0 };
+              for (const p of base) {
+                const s = (p.doc_status || "Valid") as "Valid" | "Rejected" | "Cancelled";
+                if (s in statusCounts) statusCounts[s]++;
+              }
+              const filtered = poolDocFilter === 'all' ? base : base.filter((p: any) => (p.doc_status || "Valid") === poolDocFilter);
               const unclaimed = filtered.filter((p: any) => p.status === 'available');
               const claimed = filtered.filter((p: any) => p.status === 'used');
               const shown = poolTab === 'unclaimed' ? unclaimed : claimed;
               const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.invoice_id)).map((p: any) => p.invoice_id);
-              const allVisibleSelected = shown.length > 0 && shown.every((p: any) => p.status !== 'available' || (p.doc_status || "Valid") !== "Valid" || poolSelected.has(p.invoice_id));
-              const toggleVisible = () => {
-                const next = new Set(poolSelected);
-                shown.forEach((p: any) => {
-                  if (p.status === 'available' && (p.doc_status || "Valid") === "Valid") {
-                    if (allVisibleSelected) next.delete(p.invoice_id);
-                    else next.add(p.invoice_id);
-                  }
-                });
-                setPoolSelected(next);
-              };
-              const segStyle = (active: boolean): React.CSSProperties => ({
-                flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 11,
-                background: active ? 'var(--accent)' : 'transparent',
-                color: active ? '#fff' : 'var(--text-secondary)',
-                border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
-              });
-              const chipStyle = (active: boolean): React.CSSProperties => ({
-                padding: '3px 8px', borderRadius: 12, cursor: 'pointer', fontWeight: 600, fontSize: 11,
-                background: active ? 'var(--accent)' : 'transparent',
-                color: active ? '#fff' : 'var(--text-secondary)',
-                border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
-              });
               return (
                 <>
-                  <div style={{display:'flex',gap:6,marginBottom:10}}>
-                    <button style={segStyle(poolTab === 'unclaimed')} onClick={() => setPoolTab('unclaimed')}>
+                  <div className="pool-seg" style={{marginBottom:10}}>
+                    <button className={poolTab === 'unclaimed' ? 'active' : ''} onClick={() => setPoolTab('unclaimed')}>
                       {t("未认领", "Unclaimed")} ({unclaimed.length})
                     </button>
-                    <button style={segStyle(poolTab === 'claimed')} onClick={() => setPoolTab('claimed')}>
+                    <button className={poolTab === 'claimed' ? 'active' : ''} onClick={() => setPoolTab('claimed')}>
                       {t("已认领", "Claimed")} ({claimed.length})
                     </button>
                   </div>
-                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
-                    {poolTab === 'unclaimed' && (
-                      <button className="btn-load" onClick={toggleVisible} disabled={shown.length === 0}>
-                        {allVisibleSelected ? t("取消全选", "Deselect all") : t("全选", "Select all")}
+                  <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+                    {([
+                      ["all", t("全部", "All"), base.length, "#3b82f6"],
+                      ["Valid", t("有效", "Valid"), statusCounts.Valid, "var(--green)"],
+                      ["Rejected", t("已拒绝", "Rejected"), statusCounts.Rejected, "var(--red)"],
+                      ["Cancelled", t("已取消", "Cancelled"), statusCounts.Cancelled, "#64748b"],
+                    ] as [string, string, number, string][]).map(([key, label, count, color]) => (
+                      <button key={key} className={`pool-chip${poolDocFilter === key ? ' pool-chip-active' : ''}`} style={poolDocFilter === key
+                        ? { background: color, borderColor: color, color: '#fff' }
+                        : undefined} onClick={() => setPoolDocFilter(key as any)}>
+                        <span className="dot" style={{ background: poolDocFilter === key ? '#fff' : color }} />
+                        {label} ({count})
                       </button>
-                    )}
-                    {selectedIds.length > 0 && (
-                      <>
-                        {poolMode === 'validate' ? (
-                          <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => validateFromPool(selectedIds)}>
-                            {t("验证选中", "Validate Selected")} ({selectedIds.length})
-                          </button>
-                        ) : (
-                          <button className="btn-add" style={{background:'var(--accent)'}} onClick={() => attachBatchFromPool(selectedIds)}>
-                            {t("添加选中", "Attach Selected")} ({selectedIds.length})
-                          </button>
-                        )}
-                      </>
-                    )}
+                    ))}
                   </div>
+                  {selectedIds.length > 0 && (
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+                      {poolMode === 'validate' ? (
+                        <button className="btn-add" onClick={() => validateFromPool(selectedIds)}>
+                          {t("验证选中", "Validate Selected")} ({selectedIds.length})
+                        </button>
+                      ) : (
+                        <button className="btn-add" onClick={() => attachBatchFromPool(selectedIds)}>
+                          {t("添加选中", "Attach Selected")} ({selectedIds.length})
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {poolTab === 'unclaimed' && (
-                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}>
-                      <select className="field-input" style={{width:130}} value={poolCurrency} onChange={e => setPoolCurrency(e.target.value)}>
+                    <div className="pool-filterbar" style={{marginBottom:10}}>
+                      <select className="field-input" style={{width:120}} value={poolCurrency} onChange={e => setPoolCurrency(e.target.value)}>
                         <option value="all">{t("所有货币", "All currencies")}</option>
                         {currencies.map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
-                      <select className="field-input" style={{width:170}} value={poolSeller} onChange={e => setPoolSeller(e.target.value)}>
+                      <select className="field-input" style={{width:160}} value={poolSeller} onChange={e => setPoolSeller(e.target.value)}>
                         <option value="all">{t("所有卖方", "All sellers")}</option>
                         {sellers.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                       <input className="field-input" style={{width:110}} type="date" value={poolDateFrom} onChange={e => setPoolDateFrom(e.target.value)} />
                       <span style={{color:'var(--text-muted)',fontSize:11}}>–</span>
                       <input className="field-input" style={{width:110}} type="date" value={poolDateTo} onChange={e => setPoolDateTo(e.target.value)} />
-                      <button style={chipStyle(poolSeller === 'all' && poolCurrency === 'all' && !poolDateFrom && !poolDateTo)} onClick={() => { setPoolSeller('all'); setPoolCurrency('all'); setPoolDateFrom(''); setPoolDateTo(''); }}>
-                        {t("重置", "Reset")}
-                      </button>
+                      {(poolSeller !== 'all' || poolCurrency !== 'all' || poolDateFrom || poolDateTo) && (
+                        <button className="pool-chip" style={{marginLeft:'auto'}} onClick={() => { setPoolSeller('all'); setPoolCurrency('all'); setPoolDateFrom(''); setPoolDateTo(''); }}>
+                          ✕ {t("重置筛选", "Reset filters")}
+                        </button>
+                      )}
                     </div>
                   )}
                   <div className="history-list" style={poolLoading ? {opacity:0.5} : {}}>
@@ -2894,9 +2912,15 @@ function App() {
                           <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                             <strong style={{fontSize:12}}>{p.invoice_id}</strong>
                             {unusable ? (
-                              <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
-                                background:'#fef2f2',color:'var(--red)',border:'1px solid #fecaca'
-                              }}>{docStatus === "Cancelled" ? t("已取消", "Cancelled") : t("已拒绝", "Rejected")}</span>
+                              docStatus === "Cancelled" ? (
+                                <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
+                                  background:'#f1f5f9',color:'#64748b',border:'1px solid #cbd5e1'
+                                }}>{t("已取消", "Cancelled")}</span>
+                              ) : (
+                                <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
+                                  background:'#fef2f2',color:'var(--red)',border:'1px solid #fecaca'
+                                }}>{t("已拒绝", "Rejected")}</span>
+                              )
                             ) : p.status === 'used' ? (
                               <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:600,
                                 background:'#fffbeb',color:'var(--orange)',border:'1px solid #fde68a'
