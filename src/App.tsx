@@ -1816,7 +1816,7 @@ function App() {
           lines_json: r.lines_json || "[]",
           raw_xml: r.raw_xml || "",
           file_name: r.file_name || "",
-          doc_status: r.doc_status || "Valid",
+          ...(r.doc_status ? { doc_status: r.doc_status } : {}),
           status: r.status || "available",
           used_by_snapshot_id: null,
           used_by_label: r.used_by_label || "",

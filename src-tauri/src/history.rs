@@ -212,14 +212,17 @@ pub struct PoolInvoice {
     pub created_at: String,
 }
 
-fn default_doc_status() -> String { "Valid".to_string() }
+// Absent/empty doc_status must stay EMPTY here so sync_pool_from_remote can
+// distinguish "remote has no opinion" (keep local value) from a real "Valid".
+// list_pool normalizes empty to "Valid" on read.
+fn default_doc_status() -> String { String::new() }
 
 fn deserialize_doc_status<'de, D>(d: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let opt: Option<String> = serde::Deserialize::deserialize(d)?;
-    Ok(opt.filter(|s| !s.is_empty()).unwrap_or_else(default_doc_status))
+    Ok(opt.unwrap_or_default())
 }
 pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<i64, String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();

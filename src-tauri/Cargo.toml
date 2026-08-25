@@ -1,6 +1,6 @@
 [package]
 name = "vouchify"
-version = "0.3.24"
+version = "0.3.25"
 description = "Vouchify — Voucher & Settlement Calculation App"
 authors = ["you"]
 edition = "2021"
