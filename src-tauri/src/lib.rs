@@ -148,16 +148,25 @@ fn uuid_from_file_name(path: &str) -> Option<String> {
 }
 
 #[tauri::command]
-fn import_to_pool(state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> Result<PoolImportResult, String> {
+fn import_to_pool(app: tauri::AppHandle, state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> Result<PoolImportResult, String> {
+    use tauri::Emitter;
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     let mut imported = Vec::new();
     let mut failed = Vec::new();
-    for path in &file_paths {
+    let total = file_paths.len();
+    for (idx, path) in file_paths.iter().enumerate() {
         let base_name = std::path::Path::new(path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone());
+        let _ = app.emit("pool-import-progress", serde_json::json!({
+            "processed": idx,
+            "total": total,
+            "file": base_name,
+            "imported": imported.len(),
+            "failed": failed.len(),
+        }));
         let xml_content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
@@ -185,6 +194,13 @@ fn import_to_pool(state: tauri::State<'_, DbState>, file_paths: Vec<String>) -> 
             Err(e) => failed.push(PoolImportFailure { file: base_name, error: e }),
         }
     }
+    let _ = app.emit("pool-import-progress", serde_json::json!({
+        "processed": total,
+        "total": total,
+        "file": "",
+        "imported": imported.len(),
+        "failed": failed.len(),
+    }));
     Ok(PoolImportResult { imported, failed })
 }
 

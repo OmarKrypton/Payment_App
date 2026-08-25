@@ -1114,3 +1114,126 @@ body {
 .content::-webkit-scrollbar { width: 6px; }
 .content::-webkit-scrollbar-track { background: transparent; }
 .content::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 3px; }
+
+/* ── Invoice Pool ── */
+.pool-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.pool-btn {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pool-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.pool-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pool-syncinfo {
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+
+.pool-syncinfo.ok { border-color: #bbf7d0; }
+.pool-syncinfo.err {
+  border-color: #fecaca;
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.pool-seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.pool-seg button {
+  flex: 1;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font);
+}
+
+.pool-seg button + button { border-left: 1px solid var(--border); }
+
+.pool-seg button:hover:not(.active) { background: var(--bg-input-hover); }
+
+.pool-seg button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.pool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font);
+}
+
+.pool-chip:hover:not(.pool-chip-active) { border-color: var(--accent); color: var(--accent); }
+.pool-chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pool-chip.pool-chip-active {
+  box-shadow: var(--shadow-sm);
+}
+
+.pool-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pool-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.pool-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease;
+}
