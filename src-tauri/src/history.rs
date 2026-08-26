@@ -231,12 +231,13 @@ where
     let opt: Option<String> = serde::Deserialize::deserialize(d)?;
     Ok(opt.unwrap_or_default())
 }
+#[allow(dead_code)]
 /// Outcome of adding an invoice to the pool.
 pub enum PoolAddOutcome {
     /// New row inserted; payload is the rowid.
-    Inserted(_i64),
+    Inserted(i64),
     /// Existing row refreshed (same invoice, newer data or genuine status change).
-    Updated(_i64),
+    Updated(i64),
     /// A different submission of the same internalID was skipped because a
     /// Valid version is already stored and the incoming one is Rejected/Cancelled.
     /// Suppliers resubmit corrected invoices under the same internalID; the
