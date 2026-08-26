@@ -217,24 +217,24 @@ fn list_invoice_pool(state: tauri::State<'_, DbState>) -> Result<Vec<history::Po
 }
 
 #[tauri::command]
-fn mark_pool_invoice_used(state: tauri::State<'_, DbState>, invoice_id: String, snapshot_id: i64, snapshot_label: String) -> Result<(), String> {
+fn mark_pool_invoice_used(state: tauri::State<'_, DbState>, id: i64, snapshot_id: i64, snapshot_label: String) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
-    history::mark_invoice_used(conn, &invoice_id, snapshot_id, &snapshot_label)
+    history::mark_invoice_used(conn, id, snapshot_id, &snapshot_label)
 }
 
 #[tauri::command]
-fn mark_pool_invoices_used(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>, snapshot_id: i64, snapshot_label: String) -> Result<(), String> {
+fn mark_pool_invoices_used(state: tauri::State<'_, DbState>, ids: Vec<i64>, snapshot_id: i64, snapshot_label: String) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
-    history::mark_invoices_used(conn, &invoice_ids, snapshot_id, &snapshot_label)
+    history::mark_invoices_used(conn, &ids, snapshot_id, &snapshot_label)
 }
 
 #[tauri::command]
-fn mark_pool_invoice_available(state: tauri::State<'_, DbState>, invoice_id: String) -> Result<(), String> {
+fn mark_pool_invoice_available(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
-    history::mark_invoice_available(conn, &invoice_id)
+    history::mark_invoice_available(conn, id)
 }
 
 #[tauri::command]
@@ -276,14 +276,14 @@ fn sync_pool_from_remote(state: tauri::State<'_, DbState>, invoices: Vec<history
 }
 
 #[tauri::command]
-fn validate_from_pool(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>, form_json: String) -> Result<Vec<eta_xml::ValidationResult>, String> {
+fn validate_from_pool(state: tauri::State<'_, DbState>, ids: Vec<i64>, form_json: String) -> Result<Vec<eta_xml::ValidationResult>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     let pool = history::list_pool(conn)?;
     let mut results = Vec::new();
-    for inv_id in &invoice_ids {
-        let pool_inv = pool.iter().find(|p| &p.invoice_id == inv_id)
-            .ok_or_else(|| format!("Invoice {} not found in pool", inv_id))?;
+    for pool_id in &ids {
+        let pool_inv = pool.iter().find(|p| p.id == *pool_id)
+            .ok_or_else(|| format!("Pool row {} not found", pool_id))?;
 
         // Re-parse the original XML when available so results are always fresh,
         // regardless of when the invoice was imported.
@@ -310,7 +310,8 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, invoice_ids: Vec<String>
                 lines,
             }
         };
-        let result = eta_xml::validate_eta_against_form(&invoice, &form_json)?;
+        let mut result = eta_xml::validate_eta_against_form(&invoice, &form_json)?;
+        result.pool_id = Some(pool_inv.id);
         results.push(result);
     }
     Ok(results)
