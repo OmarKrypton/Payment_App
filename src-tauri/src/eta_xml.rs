@@ -52,6 +52,11 @@ pub struct ValidationResult {
     pub is_valid: bool,
     #[serde(default)]
     pub matched_entry_indices: Vec<usize>,
+    /// The pool row id (autoincrement PK) so the frontend can reference the
+    /// exact row even when two invoices share the same invoice_id under
+    /// different sellers.
+    #[serde(default)]
+    pub pool_id: Option<i64>,
 }
 
 fn parse_f64(s: &str) -> f64 {
@@ -768,6 +773,7 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         issues,
         is_valid,
         matched_entry_indices,
+        pool_id: None,
     })
 }
 

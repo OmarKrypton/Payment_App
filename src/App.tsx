@@ -322,7 +322,7 @@ function App() {
   const [poolSearch, setPoolSearch] = useState("");
   const [poolTab, setPoolTab] = useState<"unclaimed" | "claimed">("unclaimed");
   const [poolMode, setPoolMode] = useState<"validate" | "select">("validate");
-  const [poolSelected, setPoolSelected] = useState<Set<string>>(new Set());
+  const [poolSelected, setPoolSelected] = useState<Set<number>>(new Set());
   const [poolDateFrom, setPoolDateFrom] = useState("");
   const [poolDateTo, setPoolDateTo] = useState("");
   const [poolSeller, setPoolSeller] = useState("all");
@@ -820,9 +820,12 @@ function App() {
   const delInv = (i: number) => {
     const inv = (formRef.current.invoices ?? [])[i];
     delRow("invoices", i);
-    if (inv && inv.invoice_no && poolList.some((x: any) => x.invoice_id === inv.invoice_no && x.status === 'used')) {
-      invoke("mark_pool_invoice_available", { invoiceId: inv.invoice_no }).catch(() => {});
-      try { if (authUser) markPoolAvailableRemote(inv.invoice_no); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
+    if (inv && inv.invoice_no) {
+      const p = poolList.find((x: any) => x.invoice_id === inv.invoice_no && x.status === 'used');
+      if (p) {
+        invoke("mark_pool_invoice_available", { id: p.id }).catch(() => {});
+        try { if (authUser) markPoolAvailableRemote(inv.invoice_no, p.seller_tax_id || ""); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
+      }
     }
   };
 
@@ -867,9 +870,12 @@ function App() {
     const inv = (formRef.current.import_entries ?? [])[i];
     const attached = inv?.attached_invoice;
     delRow("import_entries", i);
-    if (attached && poolList.some((x: any) => x.invoice_id === attached && x.status === 'used')) {
-      invoke("mark_pool_invoice_available", { invoiceId: attached }).catch(() => {});
-      try { if (authUser) markPoolAvailableRemote(attached); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
+    if (attached) {
+      const p = poolList.find((x: any) => x.invoice_id === attached && x.status === 'used');
+      if (p) {
+        invoke("mark_pool_invoice_available", { id: p.id }).catch(() => {});
+        try { if (authUser) markPoolAvailableRemote(attached, p.seller_tax_id || ""); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
+      }
     }
   };
   const addCostRow = () => {
@@ -1624,8 +1630,8 @@ function App() {
             updated[idx] = { ...updated[idx], attached_invoice: r.invoice.invoice_id, seller_tax_id: r.invoice.seller_tax_id || updated[idx].seller_tax_id || "" };
           }
         }
-        try { await invoke("mark_pool_invoice_used", { invoiceId: r.invoice.invoice_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
-        try { if (authUser) await markPoolUsedRemote(r.invoice.invoice_id, serial); } catch (e) { console.error("markPoolUsedRemote failed", e); }
+        try { if (r.pool_id) await invoke("mark_pool_invoice_used", { id: r.pool_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
+        try { if (authUser) await markPoolUsedRemote(r.invoice.invoice_id, r.invoice.seller_tax_id || "", serial); } catch (e) { console.error("markPoolUsedRemote failed", e); }
       }
     }
     if (updated.some((e, i) => e && e.attached_invoice !== (formRef.current.import_entries ?? [])[i]?.attached_invoice)) {
@@ -1669,19 +1675,19 @@ function App() {
     const form = formRef.current;
     const serial = ((form.doc_serial) || "draft").trim();
     const ids = new Set<string>();
-    (form.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
-    (form.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
+    (form.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(`${inv.invoice_no}||${inv.seller_tax_id || ""}`); });
+    (form.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(`${e.attached_invoice}||${e.seller_tax_id || ""}`); });
     if (ids.size === 0) return 0;
     let list: any[] = [];
     try { list = await invoke<any[]>("list_invoice_pool"); } catch { return 0; }
-    const poolIds = new Set(list.map(p => p.invoice_id));
-    const toClaim = [...ids].filter(id => poolIds.has(id));
+    const poolByInvId = new Map(list.map((p: any) => [`${p.invoice_id}||${p.seller_tax_id}`, p]));
+    const toClaim = [...ids].map(k => poolByInvId.get(k)).filter(Boolean);
     if (toClaim.length === 0) return 0;
     try {
-      await invoke("mark_pool_invoices_used", { invoiceIds: toClaim, snapshotId: 0, snapshotLabel: serial });
+      await invoke("mark_pool_invoices_used", { ids: toClaim.map((p: any) => p.id), snapshotId: 0, snapshotLabel: serial });
     } catch {}
     try {
-      if (authUser) await markPoolsUsedRemote(toClaim, serial);
+      if (authUser) await markPoolsUsedRemote(toClaim.map((p: any) => ({ invoice_id: p.invoice_id, seller_tax_id: p.seller_tax_id || "" })), serial);
     } catch (e) { console.error("restore claims remote failed", e); }
     try { await loadPool(); } catch {}
     return toClaim.length;
@@ -1704,8 +1710,8 @@ function App() {
           const parsed = JSON.parse(json);
           const serial = ((parsed.doc_serial) || h.label || "draft").trim();
           const ids = new Set<string>();
-          (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
-          (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
+          (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(`${inv.invoice_no}||${inv.seller_tax_id || ""}`); });
+          (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(`${e.attached_invoice}||${e.seller_tax_id || ""}`); });
           if (ids.size > 0) docs.push({ serial, ids });
         } catch (e) { console.error("parse local snapshot failed", h.id, e); }
       }
@@ -1719,8 +1725,8 @@ function App() {
             const parsed = JSON.parse(r.data_json);
             const serial = ((parsed.doc_serial) || r.label || "draft").trim();
             const ids = new Set<string>();
-            (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(inv.invoice_no); });
-            (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(e.attached_invoice); });
+            (parsed.invoices || []).forEach((inv: any) => { if (inv?.invoice_no) ids.add(`${inv.invoice_no}||${inv.seller_tax_id || ""}`); });
+            (parsed.import_entries || []).forEach((e: any) => { if (e?.attached_invoice) ids.add(`${e.attached_invoice}||${e.seller_tax_id || ""}`); });
             if (ids.size > 0) docs.push({ serial, ids });
           } catch (e) { console.error("parse remote snapshot failed", r.id, e); }
         }
@@ -1732,16 +1738,16 @@ function App() {
     try { await syncPoolRemote(); } catch {}
     let list: any[] = [];
     try { list = await invoke<any[]>("list_invoice_pool"); } catch { return 0; }
-    const poolIds = new Set(list.map(p => p.invoice_id));
+    const poolByComposite = new Map(list.map((p: any) => [`${p.invoice_id}||${p.seller_tax_id || ""}`, p]));
     for (const doc of docs) {
-      const toClaim = [...doc.ids].filter(id => poolIds.has(id));
+      const toClaim = [...doc.ids].map(k => poolByComposite.get(k)).filter(Boolean) as any[];
       if (toClaim.length === 0) continue;
       scanned += toClaim.length;
       try {
-        await invoke("mark_pool_invoices_used", { invoiceIds: toClaim, snapshotId: 0, snapshotLabel: doc.serial });
+        await invoke("mark_pool_invoices_used", { ids: toClaim.map((p: any) => p.id), snapshotId: 0, snapshotLabel: doc.serial });
       } catch {}
       try {
-        if (authUser) await markPoolsUsedRemote(toClaim, doc.serial);
+        if (authUser) await markPoolsUsedRemote(toClaim.map((p: any) => ({ invoice_id: p.invoice_id, seller_tax_id: p.seller_tax_id || "" })), doc.serial);
       } catch (e) { console.error("restoreAllClaims remote failed", e); }
       claimed += toClaim.length;
     }
@@ -1779,9 +1785,9 @@ function App() {
       info.local = localAll.length;
       const remoteMeta = await listPoolRemoteMeta();
       info.cloud = remoteMeta.length;
-      const remoteById = new Map(remoteMeta.map((r) => [r.invoice_id, r]));
+      const remoteByComposite = new Map(remoteMeta.map((r) => [`${r.invoice_id}||${r.seller_tax_id || ""}`, r]));
       const toPush = localAll.filter((l) => {
-        const r = remoteById.get(l.invoice_id);
+        const r = remoteByComposite.get(`${l.invoice_id}||${l.seller_tax_id || ""}`);
         if (!r) return true;
         if (l.status === "used") {
           return r.status !== "used" || (r.used_by_label || "") !== (l.used_by_label || "");
@@ -1798,9 +1804,9 @@ function App() {
       //    locally, or claim state changed). This avoids re-downloading the
       //    entire pool (with full raw_xml) on every sync, which was slowing
       //    the app down as the pool grew.
-      const localById = new Map(localAll.map((l) => [l.invoice_id, l]));
+      const localByComposite = new Map(localAll.map((l) => [`${l.invoice_id}||${l.seller_tax_id || ""}`, l]));
       const changedRemote = remoteMeta.filter((r) => {
-        const l = localById.get(r.invoice_id);
+        const l = localByComposite.get(`${r.invoice_id}||${r.seller_tax_id || ""}`);
         if (!l) return true;
         return (l.status || "available") !== (r.status || "available") ||
                (l.used_by_label || "") !== (r.used_by_label || "") ||
@@ -1852,7 +1858,7 @@ function App() {
       if (cleaned > 0) console.log(`downgraded ${cleaned} unlabelled claims to available`);
       const unlabelledRemote = remoteMeta.filter((r) => r.status === "used" && !(r.used_by_label || ""));
       if (unlabelledRemote.length > 0) {
-        try { await markPoolsAvailableRemote(unlabelledRemote.map((u) => u.invoice_id)); } catch (e) { console.error("clean remote claims failed", e); }
+        try { await markPoolsAvailableRemote(unlabelledRemote.map((u) => ({ invoice_id: u.invoice_id, seller_tax_id: u.seller_tax_id || "" }))); } catch (e) { console.error("clean remote claims failed", e); }
       }
     } catch (e) {
       console.error("sync remote pool failed", e);
@@ -1936,31 +1942,31 @@ function App() {
     };
   };
 
-  const attachImportEntryFromPool = async (invoiceId: string) => {
-    const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+  const attachImportEntryFromPool = async (id: number) => {
+    const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
     if (p.doc_status && p.doc_status !== "Valid") {
-      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${invoiceId}`);
+      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${p.invoice_id}`);
       return;
     }
     const current = [...(formRef.current.import_entries ?? [])];
-    if (current.some((e: any) => e.attached_invoice === invoiceId)) {
+    if (current.some((e: any) => e.attached_invoice === p.invoice_id)) {
       showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
       return;
     }
     const arr = [...current, poolToImportEntry(p)];
     formRef.current = { ...formRef.current, import_entries: arr };
     await recalc(formRef.current);
-    await markPoolClaimed(invoiceId);
+    await markPoolClaimed(id);
   };
 
-  const attachBatchImportEntriesFromPool = async (invoiceIds: string[]) => {
-    const ids = Array.from(new Set(invoiceIds));
-    if (ids.length === 0) return;
+  const attachBatchImportEntriesFromPool = async (rowIds: number[]) => {
+    if (rowIds.length === 0) return;
     const current = [...(formRef.current.import_entries ?? [])];
-    const already = ids.filter(id => current.some((e: any) => e.attached_invoice === id));
-    const fresh = ids.filter(id => !already.includes(id) && isInvoiceUsable(id));
-    const blockedCount = ids.length - already.length - fresh.length;
+    const items = rowIds.map(id => poolList.find((x: any) => x.id === id)).filter(Boolean) as any[];
+    const already = items.filter(p => current.some((e: any) => e.attached_invoice === p.invoice_id));
+    const fresh = items.filter(p => !already.some((a: any) => a.invoice_id === p.invoice_id) && isInvoiceUsable(p.id));
+    const blockedCount = items.length - already.length - fresh.length;
     if (blockedCount > 0) {
       showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
     }
@@ -1970,29 +1976,33 @@ function App() {
       }
       return;
     }
-    const freshEntries = fresh.map((invoiceId) => {
-      const p = poolList.find((x: any) => x.invoice_id === invoiceId);
-      return p ? poolToImportEntry(p) : null;
-    }).filter((e: any) => e !== null) as any[];
+    const freshEntries = fresh.map((p: any) => poolToImportEntry(p));
     const arr = [...current, ...freshEntries];
     formRef.current = { ...formRef.current, import_entries: arr };
     await recalc(formRef.current);
     const serial = ((formRef.current.doc_serial) || "draft").trim();
+    const freshIds = fresh.map((p: any) => p.id);
     try {
-      await invoke("mark_pool_invoices_used", { invoiceIds: fresh, snapshotId: 0, snapshotLabel: serial });
+      await invoke("mark_pool_invoices_used", { ids: freshIds, snapshotId: 0, snapshotLabel: serial });
     } catch {}
     try {
-      if (authUser) await markPoolsUsedRemote(fresh, serial);
+      if (authUser) await markPoolsUsedRemote(fresh.map((p: any) => ({ invoice_id: p.invoice_id, seller_tax_id: p.seller_tax_id || "" })), serial);
     } catch (e) { console.error("markPoolsUsedRemote failed", e); }
     await loadPool();
     if (fresh.length > 0) {
       try {
         const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
-        const attached = arr.filter((e: any) => poolIds.has(e.attached_invoice)).map((e: any) => e.attached_invoice);
+        const attached = arr.filter((e: any) => poolIds.has(e.attached_invoice));
         if (attached.length > 0) {
-          const formJson = JSON.stringify(formRef.current);
-          const results = await invoke<any[]>("validate_from_pool", { invoiceIds: attached, formJson });
-          setEtaResult(results);
+          const poolRowIds = attached.map((e: any) => {
+            const pi = poolList.find((x: any) => x.invoice_id === e.attached_invoice);
+            return pi?.id;
+          }).filter((x): x is number => x != null);
+          if (poolRowIds.length > 0) {
+            const formJson = JSON.stringify(formRef.current);
+            const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
+            setEtaResult(results);
+          }
         }
       } catch (e: any) {
         showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
@@ -2000,21 +2010,24 @@ function App() {
     }
   };
 
-  const markPoolClaimed = async (invoiceId: string) => {
+  const markPoolClaimed = async (id: number) => {
+    const p = poolList.find((x: any) => x.id === id);
+    if (!p) return;
     const serial = ((formRef.current.doc_serial) || "draft").trim();
     try {
-      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: serial });
+      await invoke("mark_pool_invoice_used", { id, snapshotId: 0, snapshotLabel: serial });
     } catch {}
     try {
-      if (authUser) await markPoolUsedRemote(invoiceId, serial);
+      if (authUser) await markPoolUsedRemote(p.invoice_id, p.seller_tax_id || "", serial);
     } catch (e) { console.error("markPoolUsedRemote failed", e); }
     await loadPool();
   };
 
-  const attachFromPool = async (invoiceId: string) => {
-    if (data.doc_type === "import") return attachImportEntryFromPool(invoiceId);
-    const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+  const attachFromPool = async (id: number) => {
+    if (data.doc_type === "import") return attachImportEntryFromPool(id);
+    const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
+    const invoiceId = p.invoice_id;
     if (p.doc_status && p.doc_status !== "Valid") {
       showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${invoiceId}`);
       return;
@@ -2035,38 +2048,37 @@ function App() {
     }];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
-    const serial = ((formRef.current.doc_serial) || "draft").trim();
-    try {
-      await invoke("mark_pool_invoice_used", { invoiceId, snapshotId: 0, snapshotLabel: serial });
-    } catch {}
-    try {
-      if (authUser) await markPoolUsedRemote(invoiceId, serial);
-    } catch (e) { console.error("markPoolUsedRemote failed", e); }
-    await loadPool();
+    await markPoolClaimed(id);
     // Compare every pool-attached invoice still in this document against the
     // bank document fields, so adding multiple invoices one-by-one always shows
     // the full set of comparisons together.
     try {
       const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
-      const attached = arr.filter(inv => poolIds.has(inv.invoice_no)).map(inv => inv.invoice_no);
+      const attached = arr.filter(inv => poolIds.has(inv.invoice_no));
       if (attached.length > 0) {
-        const formJson = JSON.stringify(formRef.current);
-        const results = await invoke<any[]>("validate_from_pool", { invoiceIds: attached, formJson });
-        setEtaResult(results);
+        const poolRowIds = attached.map(inv => {
+          const pi = poolList.find((x: any) => x.invoice_id === inv.invoice_no && x.seller_tax_id === (inv.seller_tax_id || ""));
+          return pi?.id;
+        }).filter((x): x is number => x != null);
+        if (poolRowIds.length > 0) {
+          const formJson = JSON.stringify(formRef.current);
+          const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
+          setEtaResult(results);
+        }
       }
     } catch (e: any) {
       showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
     }
   };
 
-  const attachBatchFromPool = async (invoiceIds: string[]) => {
-    if (data.doc_type === "import") return attachBatchImportEntriesFromPool(invoiceIds);
-    const ids = Array.from(new Set(invoiceIds));
-    if (ids.length === 0) return;
+  const attachBatchFromPool = async (rowIds: number[]) => {
+    if (data.doc_type === "import") return attachBatchImportEntriesFromPool(rowIds);
+    if (rowIds.length === 0) return;
     const currentInvoices = [...(formRef.current.invoices ?? [])];
-    const already = ids.filter(id => currentInvoices.some(inv => inv.invoice_no === id));
-    const fresh = ids.filter(id => !already.includes(id) && isInvoiceUsable(id));
-    const blockedCount = ids.length - already.length - fresh.length;
+    const items = rowIds.map(id => poolList.find((x: any) => x.id === id)).filter(Boolean);
+    const already = items.filter(p => currentInvoices.some(inv => inv.invoice_no === p!.invoice_id));
+    const fresh = items.filter(p => !already.some(a => a!.invoice_id === p!.invoice_id) && isInvoiceUsable(p!.id));
+    const blockedCount = items.length - already.length - fresh.length;
     if (blockedCount > 0) {
       showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
     }
@@ -2078,37 +2090,41 @@ function App() {
     }
     const arr = [
       ...currentInvoices,
-      ...fresh.map((invoiceId) => {
-        const p = poolList.find((x: any) => x.invoice_id === invoiceId);
-        return {
-          invoice_no: invoiceId,
-          seller_tax_id: p?.seller_tax_id || "",
-          amount: (p?.net_amount ?? 0).toFixed(2),
-          vat: (p?.total_vat ?? 0).toFixed(2),
-          wht: (p?.total_wht ?? 0).toFixed(2),
-          company_name: p?.seller_name || "",
-          attached_invoice: invoiceId,
-        };
-      }),
+      ...fresh.map((p) => ({
+        invoice_no: p!.invoice_id,
+        seller_tax_id: p!.seller_tax_id || "",
+        amount: (p!.net_amount ?? 0).toFixed(2),
+        vat: (p!.total_vat ?? 0).toFixed(2),
+        wht: (p!.total_wht ?? 0).toFixed(2),
+        company_name: p!.seller_name || "",
+        attached_invoice: p!.invoice_id,
+      })),
     ];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
     const serial = ((formRef.current.doc_serial) || "draft").trim();
+    const freshIds = fresh.map(p => p!.id);
     try {
-      await invoke("mark_pool_invoices_used", { invoiceIds: fresh, snapshotId: 0, snapshotLabel: serial });
+      await invoke("mark_pool_invoices_used", { ids: freshIds, snapshotId: 0, snapshotLabel: serial });
     } catch {}
     try {
-      if (authUser) await markPoolsUsedRemote(fresh, serial);
+      if (authUser) await markPoolsUsedRemote(fresh.map(p => ({ invoice_id: p!.invoice_id, seller_tax_id: p!.seller_tax_id || "" })), serial);
     } catch (e) { console.error("markPoolsUsedRemote failed", e); }
     await loadPool();
     if (fresh.length > 0) {
       try {
         const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
-        const attached = arr.filter(inv => poolIds.has(inv.invoice_no)).map(inv => inv.invoice_no);
+        const attached = arr.filter(inv => poolIds.has(inv.invoice_no));
         if (attached.length > 0) {
-          const formJson = JSON.stringify(formRef.current);
-          const results = await invoke<any[]>("validate_from_pool", { invoiceIds: attached, formJson });
-          setEtaResult(results);
+          const poolRowIds = attached.map(inv => {
+            const pi = poolList.find((x: any) => x.invoice_id === inv.invoice_no && x.seller_tax_id === (inv.seller_tax_id || ""));
+            return pi?.id;
+          }).filter((x): x is number => x != null);
+          if (poolRowIds.length > 0) {
+            const formJson = JSON.stringify(formRef.current);
+            const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
+            setEtaResult(results);
+          }
         }
       } catch (e: any) {
         showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
@@ -2116,11 +2132,12 @@ function App() {
     }
   };
 
-  const unclaimPoolInvoice = async (invoiceId: string) => {
+  const unclaimPoolInvoice = async (id: number) => {
+    const p = poolList.find((x: any) => x.id === id);
     try {
-      await invoke("mark_pool_invoice_available", { invoiceId });
+      await invoke("mark_pool_invoice_available", { id });
       try {
-        if (authUser) await markPoolAvailableRemote(invoiceId);
+        if (authUser && p) await markPoolAvailableRemote(p.invoice_id, p.seller_tax_id || "");
       } catch (e) { console.error("markPoolAvailableRemote failed", e); }
       loadPool();
     } catch (e: any) {
@@ -2151,7 +2168,7 @@ function App() {
       if (authUser && imported.length > 0) {
         try {
           const local = await invoke<any[]>("list_invoice_pool");
-          const rows = local.filter((l: any) => imported.some((i: any) => i.invoice_id === l.invoice_id));
+          const rows = local.filter((l: any) => imported.some((i: any) => i.invoice_id === l.invoice_id && i.seller_tax_id === l.seller_tax_id));
           await upsertPoolInvoicesRemote(rows);
         } catch (e) { console.error("upsert pool remote failed", e); }
       }
@@ -2162,24 +2179,25 @@ function App() {
     setPoolImportProgress(null);
   };
 
-  const isInvoiceUsable = (invoiceId: string) => {
-    const p = poolList.find((x: any) => x.invoice_id === invoiceId);
+  const isInvoiceUsable = (id: number) => {
+    const p = poolList.find((x: any) => x.id === id);
     return !p || !p.doc_status || p.doc_status === "Valid";
   };
 
-  const validateFromPool = async (invoiceIds: string[]) => {
+  const validateFromPool = async (ids: number[]) => {
     if (!(data.doc_serial || "").trim()) {
       showAlert(t("请先输入本文档的文档编号（序列号）", "Please enter a serial number for this document first"));
       return;
     }
-    const unusable = invoiceIds.filter(id => !isInvoiceUsable(id));
+    const unusable = ids.filter(id => !isInvoiceUsable(id));
     if (unusable.length > 0) {
-      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${unusable.join(", ")}`);
+      const labels = unusable.map(id => { const p = poolList.find((x: any) => x.id === id); return p?.invoice_id || id; });
+      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${labels.join(", ")}`);
       return;
     }
     try {
       const formJson = JSON.stringify(formRef.current);
-      const result = await invoke<any[]>("validate_from_pool", { invoiceIds, formJson });
+      const result = await invoke<any[]>("validate_from_pool", { ids, formJson });
       await attachValidatedInvoices(result);
       setEtaResult(result);
       setShowPool(false);
@@ -2204,14 +2222,15 @@ function App() {
     try {
       const p = poolList.find((x: any) => x.id === id);
       const invId = p?.invoice_id;
+      const sid = p?.seller_tax_id || "";
       if (authUser) {
         if (isAdminUser) {
           await invoke("delete_pool_invoice", { id });
-          try { if (invId) await deletePoolInvoiceRemote(invId); } catch (e) { console.error("deletePoolInvoiceRemote failed", e); }
+          try { if (invId) await deletePoolInvoiceRemote(invId, sid); } catch (e) { console.error("deletePoolInvoiceRemote failed", e); }
           showAlert(t("发票已删除", "Invoice deleted"));
         } else {
           await invoke("request_pool_delete", { id, requestedBy: authUserId || authUser });
-          try { if (invId) await requestPoolDeleteRemote(invId); } catch (e) { console.error("requestPoolDeleteRemote failed", e); }
+          try { if (invId) await requestPoolDeleteRemote(invId, sid); } catch (e) { console.error("requestPoolDeleteRemote failed", e); }
           showAlert(t("删除请求已提交，等待管理员确认", "Delete request submitted, awaiting admin approval"));
         }
       } else {
@@ -2227,8 +2246,9 @@ function App() {
     try {
       const p = poolList.find((x: any) => x.id === id);
       const invId = p?.invoice_id;
+      const sid = p?.seller_tax_id || "";
       await invoke("delete_pool_invoice", { id });
-      try { if (invId) await deletePoolInvoiceRemote(invId); } catch (e) { console.error("deletePoolInvoiceRemote failed", e); }
+      try { if (invId) await deletePoolInvoiceRemote(invId, sid); } catch (e) { console.error("deletePoolInvoiceRemote failed", e); }
       showAlert(t("发票已删除", "Invoice deleted"));
       loadPool();
     } catch (e: any) {
@@ -2240,8 +2260,9 @@ function App() {
     try {
       const p = poolList.find((x: any) => x.id === id);
       const invId = p?.invoice_id;
+      const sid = p?.seller_tax_id || "";
       await invoke("reject_pool_delete", { id });
-      try { if (invId) await rejectPoolDeleteRemote(invId); } catch (e) { console.error("rejectPoolDeleteRemote failed", e); }
+      try { if (invId) await rejectPoolDeleteRemote(invId, sid); } catch (e) { console.error("rejectPoolDeleteRemote failed", e); }
       showAlert(t("删除请求已拒绝", "Delete request rejected"));
       loadPool();
     } catch (e: any) {
@@ -2827,7 +2848,7 @@ function App() {
               const unclaimed = filtered.filter((p: any) => p.status === 'available');
               const claimed = filtered.filter((p: any) => p.status === 'used');
               const shown = searching ? filtered : (poolTab === 'unclaimed' ? unclaimed : claimed);
-              const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.invoice_id)).map((p: any) => p.invoice_id);
+              const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.id)).map((p: any) => p.id);
               return (
                 <>
                   <div className="pool-seg" style={{marginBottom:10}}>
@@ -2908,11 +2929,11 @@ function App() {
                           <input
                             type="checkbox"
                             style={{margin:2,flexShrink:0,cursor:'pointer',width:14,height:14}}
-                            checked={poolSelected.has(p.invoice_id)}
+                            checked={poolSelected.has(p.id)}
                             onChange={() => {
                               const next = new Set(poolSelected);
-                              if (next.has(p.invoice_id)) next.delete(p.invoice_id);
-                              else next.add(p.invoice_id);
+                              if (next.has(p.id)) next.delete(p.id);
+                              else next.add(p.id);
                               setPoolSelected(next);
                             }}
                           />
@@ -2968,17 +2989,17 @@ function App() {
                         </div>
                         <div className="history-actions">
                           {poolMode === 'select' && p.status === 'available' && !unusable && (
-                            <button className="btn-load" onClick={() => attachFromPool(p.invoice_id)}>
+                            <button className="btn-load" onClick={() => attachFromPool(p.id)}>
                               {t("添加", "Add")}
                             </button>
                           )}
                           {poolMode === 'validate' && p.status === 'available' && !unusable && (
-                            <button className="btn-load" onClick={() => validateFromPool([p.invoice_id])}>
+                            <button className="btn-load" onClick={() => validateFromPool([p.id])}>
                               {t("验证", "Validate")}
                             </button>
                           )}
                           {poolMode !== 'select' && p.status === 'used' && !pendingDelete && (
-                            <button className="btn-load" onClick={() => unclaimPoolInvoice(p.invoice_id)}>
+                            <button className="btn-load" onClick={() => unclaimPoolInvoice(p.id)}>
                               {t("解除认领", "Unclaim")}
                             </button>
                           )}
