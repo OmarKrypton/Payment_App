@@ -8,6 +8,13 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    init_schema(&conn)?;
+    Ok(conn)
+}
+
+/// Create/upgrade the schema on an open connection (also used by tests with
+/// in-memory databases).
+pub fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +88,7 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN doc_status TEXT DEFAULT 'Valid'", [])
             .map_err(|e| e.to_string())?;
     }
-    Ok(conn)
+    Ok(())
 }
 
 pub fn save_snapshot(conn: &Connection, label: &str, notes: &str, data_json: &str) -> Result<i64, String> {
@@ -224,38 +231,67 @@ where
     let opt: Option<String> = serde::Deserialize::deserialize(d)?;
     Ok(opt.unwrap_or_default())
 }
-pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<i64, String> {
+/// Outcome of adding an invoice to the pool.
+pub enum PoolAddOutcome {
+    /// New row inserted; payload is the rowid.
+    Inserted(i64),
+    /// Existing row refreshed (same invoice, newer data or genuine status change).
+    Updated(i64),
+    /// A different submission of the same internalID was skipped because a
+    /// Valid version is already stored and the incoming one is Rejected/Cancelled.
+    /// Suppliers resubmit corrected invoices under the same internalID; the
+    /// rejected attempt must never mask the accepted one.
+    Superseded,
+}
+
+pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<PoolAddOutcome, String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let lines_json = serde_json::to_string(&invoice.lines).unwrap_or_else(|_| "[]".to_string());
+    let incoming_status = if invoice.doc_status.is_empty() { "Valid".to_string() } else { invoice.doc_status.clone() };
+
+    // Duplicate internalID handling: ETA allows resubmissions under the same
+    // internalID (each with its own UUID). Decide whether this submission may
+    // replace what is stored:
+    //   - same UUID            -> genuine refresh (e.g. accepted then cancelled later)
+    //   - invalid -> valid     -> upgrade to the accepted version
+    //   - valid -> invalid     -> skip (separate rejected attempt)
+    //   - same class           -> refresh with the newest data
+    if let Ok((existing_uuid, existing_status)) = conn.query_row(
+        "SELECT uuid, doc_status FROM eta_invoices WHERE invoice_id = ?1",
+        params![invoice.invoice_id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    ) {
+        let existing_bad = existing_status != "Valid";
+        let incoming_bad = incoming_status != "Valid";
+        if existing_uuid != invoice.uuid && !existing_bad && incoming_bad {
+            return Ok(PoolAddOutcome::Superseded);
+        }
+        conn.execute(
+            "UPDATE eta_invoices SET uuid=?2, seller_tax_id=?3, seller_name=?4, buyer_tax_id=?5, buyer_name=?6,
+             issue_date=?7, currency=?8, net_amount=?9, total_vat=?10, total_wht=?11, grand_total=?12,
+             lines_json=?13, raw_xml=?14, file_name=?15, doc_status=?16 WHERE invoice_id=?1",
+            params![
+                invoice.invoice_id, invoice.uuid, invoice.seller_tax_id, invoice.seller_name,
+                invoice.buyer_tax_id, invoice.buyer_name, invoice.issue_date, invoice.currency,
+                invoice.net_amount, invoice.total_vat, invoice.total_wht, invoice.grand_total,
+                lines_json, raw_xml, file_name, incoming_status
+            ],
+        ).map_err(|e| e.to_string())?;
+        let id: i64 = conn.query_row("SELECT id FROM eta_invoices WHERE invoice_id = ?1", params![invoice.invoice_id], |r| r.get(0)).map_err(|e| e.to_string())?;
+        return Ok(PoolAddOutcome::Updated(id));
+    }
+
     conn.execute(
         "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'available', ?17)
-         ON CONFLICT(invoice_id) DO UPDATE SET
-            uuid = excluded.uuid,
-            seller_tax_id = excluded.seller_tax_id,
-            seller_name = excluded.seller_name,
-            buyer_tax_id = excluded.buyer_tax_id,
-            buyer_name = excluded.buyer_name,
-            issue_date = excluded.issue_date,
-            currency = excluded.currency,
-            net_amount = excluded.net_amount,
-            total_vat = excluded.total_vat,
-            total_wht = excluded.total_wht,
-            grand_total = excluded.grand_total,
-            lines_json = excluded.lines_json,
-            raw_xml = excluded.raw_xml,
-            file_name = excluded.file_name,
-            doc_status = excluded.doc_status",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'available', ?17)",
         params![
             invoice.invoice_id, invoice.uuid, invoice.seller_tax_id, invoice.seller_name,
             invoice.buyer_tax_id, invoice.buyer_name, invoice.issue_date, invoice.currency,
             invoice.net_amount, invoice.total_vat, invoice.total_wht, invoice.grand_total,
-            lines_json, raw_xml, file_name,
-            if invoice.doc_status.is_empty() { "Valid".to_string() } else { invoice.doc_status.clone() },
-            now
+            lines_json, raw_xml, file_name, incoming_status, now
         ],
     ).map_err(|e| e.to_string())?;
-    Ok(conn.last_insert_rowid())
+    Ok(PoolAddOutcome::Inserted(conn.last_insert_rowid()))
 }
 
 pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
@@ -398,4 +434,68 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod pool_supersede_tests {
+    use super::*;
+    use crate::eta_xml::EtaInvoice;
+
+    fn sample(id: &str, uuid: &str, doc_status: &str) -> EtaInvoice {
+        EtaInvoice {
+            invoice_id: id.into(),
+            uuid: uuid.into(),
+            issue_date: "2026-08-01T00:00:00Z".into(),
+            invoice_type_code: "I".into(),
+            seller_tax_id: "100000000".into(),
+            seller_name: "Test Seller".into(),
+            buyer_tax_id: "200000000".into(),
+            buyer_name: "Test Buyer".into(),
+            currency: "EGP".into(),
+            net_amount: 100.0,
+            total_vat: 14.0,
+            total_wht: 0.0,
+            grand_total: 114.0,
+            lines: vec![],
+            doc_status: doc_status.into(),
+        }
+    }
+
+    fn row(conn: &Connection, id: &str) -> (String, String, String) {
+        conn.query_row(
+            "SELECT uuid, doc_status, status FROM eta_invoices WHERE invoice_id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap()
+    }
+
+    #[test]
+    fn duplicate_internalid_resolution_rules() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // 1. Valid version first
+        let o = add_to_pool(&conn, &sample("X", "UUID-A", "Valid"), "<x/>", "a.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Inserted(_)));
+
+        // 2. Different submission (other UUID), Rejected -> must NOT mask the valid one
+        let o = add_to_pool(&conn, &sample("X", "UUID-B", "Rejected"), "<x/>", "b.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Superseded));
+        assert_eq!(row(&conn, "X"), ("UUID-A".into(), "Valid".into(), "available".into()));
+
+        // 3. Same submission (same UUID) later becomes Rejected (genuine state change)
+        let o = add_to_pool(&conn, &sample("X", "UUID-A", "Rejected"), "<x/>", "a.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Updated(_)));
+        assert_eq!(row(&conn, "X").1, "Rejected");
+
+        // 4. Now a corrected resubmission (new UUID, Valid) upgrades the row
+        let o = add_to_pool(&conn, &sample("X", "UUID-C", "Valid"), "<x/>", "c.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Updated(_)));
+        assert_eq!(row(&conn, "X"), ("UUID-C".into(), "Valid".into(), "available".into()));
+
+        // 5. Claim survives an upgrade (status untouched by add_to_pool)
+        mark_invoice_used(&conn, "X", 1, "SER-1").unwrap();
+        add_to_pool(&conn, &sample("X", "UUID-D", "Rejected"), "<x/>", "d.xml").unwrap();
+        assert_eq!(row(&conn, "X"), ("UUID-C".into(), "Valid".into(), "used".into()));
+    }
 }
