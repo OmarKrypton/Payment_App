@@ -2800,12 +2800,12 @@ function App() {
               onChange={e => setPoolSearch(e.target.value)}
             />
             {(() => {
-              const q = poolSearch.trim().toLowerCase();
+              const q = poolSearch.trim().replace(/\s+/g, " ").toLowerCase();
               const sellers = Array.from(new Set(poolList.map((p: any) => p.seller_tax_id).filter(Boolean))) as string[];
               const currencies = Array.from(new Set(poolList.map((p: any) => p.currency || 'EGP').filter(Boolean))) as string[];
               const base = poolList.filter((p: any) => {
                 if (q) {
-                  const hay = [p.invoice_id, p.seller_tax_id, p.seller_name, p.file_name || "", p.used_by_label || ""].join(" ").toLowerCase();
+                  const hay = [p.invoice_id, p.seller_tax_id, p.seller_name, p.file_name || "", p.used_by_label || ""].join(" ").replace(/\s+/g, " ").toLowerCase();
                   if (!hay.includes(q)) return false;
                 }
                 if (poolSeller !== 'all' && (p.seller_tax_id || '') !== poolSeller) return false;
@@ -2819,10 +2819,14 @@ function App() {
                 const s = (p.doc_status || "Valid") as "Valid" | "Rejected" | "Cancelled";
                 if (s in statusCounts) statusCounts[s]++;
               }
-              const filtered = poolDocFilter === 'all' ? base : base.filter((p: any) => (p.doc_status || "Valid") === poolDocFilter);
+              // An explicit search spans every tab and status chip so a pasted
+              // invoice ID is always found; filters only apply while browsing.
+              const searching = q.length > 0;
+              const effDocFilter = searching ? "all" : poolDocFilter;
+              const filtered = effDocFilter === 'all' ? base : base.filter((p: any) => (p.doc_status || "Valid") === effDocFilter);
               const unclaimed = filtered.filter((p: any) => p.status === 'available');
               const claimed = filtered.filter((p: any) => p.status === 'used');
-              const shown = poolTab === 'unclaimed' ? unclaimed : claimed;
+              const shown = searching ? filtered : (poolTab === 'unclaimed' ? unclaimed : claimed);
               const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.invoice_id)).map((p: any) => p.invoice_id);
               return (
                 <>
@@ -2834,7 +2838,7 @@ function App() {
                       {t("已认领", "Claimed")} ({claimed.length})
                     </button>
                   </div>
-                  <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+                  <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap', opacity: searching ? 0.45 : 1, pointerEvents: searching ? 'none' : 'auto', transition:'opacity .15s'}}>
                     {([
                       ["all", t("全部", "All"), base.length, "#3b82f6"],
                       ["Valid", t("有效", "Valid"), statusCounts.Valid, "var(--green)"],
@@ -2849,6 +2853,11 @@ function App() {
                       </button>
                     ))}
                   </div>
+                  {searching && (
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:-6,marginBottom:10}}>
+                      {t("搜索覆盖所有状态和标签", "Search spans all statuses and tabs")}
+                    </div>
+                  )}
                   {selectedIds.length > 0 && (
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
                       {poolMode === 'validate' ? (

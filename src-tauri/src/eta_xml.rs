@@ -304,34 +304,44 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
             if invoice.net_amount == 0.0 {
                 invoice.net_amount = parsed.get("netAmount").and_then(|v| v.as_f64()).unwrap_or(0.0);
             }
-            // Identity fields may only exist in the embedded JSON
+            // Identity fields may only exist in the embedded JSON. Values are
+            // trimmed: ETA data often carries stray leading/trailing spaces or
+            // tabs inside JSON string values, which would otherwise create
+            // duplicate identities (' ADT-494' vs 'ADT-494').
             if invoice.invoice_id.is_empty() {
                 invoice.invoice_id = parsed.get("internalId").and_then(|v| v.as_str())
                     .or_else(|| parsed.get("internalID").and_then(|v| v.as_str()))
-                    .unwrap_or("").to_string();
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
             }
             if invoice.uuid.is_empty() {
-                invoice.uuid = parsed.get("uuid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                invoice.uuid = parsed.get("uuid").and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
             }
             if invoice.seller_tax_id.is_empty() {
                 invoice.seller_tax_id = parsed.get("issuerId").and_then(|v| v.as_str())
                     .or_else(|| parsed.pointer("/issuer/id").and_then(|v| v.as_str()))
-                    .unwrap_or("").to_string();
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
             }
             if invoice.seller_name.is_empty() {
                 invoice.seller_name = parsed.get("issuerName").and_then(|v| v.as_str())
                     .or_else(|| parsed.pointer("/issuer/name").and_then(|v| v.as_str()))
-                    .unwrap_or("").to_string();
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
             }
             if invoice.buyer_tax_id.is_empty() {
                 invoice.buyer_tax_id = parsed.get("receiverId").and_then(|v| v.as_str())
                     .or_else(|| parsed.pointer("/receiver/id").and_then(|v| v.as_str()))
-                    .unwrap_or("").to_string();
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
             }
             if invoice.buyer_name.is_empty() {
                 invoice.buyer_name = parsed.get("receiverName").and_then(|v| v.as_str())
                     .or_else(|| parsed.pointer("/receiver/name").and_then(|v| v.as_str()))
-                    .unwrap_or("").to_string();
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
             }
             if invoice.issue_date.is_empty() {
                 invoice.issue_date = parsed.get("dateTimeIssued").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -353,6 +363,10 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
             line.vat_amount = (line.vat_amount / exchange_rate * 100.0).round() / 100.0;
         }
     }
+
+    // Central identity normalization: never let stray whitespace into IDs.
+    invoice.invoice_id = invoice.invoice_id.trim().to_string();
+    invoice.uuid = invoice.uuid.trim().to_string();
 
     Ok(invoice)
 }
