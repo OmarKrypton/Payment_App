@@ -217,6 +217,13 @@ fn list_invoice_pool(state: tauri::State<'_, DbState>) -> Result<Vec<history::Po
 }
 
 #[tauri::command]
+fn list_invoice_pool_summary(state: tauri::State<'_, DbState>) -> Result<Vec<history::PoolInvoiceSummary>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::list_pool_summary(conn)
+}
+
+#[tauri::command]
 fn mark_pool_invoice_used(state: tauri::State<'_, DbState>, id: i64, snapshot_id: i64, snapshot_label: String) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -436,6 +443,7 @@ pub fn run() {
             validate_eta_xml,
             import_to_pool,
             list_invoice_pool,
+            list_invoice_pool_summary,
             mark_pool_invoice_used,
             mark_pool_invoices_used,
             mark_pool_invoice_available,

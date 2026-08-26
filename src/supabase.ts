@@ -224,7 +224,7 @@ export async function listPoolRemoteByIds(ids: string[]): Promise<PoolInvoiceRow
   if (ids.length === 0) return [];
   const PAGE = 50;
   const all: PoolInvoiceRow[] = [];
-  const COLS = "id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at";
+  const COLS = "id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at";
   for (let i = 0; i < ids.length; i += PAGE) {
     const chunk = ids.slice(i, i + PAGE);
     const run = (cols: string) =>

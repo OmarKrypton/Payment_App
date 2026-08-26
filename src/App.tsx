@@ -1874,10 +1874,10 @@ function App() {
     setPoolLoading(true);
     try {
       await syncPoolRemote();
-      const list = await invoke<any[]>("list_invoice_pool");
+      const list = await invoke<any[]>("list_invoice_pool_summary");
       setPoolList(list);
     } catch (e) {
-      console.error("list_invoice_pool failed", e);
+      console.error("list_invoice_pool_summary failed", e);
       setPoolList([]);
     }
     setPoolLoading(false);
@@ -2840,14 +2840,11 @@ function App() {
                 const s = (p.doc_status || "Valid") as "Valid" | "Rejected" | "Cancelled";
                 if (s in statusCounts) statusCounts[s]++;
               }
-              // An explicit search spans every tab and status chip so a pasted
-              // invoice ID is always found; filters only apply while browsing.
-              const searching = q.length > 0;
-              const effDocFilter = searching ? "all" : poolDocFilter;
+              const effDocFilter = poolDocFilter;
               const filtered = effDocFilter === 'all' ? base : base.filter((p: any) => (p.doc_status || "Valid") === effDocFilter);
               const unclaimed = filtered.filter((p: any) => p.status === 'available');
               const claimed = filtered.filter((p: any) => p.status === 'used');
-              const shown = searching ? filtered : (poolTab === 'unclaimed' ? unclaimed : claimed);
+              const shown = poolTab === 'unclaimed' ? unclaimed : claimed;
               const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.id)).map((p: any) => p.id);
               return (
                 <>
@@ -2859,7 +2856,7 @@ function App() {
                       {t("已认领", "Claimed")} ({claimed.length})
                     </button>
                   </div>
-                  <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap', opacity: searching ? 0.45 : 1, pointerEvents: searching ? 'none' : 'auto', transition:'opacity .15s'}}>
+                  <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
                     {([
                       ["all", t("全部", "All"), base.length, "#3b82f6"],
                       ["Valid", t("有效", "Valid"), statusCounts.Valid, "var(--green)"],
@@ -2874,11 +2871,6 @@ function App() {
                       </button>
                     ))}
                   </div>
-                  {searching && (
-                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:-6,marginBottom:10}}>
-                      {t("搜索覆盖所有状态和标签", "Search spans all statuses and tabs")}
-                    </div>
-                  )}
                   {selectedIds.length > 0 && (
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
                       {poolMode === 'validate' ? (
