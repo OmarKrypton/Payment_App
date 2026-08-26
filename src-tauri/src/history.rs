@@ -374,6 +374,72 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     Ok(result)
 }
 
+/// Lightweight pool row for the list UI — excludes raw_xml and lines_json
+/// which are large and not needed for display.
+#[derive(serde::Serialize)]
+pub struct PoolInvoiceSummary {
+    pub id: i64,
+    pub invoice_id: String,
+    pub uuid: String,
+    pub seller_tax_id: String,
+    pub seller_name: String,
+    pub buyer_tax_id: String,
+    pub buyer_name: String,
+    pub issue_date: String,
+    pub currency: String,
+    pub net_amount: f64,
+    pub total_vat: f64,
+    pub total_wht: f64,
+    pub grand_total: f64,
+    pub file_name: String,
+    pub doc_status: String,
+    pub status: String,
+    pub used_by_label: String,
+    pub delete_requested_at: Option<String>,
+    pub delete_requested_by: Option<String>,
+    pub created_at: String,
+}
+
+pub fn list_pool_summary(conn: &Connection) -> Result<Vec<PoolInvoiceSummary>, String> {
+    let mut result = Vec::new();
+    let mut stmt = conn
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices ORDER BY created_at DESC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(PoolInvoiceSummary {
+                id: row.get(0)?,
+                invoice_id: row.get(1)?,
+                uuid: row.get(2)?,
+                seller_tax_id: row.get(3)?,
+                seller_name: row.get(4)?,
+                buyer_tax_id: row.get(5)?,
+                buyer_name: row.get(6)?,
+                issue_date: row.get(7)?,
+                currency: row.get(8)?,
+                net_amount: row.get(9)?,
+                total_vat: row.get(10)?,
+                total_wht: row.get(11)?,
+                grand_total: row.get(12)?,
+                file_name: row.get(13)?,
+                doc_status: {
+                    let s: String = row.get(14)?;
+                    if s.is_empty() { "Valid".to_string() } else { s }
+                },
+                status: row.get(15)?,
+                used_by_label: row.get(16)?,
+                delete_requested_at: row.get(17)?,
+                delete_requested_by: row.get(18)?,
+                created_at: row.get(19)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
 pub fn mark_invoice_used(conn: &Connection, id: i64, snapshot_id: i64, snapshot_label: &str) -> Result<(), String> {
     conn.execute(
         "UPDATE eta_invoices SET status = 'used', used_by_snapshot_id = ?1, used_by_label = ?2 WHERE id = ?3",
@@ -453,7 +519,7 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
             total_wht = excluded.total_wht,
             grand_total = excluded.grand_total,
             lines_json = excluded.lines_json,
-            raw_xml = excluded.raw_xml,
+            raw_xml = CASE WHEN excluded.raw_xml = '' THEN eta_invoices.raw_xml ELSE excluded.raw_xml END,
             file_name = excluded.file_name,
             doc_status = CASE WHEN excluded.doc_status IS NULL OR excluded.doc_status = '' THEN eta_invoices.doc_status ELSE excluded.doc_status END,
             status = excluded.status,
