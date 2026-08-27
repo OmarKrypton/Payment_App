@@ -272,7 +272,7 @@ export async function listPoolRemoteMeta(): Promise<{ uuid: string; invoice_id: 
         }
         return data;
       });
-  return fetchAllPooled(build, 2000);
+  return fetchAllPooled(build, 500);
 }
 
 export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<void> {
