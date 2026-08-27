@@ -55,41 +55,29 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+    // Identity of a pool invoice is the ETA document UUID.  The same invoice can
+    // be resubmitted under different attempt UUIDs, so a rejected/cancelled
+    // attempt never masks, overwrites, or collides with a valid one.  Drop any
+    // legacy single-column or composite unique indexes and mirror that with a
+    // unique index on uuid (skipping empty uuids, which are just unmatched).
+    for idx in ["idx_eta_invoice_id", "idx_eta_invoice_seller"] {
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_index_list('eta_invoices') WHERE name = ?1",
+                params![idx],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+        if exists {
+            conn.execute(&format!("DROP INDEX {}", idx), [])
+                .map_err(|e| e.to_string())?;
+        }
+    }
     conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_eta_invoice_id ON eta_invoices(invoice_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_eta_invoice_uuid ON eta_invoices(uuid) WHERE uuid <> ''",
         [],
     )
     .map_err(|e| e.to_string())?;
-    // Migration 2026-08-26: internalIDs are only unique per seller, not globally.
-    // A rejected invoice from seller A must not overwrite a valid invoice from
-    // seller B that happens to share the same internalID.  Drop the old
-    // single-column index and replace it with a composite one.
-    let index_info: bool = conn
-        .query_row(
-            "SELECT COUNT(*) > 0 FROM pragma_index_list('eta_invoices') WHERE name = 'idx_eta_invoice_id'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(false);
-    if index_info {
-        conn.execute("DROP INDEX idx_eta_invoice_id", [])
-            .map_err(|e| e.to_string())?;
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_eta_invoice_seller ON eta_invoices(invoice_id, seller_tax_id)",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-    } else if !conn
-        .prepare("SELECT name FROM pragma_index_list('eta_invoices') WHERE name = 'idx_eta_invoice_seller'")
-        .and_then(|mut s| s.exists([]))
-        .unwrap_or(false)
-    {
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_eta_invoice_seller ON eta_invoices(invoice_id, seller_tax_id)",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-    }
     // Migration: add raw_xml column to existing tables
     let cols: Vec<String> = conn
         .prepare("PRAGMA table_info(eta_invoices)")
@@ -266,13 +254,8 @@ where
 pub enum PoolAddOutcome {
     /// New row inserted; payload is the rowid.
     Inserted(i64),
-    /// Existing row refreshed (same invoice, newer data or genuine status change).
+    /// Existing row refreshed (same uuid, newer data or genuine status change).
     Updated(i64),
-    /// A different submission of the same internalID was skipped because a
-    /// Valid version is already stored and the incoming one is Rejected/Cancelled.
-    /// Suppliers resubmit corrected invoices under the same internalID; the
-    /// rejected attempt must never mask the accepted one.
-    Superseded,
 }
 
 pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<PoolAddOutcome, String> {
@@ -280,40 +263,34 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
     let lines_json = serde_json::to_string(&invoice.lines).unwrap_or_else(|_| "[]".to_string());
     let incoming_status = if invoice.doc_status.is_empty() { "Valid".to_string() } else { invoice.doc_status.clone() };
 
-    // Duplicate internalID handling: ETA allows resubmissions under the same
-    // internalID (each with its own UUID).  Uniqueness is now scoped to
-    // (invoice_id, seller_tax_id) so two different sellers sharing the same
-    // internalID do not collide.  Decide whether this submission may replace
-    // what is stored:
-    //   - same UUID            -> genuine refresh (e.g. accepted then cancelled later)
-    //   - invalid -> valid     -> upgrade to the accepted version
-    //   - valid -> invalid     -> skip (separate rejected attempt)
-    //   - same class           -> refresh with the newest data
-    if let Ok((existing_uuid, existing_status)) = conn.query_row(
-        "SELECT uuid, doc_status FROM eta_invoices WHERE invoice_id = ?1 AND seller_tax_id = ?2",
-        params![invoice.invoice_id, invoice.seller_tax_id],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-    ) {
-        let existing_bad = existing_status != "Valid";
-        let incoming_bad = incoming_status != "Valid";
-        if existing_uuid != invoice.uuid && !existing_bad && incoming_bad {
-            return Ok(PoolAddOutcome::Superseded);
-        }
-        conn.execute(
-            "UPDATE eta_invoices SET uuid=?3, seller_name=?4, buyer_tax_id=?5, buyer_name=?6,
-             issue_date=?7, currency=?8, net_amount=?9, total_vat=?10, total_wht=?11, grand_total=?12,
-             lines_json=?13, raw_xml=?14, file_name=?15, doc_status=?16 WHERE invoice_id=?1 AND seller_tax_id=?2",
-            params![
-                invoice.invoice_id, invoice.seller_tax_id, invoice.uuid, invoice.seller_name,
-                invoice.buyer_tax_id, invoice.buyer_name, invoice.issue_date, invoice.currency,
-                invoice.net_amount, invoice.total_vat, invoice.total_wht, invoice.grand_total,
-                lines_json, raw_xml, file_name, incoming_status
-            ],
-        ).map_err(|e| e.to_string())?;
-        let id: i64 = conn.query_row(
-            "SELECT id FROM eta_invoices WHERE invoice_id = ?1 AND seller_tax_id = ?2",
-            params![invoice.invoice_id, invoice.seller_tax_id],
+    // Identity is the ETA document UUID.  The same invoice (same internalID +
+    // seller) may be resubmitted with a different UUID (e.g. a corrected copy),
+    // and each attempt keeps its own row so a rejected/cancelled attempt never
+    // hides a valid one.  When the EXACT same uuid is seen again (a re-import or
+    // a genuine state change of that document, e.g. Valid -> Cancelled or vice
+    // versa) the row is refreshed in place with the newest data and status.
+    let existing_id: Option<i64> = if invoice.uuid.is_empty() {
+        None
+    } else {
+        conn.query_row(
+            "SELECT id FROM eta_invoices WHERE uuid = ?1",
+            params![invoice.uuid],
             |r| r.get(0),
+        )
+        .ok()
+    };
+
+    if let Some(id) = existing_id {
+        conn.execute(
+            "UPDATE eta_invoices SET invoice_id=?2, seller_name=?3, buyer_tax_id=?4, buyer_name=?5,
+             issue_date=?6, currency=?7, net_amount=?8, total_vat=?9, total_wht=?10, grand_total=?11,
+             lines_json=?12, raw_xml=?13, file_name=?14, doc_status=?15 WHERE id=?1",
+            params![
+                id, invoice.invoice_id, invoice.seller_name, invoice.buyer_tax_id,
+                invoice.buyer_name, invoice.issue_date, invoice.currency, invoice.net_amount,
+                invoice.total_vat, invoice.total_wht, invoice.grand_total, lines_json,
+                raw_xml, file_name, incoming_status
+            ],
         ).map_err(|e| e.to_string())?;
         return Ok(PoolAddOutcome::Updated(id));
     }
@@ -503,12 +480,15 @@ pub fn reject_pool_delete(conn: &Connection, id: i64) -> Result<(), String> {
 // Upsert an invoice pulled from the shared Supabase pool into local SQLite so
 // that local validation/attach operations work even for invoices imported by
 // other users. Keeps raw_xml so validate_from_pool can re-parse fresh.
+// Identity is the ETA document uuid: a different-uuid resubmission inserts its
+// own row (mirroring add_to_pool), while the same uuid refreshes that row.
 pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(), String> {
     conn.execute(
         "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
-         ON CONFLICT(invoice_id, seller_tax_id) DO UPDATE SET
-            uuid = excluded.uuid,
+         ON CONFLICT(uuid) WHERE uuid <> '' DO UPDATE SET
+            invoice_id = excluded.invoice_id,
+            seller_tax_id = excluded.seller_tax_id,
             seller_name = excluded.seller_name,
             buyer_tax_id = excluded.buyer_tax_id,
             buyer_name = excluded.buyer_name,
@@ -567,15 +547,15 @@ mod pool_supersede_tests {
         }
     }
 
-    fn row(conn: &Connection, id: &str, seller: &str) -> (String, String, String) {
+    fn row(conn: &Connection, uuid: &str) -> (String, String, String) {
         conn.query_row(
-            "SELECT uuid, doc_status, status FROM eta_invoices WHERE invoice_id = ?1 AND seller_tax_id = ?2",
-            params![id, seller],
+            "SELECT invoice_id, doc_status, status FROM eta_invoices WHERE uuid = ?1",
+            params![uuid],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).unwrap()
     }
 
-    fn row_count(conn: &Connection, id: &str) -> i64 {
+    fn row_count_where(conn: &Connection, id: &str) -> i64 {
         conn.query_row(
             "SELECT COUNT(*) FROM eta_invoices WHERE invoice_id = ?1",
             params![id],
@@ -584,7 +564,7 @@ mod pool_supersede_tests {
     }
 
     #[test]
-    fn duplicate_internalid_resolution_rules() {
+    fn uuid_identity_resolution_rules() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
 
@@ -592,25 +572,34 @@ mod pool_supersede_tests {
         let o = add_to_pool(&conn, &sample("X", "UUID-A", "Valid"), "<x/>", "a.xml").unwrap();
         assert!(matches!(o, PoolAddOutcome::Inserted(_)));
 
-        // 2. Different submission (other UUID), Rejected -> must NOT mask the valid one
+        // 2. Same internalID+seller, DIFFERENT submission uuid, Rejected -> kept
+        //    as its own row (never masked by / never masks the valid one)
         let o = add_to_pool(&conn, &sample("X", "UUID-B", "Rejected"), "<x/>", "b.xml").unwrap();
-        assert!(matches!(o, PoolAddOutcome::Superseded));
-        assert_eq!(row(&conn, "X", "100000000"), ("UUID-A".into(), "Valid".into(), "available".into()));
+        assert!(matches!(o, PoolAddOutcome::Inserted(_)));
+        assert_eq!(row_count_where(&conn, "X"), 2);
+        assert_eq!(row(&conn, "UUID-A").1, "Valid");
+        assert_eq!(row(&conn, "UUID-B").1, "Rejected");
 
-        // 3. Same submission (same UUID) later becomes Rejected (genuine state change)
+        // 3. Same submission (same uuid) later becomes Rejected (genuine state change)
         let o = add_to_pool(&conn, &sample("X", "UUID-A", "Rejected"), "<x/>", "a.xml").unwrap();
         assert!(matches!(o, PoolAddOutcome::Updated(_)));
-        assert_eq!(row(&conn, "X", "100000000").1, "Rejected");
+        assert_eq!(row(&conn, "UUID-A").1, "Rejected");
 
-        // 4. Now a corrected resubmission (new UUID, Valid) upgrades the row
-        let o = add_to_pool(&conn, &sample("X", "UUID-C", "Valid"), "<x/>", "c.xml").unwrap();
+        // 4. Reversed too: the same document becoming Valid again refreshes it
+        let o = add_to_pool(&conn, &sample("X", "UUID-A", "Valid"), "<x/>", "a.xml").unwrap();
         assert!(matches!(o, PoolAddOutcome::Updated(_)));
-        assert_eq!(row(&conn, "X", "100000000"), ("UUID-C".into(), "Valid".into(), "available".into()));
+        assert_eq!(row(&conn, "UUID-A").1, "Valid");
 
-        // 5. Claim survives an upgrade (status untouched by add_to_pool)
+        // 5. A corrected resubmission (new uuid, Valid) adds its own row
+        let o = add_to_pool(&conn, &sample("X", "UUID-C", "Valid"), "<x/>", "c.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Inserted(_)));
+        assert_eq!(row_count_where(&conn, "X"), 3);
+
+        // 6. Claim survives a refresh (status untouched by add_to_pool)
         mark_invoice_used(&conn, 1, 1, "SER-1").unwrap();
-        add_to_pool(&conn, &sample("X", "UUID-D", "Rejected"), "<x/>", "d.xml").unwrap();
-        assert_eq!(row(&conn, "X", "100000000"), ("UUID-C".into(), "Valid".into(), "used".into()));
+        add_to_pool(&conn, &sample("X", "UUID-A", "Rejected"), "<x/>", "a.xml").unwrap();
+        assert_eq!(row(&conn, "UUID-A").1, "Rejected");
+        assert_eq!(row(&conn, "UUID-A").2, "used");
     }
 
     #[test]
@@ -618,25 +607,30 @@ mod pool_supersede_tests {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
 
-        // Seller A has invoice "1199" Valid
+        // Seller A has invoice "1199" uuid UUID-A1
         let o = add_to_pool(&conn, &sample_seller("1199", "UUID-A1", "Valid", "645923168"), "<x/>", "a.xml").unwrap();
         assert!(matches!(o, PoolAddOutcome::Inserted(_)));
 
-        // Seller B has invoice "1199" Valid — must NOT collide
+        // Seller B has invoice "1199" uuid UUID-B1 — must NOT collide
         let o = add_to_pool(&conn, &sample_seller("1199", "UUID-B1", "Valid", "735503508"), "<x/>", "b.xml").unwrap();
         assert!(matches!(o, PoolAddOutcome::Inserted(_)));
-        assert_eq!(row_count(&conn, "1199"), 2);
+        assert_eq!(row_count_where(&conn, "1199"), 2);
 
         // Both rows coexist
-        assert_eq!(row(&conn, "1199", "645923168").0, "UUID-A1");
-        assert_eq!(row(&conn, "1199", "735503508").0, "UUID-B1");
+        assert_eq!(row(&conn, "UUID-A1").0, "1199");
+        assert_eq!(row(&conn, "UUID-B1").0, "1199");
 
-        // Supersede within seller A still works
-        let o = add_to_pool(&conn, &sample_seller("1199", "UUID-A2", "Rejected", "645923168"), "<x/>", "a2.xml").unwrap();
-        assert!(matches!(o, PoolAddOutcome::Superseded));
-        assert_eq!(row(&conn, "1199", "645923168").1, "Valid");
+        // Same seller, same invoice, NEW uuid -> its own row too
+        let o = add_to_pool(&conn, &sample_seller("1199", "UUID-A2", "Valid", "645923168"), "<x/>", "a2.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Inserted(_)));
+        assert_eq!(row_count_where(&conn, "1199"), 3);
+
+        // A rejected revision of the SAME uuid UUID-A1 replaces only that row
+        let o = add_to_pool(&conn, &sample_seller("1199", "UUID-A1", "Rejected", "645923168"), "<x/>", "a1.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Updated(_)));
+        assert_eq!(row(&conn, "UUID-A1").1, "Rejected");
 
         // Seller B is unaffected
-        assert_eq!(row(&conn, "1199", "735503508").1, "Valid");
+        assert_eq!(row(&conn, "UUID-B1").1, "Valid");
     }
 }
