@@ -322,7 +322,7 @@ function App() {
   const [poolLoading, setPoolLoading] = useState(false);
   const [poolSyncInfo, setPoolSyncInfo] = useState<{ ok: boolean; local: number; cloud: number; pushed: number; pulled: number; error?: string }>({ ok: true, local: 0, cloud: 0, pushed: 0, pulled: 0 });
   const [poolSearch, setPoolSearch] = useState("");
-  const [poolTab, setPoolTab] = useState<"unclaimed" | "claimed">("unclaimed");
+  const [poolTab, setPoolTab] = useState<"all" | "unclaimed" | "claimed">("all");
   const [poolMode, setPoolMode] = useState<"validate" | "select">("validate");
   const [poolSelected, setPoolSelected] = useState<Set<number>>(new Set());
   const [poolDateFrom, setPoolDateFrom] = useState("");
@@ -1966,7 +1966,7 @@ function App() {
     setPoolMode("validate");
     setShowPool(true);
     setPoolSearch("");
-    setPoolTab("unclaimed");
+    setPoolTab("all");
     setPoolSelected(new Set());
     loadPool();
   };
@@ -1975,7 +1975,7 @@ function App() {
     setPoolMode("select");
     setShowPool(true);
     setPoolSearch("");
-    setPoolTab("unclaimed");
+    setPoolTab("all");
     setPoolSelected(new Set());
     loadPool();
   };
@@ -2249,10 +2249,6 @@ function App() {
   };
 
   const validateFromPool = async (ids: number[]) => {
-    if (!(data.doc_serial || "").trim()) {
-      showAlert(t("请先输入本文档的文档编号（序列号）", "Please enter a serial number for this document first"));
-      return;
-    }
     const unusable = ids.filter(id => !isInvoiceUsable(id));
     if (unusable.length > 0) {
       const labels = unusable.map(id => { const p = poolList.find((x: any) => x.id === id); return p?.invoice_id || id; });
@@ -2896,20 +2892,24 @@ function App() {
                 if (poolDateTo && p.issue_date && p.issue_date > poolDateTo) return false;
                 return true;
               });
+              const effDocFilter = poolDocFilter;
+              const tabBase = poolTab === 'all' ? base : base.filter((p: any) => p.status === (poolTab === 'unclaimed' ? 'available' : 'used'));
               const statusCounts = { Valid: 0, Rejected: 0, Cancelled: 0 };
-              for (const p of base) {
+              for (const p of tabBase) {
                 const s = (p.doc_status || "Valid") as "Valid" | "Rejected" | "Cancelled";
                 if (s in statusCounts) statusCounts[s]++;
               }
-              const effDocFilter = poolDocFilter;
-              const filtered = effDocFilter === 'all' ? base : base.filter((p: any) => (p.doc_status || "Valid") === effDocFilter);
-              const unclaimed = filtered.filter((p: any) => p.status === 'available');
-              const claimed = filtered.filter((p: any) => p.status === 'used');
-              const shown = poolTab === 'unclaimed' ? unclaimed : claimed;
+              const filtered = effDocFilter === 'all' ? tabBase : tabBase.filter((p: any) => (p.doc_status || "Valid") === effDocFilter);
+              const unclaimed = base.filter((p: any) => p.status === 'available');
+              const claimed = base.filter((p: any) => p.status === 'used');
+              const shown = filtered;
               const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.id)).map((p: any) => p.id);
               return (
                 <>
                   <div className="pool-seg" style={{marginBottom:10}}>
+                    <button className={poolTab === 'all' ? 'active' : ''} onClick={() => setPoolTab('all')}>
+                      {t("全部", "All")} ({base.length})
+                    </button>
                     <button className={poolTab === 'unclaimed' ? 'active' : ''} onClick={() => setPoolTab('unclaimed')}>
                       {t("未认领", "Unclaimed")} ({unclaimed.length})
                     </button>
@@ -2919,7 +2919,7 @@ function App() {
                   </div>
                   <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
                     {([
-                      ["all", t("全部", "All"), base.length, "#3b82f6"],
+                      ["all", t("全部", "All"), tabBase.length, "#3b82f6"],
                       ["Valid", t("有效", "Valid"), statusCounts.Valid, "var(--green)"],
                       ["Rejected", t("已拒绝", "Rejected"), statusCounts.Rejected, "var(--red)"],
                       ["Cancelled", t("已取消", "Cancelled"), statusCounts.Cancelled, "#64748b"],
@@ -2945,7 +2945,7 @@ function App() {
                       )}
                     </div>
                   )}
-                  {poolTab === 'unclaimed' && (
+                  {poolTab !== 'claimed' && (
                     <div className="pool-filterbar" style={{marginBottom:10}}>
                       <select className="field-input" style={{width:120}} value={poolCurrency} onChange={e => setPoolCurrency(e.target.value)}>
                         <option value="all">{t("所有货币", "All currencies")}</option>
@@ -2978,7 +2978,7 @@ function App() {
                       const unusable = docStatus !== "Valid";
                       return (
                       <div key={p.id} className="history-item" style={pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : unusable ? {opacity:0.6, borderLeft:'3px solid var(--red)'} : (p.status === 'used' ? {opacity:0.55, borderLeft:'3px solid var(--orange)'} : {borderLeft:'3px solid var(--green)'})}>
-                        {poolTab === 'unclaimed' && p.status === 'available' && !unusable && (
+                        {(poolTab === 'unclaimed' || poolTab === 'all') && p.status === 'available' && !unusable && (
                           <input
                             type="checkbox"
                             style={{margin:2,flexShrink:0,cursor:'pointer',width:14,height:14}}
