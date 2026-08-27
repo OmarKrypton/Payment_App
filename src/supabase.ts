@@ -218,20 +218,20 @@ export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
   return fetchAllPooled(build, 50);
 }
 
-export async function listPoolRemoteByIds(ids: string[]): Promise<PoolInvoiceRow[]> {
+export async function listPoolRemoteByIds(uuids: string[]): Promise<PoolInvoiceRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  if (ids.length === 0) return [];
+  if (uuids.length === 0) return [];
   const PAGE = 50;
   const all: PoolInvoiceRow[] = [];
   const COLS = "id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, file_name, status, used_by_label, delete_requested_at, delete_requested_by, created_at";
-  for (let i = 0; i < ids.length; i += PAGE) {
-    const chunk = ids.slice(i, i + PAGE);
+  for (let i = 0; i < uuids.length; i += PAGE) {
+    const chunk = uuids.slice(i, i + PAGE);
     const run = (cols: string) =>
     supabase
       .from("pool_invoices")
       .select(cols)
-      .in("invoice_id", chunk)
+      .in("uuid", chunk)
       .order("created_at", { ascending: false });
   let res: any = await run(poolSelect(COLS));
   if (res.error && cloudHasDocStatus && isMissingDocStatusError(res.error)) {
@@ -244,10 +244,10 @@ export async function listPoolRemoteByIds(ids: string[]): Promise<PoolInvoiceRow
   return all;
 }
 
-export async function listPoolRemoteMeta(): Promise<{ invoice_id: string; seller_tax_id: string; doc_status?: string; status: string; used_by_label: string }[]> {
+export async function listPoolRemoteMeta(): Promise<{ uuid: string; invoice_id: string; seller_tax_id: string; doc_status?: string; status: string; used_by_label: string }[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const COLS = "invoice_id, seller_tax_id, status, used_by_label";
+  const COLS = "uuid, invoice_id, seller_tax_id, status, used_by_label";
   const build = (from: number, to: number) =>
     supabase
       .from("pool_invoices")
@@ -309,7 +309,7 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
     const chunk = upserts.slice(i, i + PAGE);
     const { error } = await supabase
       .from("pool_invoices")
-      .upsert(chunk, { onConflict: "invoice_id,seller_tax_id" });
+      .upsert(chunk, { onConflict: "uuid" });
     if (error && cloudHasDocStatus && isMissingDocStatusError(error)) {
       // Cloud table predates the doc_status migration; strip and retry so
       // validity stays a local-only signal until the column exists.
@@ -317,7 +317,7 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
       const stripped = chunk.map(({ doc_status: _drop, ...rest }) => rest);
       const { error: retryError } = await supabase
         .from("pool_invoices")
-        .upsert(stripped, { onConflict: "invoice_id,seller_tax_id" });
+        .upsert(stripped, { onConflict: "uuid" });
       if (retryError) throw retryError;
       continue;
     }
@@ -325,18 +325,17 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
   }
 }
 
-export async function markPoolUsedRemote(invoiceId: string, sellerTaxId: string, usedByLabel: string): Promise<void> {
+export async function markPoolUsedRemote(uuid: string, usedByLabel: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   const { error } = await supabase
     .from("pool_invoices")
     .update({ status: "used", used_by_label: usedByLabel })
-    .eq("invoice_id", invoiceId)
-    .eq("seller_tax_id", sellerTaxId || "");
+    .eq("uuid", uuid);
   if (error) throw error;
 }
 
-export async function markPoolsUsedRemote(items: { invoice_id: string; seller_tax_id: string }[], usedByLabel: string): Promise<void> {
+export async function markPoolsUsedRemote(items: { uuid: string }[], usedByLabel: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   if (items.length === 0) return;
@@ -344,24 +343,22 @@ export async function markPoolsUsedRemote(items: { invoice_id: string; seller_ta
     const { error } = await supabase
       .from("pool_invoices")
       .update({ status: "used", used_by_label: usedByLabel })
-      .eq("invoice_id", item.invoice_id)
-      .eq("seller_tax_id", item.seller_tax_id || "");
+      .eq("uuid", item.uuid);
     if (error) throw error;
   }
 }
 
-export async function markPoolAvailableRemote(invoiceId: string, sellerTaxId: string): Promise<void> {
+export async function markPoolAvailableRemote(uuid: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   const { error } = await supabase
     .from("pool_invoices")
     .update({ status: "available", used_by_label: "" })
-    .eq("invoice_id", invoiceId)
-    .eq("seller_tax_id", sellerTaxId || "");
+    .eq("uuid", uuid);
   if (error) throw error;
 }
 
-export async function markPoolsAvailableRemote(items: { invoice_id: string; seller_tax_id: string }[]): Promise<void> {
+export async function markPoolsAvailableRemote(items: { uuid: string }[]): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   if (items.length === 0) return;
@@ -369,41 +366,37 @@ export async function markPoolsAvailableRemote(items: { invoice_id: string; sell
     const { error } = await supabase
       .from("pool_invoices")
       .update({ status: "available", used_by_label: "" })
-      .eq("invoice_id", item.invoice_id)
-      .eq("seller_tax_id", item.seller_tax_id || "");
+      .eq("uuid", item.uuid);
     if (error) throw error;
   }
 }
 
-export async function deletePoolInvoiceRemote(invoiceId: string, sellerTaxId: string): Promise<void> {
+export async function deletePoolInvoiceRemote(uuid: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   const { error } = await supabase
     .from("pool_invoices")
     .delete()
-    .eq("invoice_id", invoiceId)
-    .eq("seller_tax_id", sellerTaxId || "");
+    .eq("uuid", uuid);
   if (error) throw error;
 }
 
-export async function requestPoolDeleteRemote(invoiceId: string, sellerTaxId: string): Promise<void> {
+export async function requestPoolDeleteRemote(uuid: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   const { error } = await supabase
     .from("pool_invoices")
     .update({ delete_requested_at: new Date().toISOString(), delete_requested_by: session.user.id })
-    .eq("invoice_id", invoiceId)
-    .eq("seller_tax_id", sellerTaxId || "");
+    .eq("uuid", uuid);
   if (error) throw error;
 }
 
-export async function rejectPoolDeleteRemote(invoiceId: string, sellerTaxId: string): Promise<void> {
+export async function rejectPoolDeleteRemote(uuid: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   const { error } = await supabase
     .from("pool_invoices")
     .update({ delete_requested_at: null, delete_requested_by: null })
-    .eq("invoice_id", invoiceId)
-    .eq("seller_tax_id", sellerTaxId || "");
+    .eq("uuid", uuid);
   if (error) throw error;
 }

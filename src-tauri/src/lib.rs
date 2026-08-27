@@ -191,10 +191,9 @@ fn import_to_pool(app: tauri::AppHandle, state: tauri::State<'_, DbState>, file_
         };
         match history::add_to_pool(conn, &invoice, &xml_content, &base_name) {
             Ok(outcome) => match outcome {
-                history::PoolAddOutcome::Superseded => {
-                    failed.push(PoolImportFailure { file: base_name, error: "a Valid version of this invoice ID is already in the pool".to_string() });
+                history::PoolAddOutcome::Updated(_) | history::PoolAddOutcome::Inserted(_) => {
+                    imported.push(invoice)
                 }
-                _ => imported.push(invoice),
             },
             Err(e) => failed.push(PoolImportFailure { file: base_name, error: e }),
         }
