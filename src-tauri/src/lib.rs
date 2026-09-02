@@ -9,6 +9,7 @@ mod native_update;
 
 use models::{CalcResult, FormData, HistoryEntry};
 use excel::InvoiceSummaryRow;
+use excel::HistoryExportRow;
 use rusqlite::Connection;
 use std::sync::Mutex;
 use tauri::{Emitter, Listener, Manager};
@@ -107,6 +108,11 @@ fn export_invoice_summary(invoices: Vec<InvoiceSummaryRow>, date_from: String, d
 #[tauri::command]
 fn export_validation_report(results: Vec<eta_xml::ValidationResult>, file_path: String) -> Result<(), String> {
     excel::export_validation_report(&results, &file_path)
+}
+
+#[tauri::command]
+fn export_history_registry(rows: Vec<HistoryExportRow>, file_path: String) -> Result<(), String> {
+    excel::export_history_registry(&rows, &file_path)
 }
 
 #[tauri::command]
@@ -439,6 +445,7 @@ pub fn run() {
             export_excel,
             export_invoice_summary,
             export_validation_report,
+            export_history_registry,
             validate_eta_xml,
             import_to_pool,
             list_invoice_pool,
