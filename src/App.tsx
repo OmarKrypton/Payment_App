@@ -2613,35 +2613,46 @@ function App() {
           <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>{t("进口", "Import")}</button>
           <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
         </nav>
-        <div className="sidebar-under-decision">
+        <div style={{padding:'6px 0 2px', display:'flex', flexDirection:'column', gap:8}}>
           <button
             onClick={openPool}
             style={{
-              width:'100%', marginTop:4, padding:'11px 14px', borderRadius:10, cursor:'pointer',
-              background:'linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%)',
-              color:'#fff', border:'none', fontWeight:700, fontSize:14,
-              display:'flex', alignItems:'center', justifyContent:'center', gap:8,
-              boxShadow:'0 4px 12px rgba(124,58,237,0.3)',
-              transition:'transform 0.15s, box-shadow 0.15s',
+              width:'100%', padding:'14px 16px', borderRadius:12, cursor:'pointer',
+              background:'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 55%, #5b21b6 100%)',
+              color:'#fff', border:'1px solid rgba(255,255,255,0.15)', fontWeight:700, fontSize:15,
+              display:'flex', alignItems:'center', justifyContent:'space-between', gap:10,
+              boxShadow:'0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)',
+              transition:'transform 0.15s, box-shadow 0.15s, filter 0.15s',
+              textAlign:'left',
             }}
-            onMouseEnter={e => { (e.target as HTMLElement).style.transform='translateY(-1px)'; (e.target as HTMLElement).style.boxShadow='0 6px 16px rgba(124,58,237,0.4)'; }}
-            onMouseLeave={e => { (e.target as HTMLElement).style.transform='translateY(0)'; (e.target as HTMLElement).style.boxShadow='0 4px 12px rgba(124,58,237,0.3)'; }}
+            onMouseEnter={e => { const el = e.target as HTMLElement; el.style.transform='translateY(-1px)'; el.style.boxShadow='0 9px 22px rgba(109,40,217,0.45), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
+            onMouseLeave={e => { const el = e.target as HTMLElement; el.style.transform='translateY(0)'; el.style.boxShadow='0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
           >
-            <IconInvoice size={18} color="#fff" /> {t("发票池", "Invoice Pool")}
-          </button>
-          <button
-            title={t("打开 ETA 门户", "Open ETA portal")}
-            onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}
-            style={{
-              display:'flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:999,
-              background:'#facc15', color:'#713f12', border:'1px solid #eab308',
-              fontWeight:800, fontSize:12, cursor:'pointer', whiteSpace:'nowrap',
-              boxShadow:'0 2px 6px rgba(234,179,8,0.4)', transition:'filter 0.15s',
-            }}
-            onMouseEnter={e => { (e.target as HTMLElement).style.filter='brightness(0.95)'; }}
-            onMouseLeave={e => { (e.target as HTMLElement).style.filter='brightness(1)'; }}
-          >
-            ETA ↗
+            <span style={{display:'flex', alignItems:'center', gap:10}}>
+              <span style={{width:34,height:34,borderRadius:10,background:'rgba(255,255,255,0.18)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <IconInvoice size={18} color="#fff" />
+              </span>
+              <span style={{display:'flex', flexDirection:'column', lineHeight:1.2}}>
+                <span>{t("发票池", "Invoice Pool")}</span>
+                <span style={{fontSize:11, fontWeight:500, opacity:0.7}}>{t("管理待处理发票", "Manage pending invoices")}</span>
+              </span>
+            </span>
+            <span
+              role="button"
+              tabIndex={0}
+              title={t("打开 ETA 门户", "Open ETA portal")}
+              onClick={(ev) => { ev.stopPropagation(); openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`)); }}
+              style={{
+                display:'flex', alignItems:'center', gap:5, padding:'6px 11px', borderRadius:999,
+                background:'#facc15', color:'#713f12', border:'1px solid #eab308',
+                fontWeight:800, fontSize:12, cursor:'pointer', whiteSpace:'nowrap',
+                boxShadow:'0 2px 6px rgba(234,179,8,0.45)', transition:'filter 0.15s', flexShrink:0,
+              }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.filter='brightness(1.08)'; }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.filter='brightness(1)'; }}
+            >
+              ETA ↗
+            </span>
           </button>
         </div>
         <div className="sidebar-sync" style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4}}>
