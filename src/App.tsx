@@ -1831,8 +1831,10 @@ function App() {
     try {
       // 1) Push local invoices up, but only when safe:
       //    - invoice not yet in the cloud (local-only import), or
-      //    - local is a claim (used) that the cloud doesn't have yet.
-      //    Never push "available" over an existing cloud claim.
+      //    - local is a claim (used) that the cloud doesn't have yet, or
+      //    - local is available but cloud still holds a stale claim (used),
+      //      which means the user explicitly unclaimed — push the unclaim so
+      //      the cloud converges and the next pull doesn't revert it.
       const localAll = await invoke<any[]>("list_invoice_pool");
       info.local = localAll.length;
       const remoteMeta = await listPoolRemoteMeta();
@@ -1846,6 +1848,13 @@ function App() {
         if (!r) return true;
         if (l.status === "used") {
           return r.status !== "used" || (r.used_by_label || "") !== (l.used_by_label || "");
+        }
+        // local is "available": push an explicit unclaim up so the cloud stops
+        // reverting the local status on the next pull. Only push when the cloud
+        // still holds a stale claim (used), so freshly-imported available rows
+        // (already available remotely) don't get re-uploaded needlessly.
+        if (l.status === "available" && r.status === "used") {
+          return true;
         }
         return false;
       });
