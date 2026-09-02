@@ -60,6 +60,7 @@ interface FormData {
   soc_rate: string; val_12A: string;
   val_7A: string; val_10A: string; val_11A: string; val_11B: string;
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
+  draft_no: number | null;
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
   final_decision: string; conditional_reason: string; reject_reason: string; auditor: string;
@@ -104,7 +105,7 @@ const EMPTY_FORM: FormData = {
   soc_rate: "0%", val_12A: "0.00",
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
-  check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
+  draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
@@ -131,7 +132,7 @@ const DEFAULT_FORM: FormData = {
   soc_rate: "0%", val_12A: "0.00",
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
-  check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
+  draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
@@ -297,6 +298,7 @@ function App() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const t = useCallback((zh: string, en: string) => lang === "zh" ? zh : en, [lang]);
   const formRef = useRef<FormData>(DEFAULT_FORM);
+  const [draftNo, setDraftNo] = useState<number | null>(null);
   const [computed, setComputed] = useState<CalcResult>(EMPTY_CALC);
   const overlayRef = useRef<HTMLDivElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
@@ -925,7 +927,14 @@ function App() {
             </button>
           </div>
         </div>
-        <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={v => updateField("doc_serial", v)} />
+        <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={v => {
+          updateField("doc_serial", v);
+          if (v && v.trim()) {
+            formRef.current = { ...formRef.current, draft_no: null };
+            setDraftNo(null);
+            queueFlush();
+          }
+        }} />
         {isSerialDuplicate && (
           <div className="field-warning" style={{color: 'var(--red)'}}>
             {t("警告: 该文档编号已存在!", "Warning: This document serial already exists!")}
@@ -1167,6 +1176,67 @@ function App() {
       </div>
     );
   };
+
+  const draftLabel = (n: number | null | undefined): string => n ? `Draft ${n}` : "Draft";
+
+  const snapshotDraftNo = (parsed: any): number | null => {
+    const n = parsed?.draft_no;
+    return (typeof n === "number" && Number.isFinite(n) && n >= 1) ? n : null;
+  };
+
+  // Collect every draft number already in use across saved snapshots (local +
+  // remote) plus the current session, so a new unsaved document gets a distinct
+  // "Draft N" label.
+  const usedDraftNos = useCallback(async (excludeId?: number): Promise<Set<number>> => {
+    const used = new Set<number>();
+    if (formRef.current?.draft_no != null) used.add(formRef.current.draft_no);
+    try {
+      const local = await invoke<HistoryEntry[]>("list_history", { search: "" });
+      for (const h of local) {
+        if (excludeId != null && h.id === excludeId) continue;
+        try { const n = snapshotDraftNo(JSON.parse(h.data_json || "")); if (n) used.add(n); } catch {}
+        const m = /^Draft (\d+)$/i.exec(h.label || ""); if (m) used.add(parseInt(m[1], 10));
+      }
+    } catch {}
+    if (authUser) {
+      try {
+        const remote = await listSnapshotsRemote("");
+        for (const r of remote) {
+          try { const n = snapshotDraftNo(JSON.parse(r.data_json)); if (n) used.add(n); } catch {}
+          const m = /^Draft (\d+)$/i.exec(r.label || ""); if (m) used.add(parseInt(m[1], 10));
+        }
+      } catch {}
+    }
+    return used;
+  }, [authUser]);
+
+  // Assign the next free draft number for the current editing session.
+  const assignDraftNo = useCallback(async (): Promise<number> => {
+    const used = await usedDraftNos();
+    let n = 1;
+    while (used.has(n)) n += 1;
+    setDraftNo(n);
+    formRef.current = { ...formRef.current, draft_no: n };
+    return n;
+  }, [usedDraftNos]);
+
+  // The label used to claim pool invoices for the current document: the real
+  // serial when one exists, otherwise this session's "Draft N".
+  const currentClaimLabel = (): string => {
+    const serial = (formRef.current.doc_serial || "").trim();
+    if (serial) return serial;
+    return draftLabel(formRef.current?.draft_no ?? draftNo);
+  };
+
+  // Make sure the current editing session (document without a serial) has a
+  // distinct draft number assigned before invoices are claimed against it.
+  const ensureDraftNo = useCallback(async (): Promise<number> => {
+    const serial = (formRef.current.doc_serial || "").trim();
+    if (serial) return -1;
+    const existing = formRef.current?.draft_no ?? draftNo;
+    if (existing != null && existing >= 1) return existing;
+    return assignDraftNo();
+  }, [draftNo, assignDraftNo]);
 
   const newSession = useCallback(async () => {
     const confirmed = window.confirm(t("确定要开始新会话吗？当前未保存的更改将丢失。", "Start a new session? Any unsaved changes will be lost."));
@@ -1489,7 +1559,12 @@ function App() {
       loadHistoryList(historySearch);
       return;
     }
-    const serial = data.doc_serial;
+    let serial = data.doc_serial;
+    if (!serial && !data.draft_no) {
+      await assignDraftNo();
+      serial = "";
+    }
+    const draftNumber = formRef.current?.draft_no ?? draftNo;
     if (serial) {
       // Check for duplicate serial number in Supabase
       if (authUser) {
@@ -1512,8 +1587,8 @@ function App() {
         }
       } catch {}
     }
-    const label = serial || `Snapshot-${new Date().toLocaleDateString()}`;
-    const saveData = { ...data, auditor: data.auditor || authUser || "" };
+    const label = serial || draftLabel(draftNumber);
+    const saveData = { ...data, draft_no: draftNumber, auditor: data.auditor || authUser || "" };
     const dataJson = JSON.stringify(saveData);
     if (authUser) {
       try {
@@ -1565,6 +1640,7 @@ function App() {
       if (!parsed.reject_reason) parsed.reject_reason = "";
       if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
+      setDraftNo((parsed.doc_serial ? null : snapshotDraftNo(parsed)));
       await recalc(parsed);
       await reconcilePillsFromPool();
       await restoreClaimsFromDocument();
@@ -1624,7 +1700,8 @@ function App() {
   };
 
   const attachValidatedInvoices = async (results: any[]) => {
-    const serial = data.doc_serial || "draft";
+    await ensureDraftNo();
+    const serial = currentClaimLabel();
     const updated = [...(formRef.current.import_entries ?? [])];
     for (const r of results) {
       const indices: number[] = Array.isArray(r.matched_entry_indices)
@@ -1727,7 +1804,8 @@ function App() {
 
   const restoreClaimsFromDocument = async (): Promise<number> => {
     const form = formRef.current;
-    const serial = ((form.doc_serial) || "draft").trim();
+    await ensureDraftNo();
+    const serial = ((form.doc_serial) || draftLabel(form.draft_no ?? draftNo)).trim();
     const keys = new Set<string>();
     (form.invoices || []).forEach((inv: any) => { const k = buildRestoreKey(inv?.invoice_no, inv?.seller_tax_id, inv?.attached_uuid); if (k) keys.add(k); });
     (form.import_entries || []).forEach((e: any) => { const k = buildRestoreKey(e?.attached_invoice, e?.seller_tax_id, e?.attached_uuid); if (k) keys.add(k); });
@@ -2019,6 +2097,7 @@ function App() {
       showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
       return;
     }
+    await ensureDraftNo();
     const arr = [...current, poolToImportEntry(p)];
     formRef.current = { ...formRef.current, import_entries: arr };
     await recalc(formRef.current);
@@ -2041,11 +2120,12 @@ function App() {
       }
       return;
     }
+    await ensureDraftNo();
     const freshEntries = fresh.map((p: any) => poolToImportEntry(p));
     const arr = [...current, ...freshEntries];
     formRef.current = { ...formRef.current, import_entries: arr };
     await recalc(formRef.current);
-    const serial = ((formRef.current.doc_serial) || "draft").trim();
+    const serial = currentClaimLabel();
     const freshIds = fresh.map((p: any) => p.id);
     try {
       await invoke("mark_pool_invoices_used", { ids: freshIds, snapshotId: 0, snapshotLabel: serial });
@@ -2080,7 +2160,7 @@ function App() {
   const markPoolClaimed = async (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
-    const serial = ((formRef.current.doc_serial) || "draft").trim();
+    const serial = currentClaimLabel();
     try {
       await invoke("mark_pool_invoice_used", { id, snapshotId: 0, snapshotLabel: serial });
     } catch {}
@@ -2116,6 +2196,7 @@ function App() {
     }];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
+    await ensureDraftNo();
     await markPoolClaimed(id);
     // Compare every pool-attached invoice still in this document against the
     // bank document fields, so adding multiple invoices one-by-one always shows
@@ -2173,7 +2254,8 @@ function App() {
     ];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
-    const serial = ((formRef.current.doc_serial) || "draft").trim();
+    await ensureDraftNo();
+    const serial = currentClaimLabel();
     const freshIds = fresh.map(p => p!.id);
     try {
       await invoke("mark_pool_invoices_used", { ids: freshIds, snapshotId: 0, snapshotLabel: serial });
@@ -2224,12 +2306,36 @@ function App() {
 
   const openDocumentBySerial = async (serial: string) => {
     try {
+      // The claim may belong to the document currently being edited (e.g. an
+      // unsaved "Draft N"). In that case there's nothing to load/open locally —
+      // the user is already on it, so close the pool and indicate as much.
+      const currentLabel = currentClaimLabel();
+      if (currentLabel === serial) {
+        setShowPool(false);
+        showAlert(t("这是当前正在编辑的文档", "This is the document you are currently editing"));
+        return;
+      }
+      const wantDraftNo = /^Draft (\d+)$/i.exec(serial);
+      const draftMatch = (dataJson: string) => {
+        if (!wantDraftNo) return false;
+        try { return snapshotDraftNo(JSON.parse(dataJson)) === parseInt(wantDraftNo[1], 10); } catch { return false; }
+      };
       let entries = await invoke<any[]>("list_history", { search: serial });
       let match = entries.find((e: any) => e.label === serial);
+      if (!match && wantDraftNo) {
+        for (const e of entries) {
+          if (e.data_json && draftMatch(e.data_json)) { match = e; break; }
+        }
+      }
       if (!match && authUser) {
         try {
           const remote = await listSnapshotsRemote(serial);
           match = remote.find((r: any) => r.label === serial);
+          if (!match && wantDraftNo) {
+            for (const r of remote) {
+              if (r.data_json && draftMatch(r.data_json)) { match = r; break; }
+            }
+          }
         } catch {}
       }
       if (match) {
