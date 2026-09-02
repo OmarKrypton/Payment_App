@@ -3,9 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
-import { IconSave, IconHistory, IconNewSession, IconImport, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
+import { IconSave, IconHistory, IconNewSession, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
 interface OcrFieldInfo {
@@ -293,7 +294,7 @@ const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boo
 
 function App() {
   const [tab, setTab] = useState<"bank" | "final_decision" | "import">("bank");
-  const [lang, setLang] = useState<"zh" | "en">("zh");
+  const [lang, setLang] = useState<"zh" | "en">("en");
   const [appVersion, setAppVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const t = useCallback((zh: string, en: string) => lang === "zh" ? zh : en, [lang]);
@@ -309,7 +310,6 @@ function App() {
   const [showChangePw, setShowChangePw] = useState(false);
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [showImportMenu, setShowImportMenu] = useState(false);
   const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
   const [invoiceExportTo, setInvoiceExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
@@ -471,17 +471,6 @@ function App() {
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, [showExportMenu]);
-
-  // Close import dropdown when clicking outside
-  useEffect(() => {
-    if (!showImportMenu) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.sidebar-export-group')) setShowImportMenu(false);
-    };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [showImportMenu]);
 
   // Listen for Supabase auth changes
   useEffect(() => {
@@ -1053,6 +1042,37 @@ function App() {
             <FastInput className="audit-notes" value={data.reject_reason} onChange={v => updateField("reject_reason", v)} rows={3} />
           </div>
         )}
+        <div style={{display:'flex', gap:10, marginTop:16, alignItems:'center'}}>
+          <button
+            onClick={openPool}
+            style={{
+              flex:1, padding:'14px 20px', borderRadius:10, cursor:'pointer',
+              background:'linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%)',
+              color:'#fff', border:'none', fontWeight:700, fontSize:15,
+              display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+              boxShadow:'0 4px 12px rgba(124,58,237,0.3)',
+              transition:'transform 0.15s, box-shadow 0.15s',
+            }}
+            onMouseEnter={e => { (e.target as HTMLElement).style.transform='translateY(-1px)'; (e.target as HTMLElement).style.boxShadow='0 6px 16px rgba(124,58,237,0.4)'; }}
+            onMouseLeave={e => { (e.target as HTMLElement).style.transform='translateY(0)'; (e.target as HTMLElement).style.boxShadow='0 4px 12px rgba(124,58,237,0.3)'; }}
+          >
+            <IconInvoice size={18} color="#fff" /> {t("发票池", "Invoice Pool")}
+          </button>
+          <button
+            title={t("打开 ETA 门户", "Open ETA portal")}
+            onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}
+            style={{
+              display:'flex', alignItems:'center', gap:6, padding:'8px 14px', borderRadius:999,
+              background:'#facc15', color:'#713f12', border:'1px solid #eab308',
+              fontWeight:800, fontSize:13, cursor:'pointer', whiteSpace:'nowrap',
+              boxShadow:'0 2px 6px rgba(234,179,8,0.4)', transition:'filter 0.15s',
+            }}
+            onMouseEnter={e => { (e.target as HTMLElement).style.filter='brightness(0.95)'; }}
+            onMouseLeave={e => { (e.target as HTMLElement).style.filter='brightness(1)'; }}
+          >
+            ETA ↗
+          </button>
+        </div>
       </div>
     </div>
     );
@@ -2418,6 +2438,93 @@ function App() {
     }
   };
 
+  const exportHistoryRegistry = async () => {
+    try {
+      const rows: {
+        serial: string;
+        seller_tax_id: string;
+        company: string;
+        invoices: string;
+        net_payable: number;
+        current_paid: number;
+      }[] = [];
+      const seen = new Set<string>();
+      const addSnapshot = async (label: string, dataJson: string) => {
+        let parsed: any;
+        try { parsed = JSON.parse(dataJson); } catch { return; }
+        const serial = parsed.doc_serial || label || "";
+        if (!serial || seen.has(serial)) return;
+        seen.add(serial);
+        const isImport = parsed.doc_type === "import";
+        const taxSet = new Set<string>();
+        const coSet = new Set<string>();
+        const invSet = new Set<string>();
+        if (isImport) {
+          (parsed.import_entries || []).forEach((e: any) => {
+            if (e.attached_invoice) invSet.add(e.attached_invoice);
+            if (e.seller_tax_id) taxSet.add(e.seller_tax_id);
+          });
+        } else {
+          (parsed.seller_tax_ids || []).forEach((x: string) => x && taxSet.add(x));
+          if (parsed.seller_tax_id) taxSet.add(parsed.seller_tax_id);
+          (parsed.invoices || []).forEach((inv: any) => {
+            if (inv.invoice_no) invSet.add(inv.invoice_no);
+            if (inv.company_name) coSet.add(inv.company_name);
+            if (inv.seller_tax_id) taxSet.add(inv.seller_tax_id);
+          });
+        }
+        let net = 0, paid = 0;
+        try {
+          const calc = await invoke<CalcResult>("recalculate", { data: parsed });
+          net = calc.c_9A ?? 0;
+          paid = calc.c_10A ?? 0;
+        } catch {}
+        rows.push({
+          serial,
+          seller_tax_id: Array.from(taxSet).join(", "),
+          company: Array.from(coSet).join(", "),
+          invoices: Array.from(invSet).join(", "),
+          net_payable: net,
+          current_paid: paid,
+        });
+      };
+
+      try {
+        const local = await invoke<HistoryEntry[]>("list_history", { search: "" });
+        for (const entry of local) {
+          try {
+            const dataJson = await invoke<string>("load_history", { id: entry.id });
+            await addSnapshot(entry.label || "", dataJson);
+          } catch {}
+        }
+      } catch {}
+      if (authUser) {
+        try {
+          const remote = await listSnapshotsRemote("");
+          for (const r of remote) {
+            await addSnapshot(r.label || "", r.data_json || "");
+          }
+        } catch {}
+      }
+
+      if (rows.length === 0) {
+        showAlert(t("没有可导出的历史记录", "No history to export"));
+        return;
+      }
+
+      const filePath = await save({
+        defaultPath: `History_Registry_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filters: [{ name: "Excel", extensions: ["xlsx"] }],
+      });
+      if (filePath) {
+        await invoke("export_history_registry", { rows, filePath });
+        showAlert(t("历史记录导出成功", "History registry exported successfully"));
+      }
+    } catch (e: any) {
+      showAlert(`${t("导出失败", "Export failed")}: ${e.message || e}`);
+    }
+  };
+
   const deletePoolInvoice = async (id: number) => {
     try {
       const p = poolList.find((x: any) => x.id === id);
@@ -2528,8 +2635,8 @@ function App() {
             <span className="metric-sub">{t("扣款合计", "Deductions")}</span>
           </div>
           <div className="metric">
-            <span className={`metric-label${computed.c_11B < 0 ? ' negative' : ''}`}>{fmt(computed.c_11B)}</span>
-            <span className="metric-sub">{t("期末已付", "Accum. Paid")}</span>
+            <span className={`metric-label${computed.c_10A < 0 ? ' negative' : ''}`}>{fmt(computed.c_10A)}</span>
+            <span className="metric-sub">{t("本期实付", "Current Paid")}</span>
           </div>
         </div>
         <nav className="sidebar-nav">
@@ -2633,21 +2740,9 @@ function App() {
           <button onClick={newSession}>
             <IconNewSession /> {t("新会话", "New Session")}
           </button>
-          <div className="sidebar-export-group">
-            <button onClick={() => setShowImportMenu(!showImportMenu)} style={{width:'100%'}}>
-              <IconImport /> {t("上传", "Upload")} <IconChevronDown size={12} style={{marginLeft:'auto', transition:'transform 0.2s', transform: showImportMenu ? 'rotate(0deg)' : 'rotate(180deg)'}} />
-            </button>
-            {showImportMenu && (
-              <div className="sidebar-export-dropdown">
-                <button onClick={() => { setShowImportMenu(false); importPdf(); }}>
-                  <IconReport /> {t("上传PDF", "Upload PDF")}
-                </button>
-                <button onClick={() => { setShowImportMenu(false); openPool(); }}>
-                  <IconInvoice /> {t("发票池", "Invoice Pool")}
-                </button>
-              </div>
-            )}
-          </div>
+          <button onClick={importPdf}>
+            <IconReport /> {t("上传PDF", "Upload PDF")}
+          </button>
           <div className="sidebar-actions-divider" />
           <div className="sidebar-export-group">
             <button onClick={() => setShowExportMenu(!showExportMenu)} style={{width:'100%'}}>
@@ -2660,6 +2755,9 @@ function App() {
                 </button>
                 <button onClick={() => { setShowExportMenu(false); setShowInvoiceExport(true); }}>
                   <IconInvoice /> {t("发票清单", "Invoice Registry")}
+                </button>
+                <button onClick={() => { setShowExportMenu(false); exportHistoryRegistry(); }}>
+                  <IconHistory /> {t("历史记录清单", "History Registry")}
                 </button>
               </div>
             )}
