@@ -2198,14 +2198,39 @@ function App() {
 
   const unclaimPoolInvoice = async (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
+    if (!p) return;
+    poolSyncInFlight.current = true;
     try {
       await invoke("mark_pool_invoice_available", { id });
       try {
-        if (authUser && p) await markPoolAvailableRemote(p.uuid);
+        if (authUser) await markPoolAvailableRemote(p.uuid);
       } catch (e) { console.error("markPoolAvailableRemote failed", e); }
-      loadPool();
+      try { setPoolList(await invoke<any[]>("list_invoice_pool_summary")); } catch {}
     } catch (e: any) {
       showAlert(`${t("解除认领失败", "Unclaim failed")}: ${e.message || e}`);
+    } finally {
+      poolSyncInFlight.current = false;
+    }
+  };
+
+  const openDocumentBySerial = async (serial: string) => {
+    try {
+      let entries = await invoke<any[]>("list_history", { search: serial });
+      let match = entries.find((e: any) => e.label === serial);
+      if (!match && authUser) {
+        try {
+          const remote = await listSnapshotsRemote(serial);
+          match = remote.find((r: any) => r.label === serial);
+        } catch {}
+      }
+      if (match) {
+        setShowPool(false);
+        await loadSnapshot(match.id);
+      } else {
+        showAlert(t("未找到对应文档的序列号", "No saved document found with this serial number"));
+      }
+    } catch (e: any) {
+      showAlert(`${t("查找文档失败", "Failed to find document")}: ${e.message || e}`);
     }
   };
 
@@ -3019,10 +3044,13 @@ function App() {
                               }}>⚠️ {t("待删除", "Pending delete")}</span>
                             )}
                             {p.status === 'used' && p.used_by_label && (
-                              <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
-                                background:'var(--accent-light)',color:'var(--accent)',
-                                border:'1px solid var(--accent)'
-                              }}>{t("序列号", "Serial")}: {p.used_by_label}</span>
+                              <span
+                                title={t("点击打开对应文档", "Click to open the linked document")}
+                                onClick={(e) => { e.stopPropagation(); openDocumentBySerial(p.used_by_label); }}
+                                style={{fontSize:9,padding:'2px 6px',borderRadius:4,fontWeight:700,
+                                  background:'var(--accent-light)',color:'var(--accent)',
+                                  border:'1px solid var(--accent)',cursor:'pointer',textDecoration:'underline'
+                                }}>{t("序列号", "Serial")}: {p.used_by_label} ↗</span>
                             )}
                           </div>
                           <p style={{fontSize:11,color:'var(--text-secondary)',marginTop:2}}>
