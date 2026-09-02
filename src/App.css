@@ -522,6 +522,26 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.btn-add-pool {
+  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 55%, #5b21b6 100%);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+  align-self: flex-start;
+  box-shadow: 0 4px 12px rgba(109, 40, 217, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.btn-add-pool:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(109, 40, 217, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  filter: brightness(1.05);
+}
+
 .btn-danger {
   background: transparent;
   color: var(--red);

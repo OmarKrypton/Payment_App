@@ -784,7 +784,7 @@ function App() {
       </div>
       <div style={{display:'flex',gap:8,marginTop:8}}>
         <button className="btn-add" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
-        <button className="btn-add" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+        <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
       </div>
       {hasInvoices && shown.length > 0 && (
         <div className="invoice-compare">
@@ -1151,7 +1151,7 @@ function App() {
           })}
           <div style={{display:'flex',gap:8,marginTop:8}}>
           <button className="btn-add" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
-          <button className="btn-add" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+          <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
         </div>
         </div>
         <div className="card" style={{background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
