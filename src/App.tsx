@@ -312,6 +312,9 @@ function App() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
   const [invoiceExportTo, setInvoiceExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
+  const [showHistoryExport, setShowHistoryExport] = useState(false);
+  const [historyExportFrom, setHistoryExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
+  const [historyExportTo, setHistoryExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
   const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
   const [isAdminUser, setIsAdminUser] = useState(false);
@@ -2409,6 +2412,8 @@ function App() {
 
   const exportHistoryRegistry = async () => {
     try {
+      const startStr = historyExportFrom;
+      const endStr = historyExportTo + "T23:59:59.999Z";
       const rows: {
         serial: string;
         seller_tax_id: string;
@@ -2418,7 +2423,11 @@ function App() {
         current_paid: number;
       }[] = [];
       const seen = new Set<string>();
-      const addSnapshot = async (label: string, dataJson: string) => {
+      const addSnapshot = async (label: string, dataJson: string, createdAt?: string) => {
+        if (createdAt) {
+          const c = new Date(createdAt);
+          if (Number.isNaN(c.getTime()) || c.toISOString() < new Date(startStr).toISOString() || c.toISOString() > new Date(endStr).toISOString()) return;
+        }
         let parsed: any;
         try { parsed = JSON.parse(dataJson); } catch { return; }
         const serial = parsed.doc_serial || label || "";
@@ -2463,7 +2472,7 @@ function App() {
         for (const entry of local) {
           try {
             const dataJson = await invoke<string>("load_history", { id: entry.id });
-            await addSnapshot(entry.label || "", dataJson);
+            await addSnapshot(entry.label || "", dataJson, entry.created_at);
           } catch {}
         }
       } catch {}
@@ -2471,7 +2480,7 @@ function App() {
         try {
           const remote = await listSnapshotsRemote("");
           for (const r of remote) {
-            await addSnapshot(r.label || "", r.data_json || "");
+            await addSnapshot(r.label || "", r.data_json || "", r.created_at);
           }
         } catch {}
       }
@@ -2482,11 +2491,12 @@ function App() {
       }
 
       const filePath = await save({
-        defaultPath: `History_Registry_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        defaultPath: `History_Registry_${historyExportFrom}_to_${historyExportTo}.xlsx`,
         filters: [{ name: "Excel", extensions: ["xlsx"] }],
       });
       if (filePath) {
         await invoke("export_history_registry", { rows, filePath });
+        setShowHistoryExport(false);
         showAlert(t("历史记录导出成功", "History registry exported successfully"));
       }
     } catch (e: any) {
@@ -2768,7 +2778,7 @@ function App() {
                 <button onClick={() => { setShowExportMenu(false); setShowInvoiceExport(true); }}>
                   <IconInvoice /> {t("发票清单", "Invoice Registry")}
                 </button>
-                <button onClick={() => { setShowExportMenu(false); exportHistoryRegistry(); }}>
+                <button onClick={() => { setShowExportMenu(false); setShowHistoryExport(true); }}>
                   <IconHistory /> {t("历史记录清单", "History Registry")}
                 </button>
               </div>
@@ -2934,6 +2944,38 @@ function App() {
                 onClick={exportInvoiceSummary}>{t("导出", "Export")}</button>
               <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
                 onClick={() => setShowInvoiceExport(false)}>{t("取消", "Cancel")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showHistoryExport && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999,
+        }} onClick={() => setShowHistoryExport(false)}>
+          <div style={{
+            background: 'var(--bg-card, #fff)', borderRadius: 12, padding: '28px 36px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 320,
+            border: '1px solid var(--border, #e0e0e0)',
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{marginBottom:20,fontSize:16}}>{t("历史记录清单导出", "History Registry Export")}</h3>
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("开始日期", "From date")}</label>
+              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
+                value={historyExportFrom} onChange={e => setHistoryExportFrom(e.target.value)} />
+            </div>
+            <div style={{marginBottom:20}}>
+              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("结束日期", "To date")}</label>
+              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
+                value={historyExportTo} onChange={e => setHistoryExportTo(e.target.value)} />
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}
+                onClick={exportHistoryRegistry}>{t("导出", "Export")}</button>
+              <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
+                onClick={() => setShowHistoryExport(false)}>{t("取消", "Cancel")}</button>
             </div>
           </div>
         </div>
