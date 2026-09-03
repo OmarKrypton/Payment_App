@@ -433,22 +433,14 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet3.write_with_format(r3, 0, "Cost Breakdown", &section_fmt)
             .map_err(|e| e.to_string())?;
         r3 += 1;
-        let mut cost_items: Vec<(String, f64)> = vec![
-            ("Commercial Invoice Amount".to_string(), parse_amt(&data.import_commercial_amount)),
-        ];
-        for c in &data.import_costs {
-            cost_items.push((if c.name.is_empty() { "Cost".to_string() } else { c.name.clone() }, parse_amt(&c.amount)));
-        }
-        cost_items.push(("Total Costs".to_string(), computed.import_total_costs));
-        for (label, val) in &cost_items {
-            let is_total = label == "Total Costs";
-            sheet3.write_with_format(r3, 0, label.as_str(), if is_total { &bold_fmt } else { &normal_fmt })
-                .map_err(|e| e.to_string())?;
-            sheet3.write_with_format(r3, 1, *val, if is_total { &calc_fmt } else { &val_fmt })
-                .map_err(|e| e.to_string())?;
-            r3 += 1;
-        }
-        // Rate row
+        let commercial_amount = parse_amt(&data.import_commercial_amount);
+        let commercial_rate = parse_exchange_rate(&data.import_commercial_rate);
+        let commercial_egp = (commercial_amount * commercial_rate * 100.0).round() / 100.0;
+        sheet3.write_with_format(r3, 0, "Commercial Invoice Amount", &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 1, commercial_amount, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        r3 += 1;
         if !data.import_commercial_rate.is_empty() {
             sheet3.write_with_format(r3, 0, "Commercial Invoice Rate", &normal_fmt)
                 .map_err(|e| e.to_string())?;
@@ -456,6 +448,23 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
                 .map_err(|e| e.to_string())?;
             r3 += 1;
         }
+        sheet3.write_with_format(r3, 0, "Commercial Invoice Amount (after rate)", &normal_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 1, commercial_egp, &val_fmt)
+            .map_err(|e| e.to_string())?;
+        r3 += 1;
+        for c in &data.import_costs {
+            sheet3.write_with_format(r3, 0, if c.name.is_empty() { "Cost".to_string() } else { c.name.clone() }.as_str(), &normal_fmt)
+                .map_err(|e| e.to_string())?;
+            sheet3.write_with_format(r3, 1, parse_amt(&c.amount), &val_fmt)
+                .map_err(|e| e.to_string())?;
+            r3 += 1;
+        }
+        sheet3.write_with_format(r3, 0, "Total Costs", &bold_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet3.write_with_format(r3, 1, computed.import_total_costs, &calc_fmt)
+            .map_err(|e| e.to_string())?;
+        r3 += 1;
         r3 += 1;
 
         // Section 2: Service Providers
@@ -506,12 +515,15 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         }
         r3 += 1;
 
-        // Section 3: Summary (without Gross, Total VAT, Total WHT)
+        // Section 3: Summary
         sheet3.write_with_format(r3, 0, "Summary", &section_fmt)
             .map_err(|e| e.to_string())?;
         r3 += 1;
         let summary_items: Vec<(&str, f64)> = vec![
+            ("Total VAT", computed.import_total_vat),
+            ("Total WHT", computed.import_total_wht),
             ("Grand Total (Amount+VAT)", computed.import_grand_total),
+            ("Grand Total (Amount+VAT) - Temp Labour", computed.import_grand_total - computed.import_temp_labour),
             ("Grand Net (Total-WHT)", computed.import_grand_net),
             ("Temp Labour (Services × 0.45%)", computed.import_temp_labour),
         ];
