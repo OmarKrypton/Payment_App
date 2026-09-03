@@ -1055,7 +1055,7 @@ function App() {
   const ImportTab = () => {
     return (
       <div className="import-tab">
-        <div className="card" style={{background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
+        <div className="card">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
 
           {/* Commercial Invoice Row */}
@@ -1098,7 +1098,7 @@ function App() {
             </div>
           </div>
         </div>
-          <div className="card" style={{overflowX:'auto',background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
+          <div className="card" style={{overflowX:'auto'}}>
           <h3>{t("服务商", "Service Providers")}</h3>
             <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
@@ -1159,7 +1159,7 @@ function App() {
           <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
         </div>
         </div>
-        <div className="card" style={{background:'linear-gradient(135deg, var(--bg-card) 0%, rgba(59,130,246,0.03) 100%)'}}>
+        <div className="card">
           <h3>{t("进口汇总", "Import Summary")}</h3>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))',gap:16,marginTop:12}}>
             <Computed label={t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")} value={computed.import_grand_total} highlight />
