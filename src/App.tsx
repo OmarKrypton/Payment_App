@@ -2624,8 +2624,11 @@ function App() {
           <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
         </nav>
         <div style={{padding:'6px 0 2px', display:'flex', flexDirection:'column', gap:8}}>
-          <button
+          <div
+            role="button"
+            tabIndex={0}
             onClick={openPool}
+            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPool(); } }}
             style={{
               width:'100%', padding:'14px 16px', borderRadius:12, cursor:'pointer',
               background:'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 55%, #5b21b6 100%)',
@@ -2635,9 +2638,10 @@ function App() {
               transition:'transform 0.15s, box-shadow 0.15s, filter 0.15s',
               textAlign:'left',
               outline:'none',
+              userSelect:'none',
             }}
-            onMouseEnter={e => { const el = e.target as HTMLElement; el.style.transform='translateY(-1px)'; el.style.boxShadow='0 9px 22px rgba(109,40,217,0.45), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
-            onMouseLeave={e => { const el = e.target as HTMLElement; el.style.transform='translateY(0)'; el.style.boxShadow='0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
+            onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.transform='translateY(-1px)'; el.style.boxShadow='0 9px 22px rgba(109,40,217,0.45), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
+            onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.transform='translateY(0)'; el.style.boxShadow='0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
           >
             <span style={{display:'flex', alignItems:'center', gap:10}}>
               <span style={{width:34,height:34,borderRadius:10,background:'rgba(255,255,255,0.18)',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -2664,7 +2668,7 @@ function App() {
             >
               ETA ↗
             </span>
-          </button>
+          </div>
         </div>
         <div className="sidebar-sync" style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4}}>
           {authUser ? (
