@@ -315,6 +315,8 @@ function App() {
   const [showHistoryExport, setShowHistoryExport] = useState(false);
   const [historyExportFrom, setHistoryExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
   const [historyExportTo, setHistoryExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
+  const [historyExportProgress, setHistoryExportProgress] = useState<number | null>(null);
+  const [historyExportStatus, setHistoryExportStatus] = useState("");
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
   const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
   const [isAdminUser, setIsAdminUser] = useState(false);
@@ -2423,7 +2425,8 @@ function App() {
         current_paid: number;
       }[] = [];
       const seen = new Set<string>();
-      const addSnapshot = async (label: string, dataJson: string, createdAt?: string) => {
+      const candidates: { label: string; dataJson: string; seriesNo: string; entries: any[] }[] = [];
+      const addCandidate = (label: string, dataJson: string, createdAt?: string) => {
         if (createdAt) {
           const c = new Date(createdAt);
           if (Number.isNaN(c.getTime()) || c.toISOString() < new Date(startStr).toISOString() || c.toISOString() > new Date(endStr).toISOString()) return;
@@ -2451,19 +2454,15 @@ function App() {
             if (inv.seller_tax_id) taxSet.add(inv.seller_tax_id);
           });
         }
-        let net = 0, paid = 0;
-        try {
-          const calc = await invoke<CalcResult>("recalculate", { data: parsed });
-          net = calc.c_9A ?? 0;
-          paid = calc.c_10A ?? 0;
-        } catch {}
-        rows.push({
-          serial,
-          seller_tax_id: Array.from(taxSet).join(", "),
-          company: Array.from(coSet).join(", "),
-          invoices: Array.from(invSet).join(", "),
-          net_payable: net,
-          current_paid: paid,
+        candidates.push({
+          label,
+          dataJson,
+          seriesNo: serial,
+          entries: [
+            { label: t("卖方税号", "Seller TAX ID"), value: Array.from(taxSet).join(", ") },
+            { label: t("公司名称", "Company"), value: Array.from(coSet).join(", ") },
+            { label: t("发票", "Invoices"), value: Array.from(invSet).join(", ") },
+          ],
         });
       };
 
@@ -2472,7 +2471,7 @@ function App() {
         for (const entry of local) {
           try {
             const dataJson = await invoke<string>("load_history", { id: entry.id });
-            await addSnapshot(entry.label || "", dataJson, entry.created_at);
+            addCandidate(entry.label || "", dataJson, entry.created_at);
           } catch {}
         }
       } catch {}
@@ -2480,26 +2479,64 @@ function App() {
         try {
           const remote = await listSnapshotsRemote("");
           for (const r of remote) {
-            await addSnapshot(r.label || "", r.data_json || "", r.created_at);
+            addCandidate(r.label || "", r.data_json || "", r.created_at);
           }
         } catch {}
       }
 
-      if (rows.length === 0) {
+      if (candidates.length === 0) {
+        setHistoryExportProgress(null);
+        setHistoryExportStatus("");
         showAlert(t("没有可导出的历史记录", "No history to export"));
         return;
       }
+
+      setHistoryExportProgress(0);
+      let done = 0;
+      for (const cand of candidates) {
+        let net = 0, paid = 0;
+        try {
+          const parsed = JSON.parse(cand.dataJson);
+          const calc = await invoke<CalcResult>("recalculate", { data: parsed });
+          net = calc.c_9A ?? 0;
+          paid = calc.c_10A ?? 0;
+        } catch {}
+        const c = cand.entries as any[];
+        const tax = (c.find((x: any) => x.label.includes("TAX ID") || x.label.includes("税号")) || {}).value || "";
+        const co = (c.find((x: any) => x.label.includes("Company") || x.label.includes("公司")) || {}).value || "";
+        const inv = (c.find((x: any) => x.label.includes("Invoices") || x.label.includes("发票")) || {}).value || "";
+        rows.push({
+          serial: cand.seriesNo,
+          seller_tax_id: tax,
+          company: co,
+          invoices: inv,
+          net_payable: net,
+          current_paid: paid,
+        });
+        done += 1;
+        setHistoryExportProgress(Math.round((done / candidates.length) * 100));
+        setHistoryExportStatus(t("正在处理", "Processing") + ` ${done}/${candidates.length}`);
+      }
+      setHistoryExportStatus(t("正在写入Excel", "Writing Excel file..."));
 
       const filePath = await save({
         defaultPath: `History_Registry_${historyExportFrom}_to_${historyExportTo}.xlsx`,
         filters: [{ name: "Excel", extensions: ["xlsx"] }],
       });
       if (filePath) {
+        setHistoryExportStatus(t("正在写入Excel", "Writing Excel file..."));
         await invoke("export_history_registry", { rows, filePath });
+        setHistoryExportProgress(null);
+        setHistoryExportStatus("");
         setShowHistoryExport(false);
         showAlert(t("历史记录导出成功", "History registry exported successfully"));
+      } else {
+        setHistoryExportProgress(null);
+        setHistoryExportStatus("");
       }
     } catch (e: any) {
+      setHistoryExportProgress(null);
+      setHistoryExportStatus("");
       showAlert(`${t("导出失败", "Export failed")}: ${e.message || e}`);
     }
   };
@@ -2958,29 +2995,43 @@ function App() {
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
           zIndex: 9999,
-        }} onClick={() => setShowHistoryExport(false)}>
+        }} onClick={() => { if (historyExportProgress == null) setShowHistoryExport(false); }}>
           <div style={{
             background: 'var(--bg-card, #fff)', borderRadius: 12, padding: '28px 36px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 320,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 340,
             border: '1px solid var(--border, #e0e0e0)',
           }} onClick={e => e.stopPropagation()}>
-            <h3 style={{marginBottom:20,fontSize:16}}>{t("历史记录清单导出", "History Registry Export")}</h3>
-            <div style={{marginBottom:16}}>
-              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("开始日期", "From date")}</label>
-              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
-                value={historyExportFrom} onChange={e => setHistoryExportFrom(e.target.value)} />
-            </div>
-            <div style={{marginBottom:20}}>
-              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("结束日期", "To date")}</label>
-              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
-                value={historyExportTo} onChange={e => setHistoryExportTo(e.target.value)} />
-            </div>
-            <div style={{display:'flex',gap:8}}>
-              <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}
-                onClick={exportHistoryRegistry}>{t("导出", "Export")}</button>
-              <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
-                onClick={() => setShowHistoryExport(false)}>{t("取消", "Cancel")}</button>
-            </div>
+            {historyExportProgress == null ? (
+              <>
+                <h3 style={{marginBottom:20,fontSize:16}}>{t("历史记录清单导出", "History Registry Export")}</h3>
+                <div style={{marginBottom:16}}>
+                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("开始日期", "From date")}</label>
+                  <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
+                    value={historyExportFrom} onChange={e => setHistoryExportFrom(e.target.value)} />
+                </div>
+                <div style={{marginBottom:20}}>
+                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("结束日期", "To date")}</label>
+                  <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
+                    value={historyExportTo} onChange={e => setHistoryExportTo(e.target.value)} />
+                </div>
+                <div style={{display:'flex',gap:8}}>
+                  <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}
+                    onClick={exportHistoryRegistry}>{t("导出", "Export")}</button>
+                  <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
+                    onClick={() => setShowHistoryExport(false)}>{t("取消", "Cancel")}</button>
+                </div>
+              </>
+            ) : (
+              <div style={{padding:'8px 4px'}}>
+                <h3 style={{marginBottom:20,fontSize:16,textAlign:'center'}}>{t("正在导出历史记录...", "Exporting history...")}</h3>
+                <div style={{width:'100%',height:10,borderRadius:6,background:'#e2e8f0',overflow:'hidden'}}>
+                  <div style={{width:`${historyExportProgress}%`,height:'100%',background:'var(--accent)',borderRadius:6,transition:'width 0.2s'}} />
+                </div>
+                <div style={{marginTop:12,fontSize:13,color:'var(--text-secondary)',textAlign:'center'}}>
+                  {historyExportProgress}%{historyExportStatus ? ` · ${historyExportStatus}` : ""}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
