@@ -2624,6 +2624,7 @@ function App() {
               boxShadow:'0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)',
               transition:'transform 0.15s, box-shadow 0.15s, filter 0.15s',
               textAlign:'left',
+              outline:'none',
             }}
             onMouseEnter={e => { const el = e.target as HTMLElement; el.style.transform='translateY(-1px)'; el.style.boxShadow='0 9px 22px rgba(109,40,217,0.45), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
             onMouseLeave={e => { const el = e.target as HTMLElement; el.style.transform='translateY(0)'; el.style.boxShadow='0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
