@@ -168,6 +168,22 @@ const EMPTY_CALC: CalcResult = {
 const fmt = (v: number) => `EGP ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtShort = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Formats a number string with thousand separators as the user types.
+// Accepts plain "1000", comma-separated "1,000", and decimal "1,000.50".
+// Returns the formatted display string.
+function formatNumberInput(raw: string, maxDecimals = 2): string {
+  const notDecimal = raw.replace(/,/g, "");
+  const cleaned = notDecimal.replace(/[^\d.]/g, "");
+  if (cleaned === ".") return "0.";
+  const dotIdx = cleaned.indexOf(".");
+  let intPart = dotIdx >= 0 ? cleaned.slice(0, dotIdx) : cleaned;
+  const decPart = dotIdx >= 0 ? cleaned.slice(dotIdx + 1, dotIdx + 1 + maxDecimals) : "";
+  intPart = intPart.replace(/^0+(?=\d)/, "");
+  const intFmt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (dotIdx >= 0) return `${intFmt}.${decPart}`;
+  return intFmt;
+}
+
 function focusNext(current: HTMLElement) {
   const fields = document.querySelectorAll<HTMLElement>('.field-input, .field-select, button, textarea');
   const idx = Array.from(fields).indexOf(current);
@@ -176,8 +192,9 @@ function focusNext(current: HTMLElement) {
   }
 }
 
-function Input({ label, sub, value, onChange, width, confidence }: {
+function Input({ label, sub, value, onChange, width, confidence, numeric, maxDecimals }: {
   label: string; sub?: string; value: string; onChange: (v: string) => void; width?: number; confidence?: number;
+  numeric?: boolean; maxDecimals?: number;
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
@@ -191,8 +208,11 @@ function Input({ label, sub, value, onChange, width, confidence }: {
       <label className="field-label">{dot}{label}{sub ? <><br /><span className="field-sub">{sub}</span></> : null}</label>
       <input
         className={"field-input" + (confidence !== undefined && confidence < 0.33 ? " conf-low-input" : "")}
-        type="text" value={local}
-        onChange={e => { setLocal(e.target.value); onChange(e.target.value); }}
+        type="text" inputMode={numeric ? "decimal" : "text"} value={local}
+        onChange={e => {
+          const next = numeric ? formatNumberInput(e.target.value, maxDecimals) : e.target.value;
+          setLocal(next); onChange(next);
+        }}
         onKeyDown={e => {
           if (e.key === 'Enter') { e.preventDefault(); focusNext(e.currentTarget); }
           if (e.key === 'Escape') { e.currentTarget.blur(); }
@@ -264,6 +284,24 @@ function FastInput({ value, onChange, className, type, rows, style }: {
   return <input className={className || "field-input"} type={type || "text"} value={local}
     style={style}
     onChange={e => { setLocal(e.target.value); onChange(e.target.value); }} />;
+}
+
+// Numeric input that live-formats amounts with thousand separators as the
+// user types (e.g. 1000 -> 1,000). The raw comma-free value is passed to
+// onChange so the underlying parse logic is unaffected.
+function NumericInput({ value, onChange, className, style, maxDecimals }: {
+  value: string; onChange: (v: string) => void; className?: string; style?: React.CSSProperties; maxDecimals?: number;
+}) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => { setLocal(value); }, [value]);
+  return <input className={className || "field-input"} type="text" inputMode="decimal" value={local}
+    style={style}
+    onChange={e => {
+      const raw = e.target.value;
+      const formatted = formatNumberInput(raw, maxDecimals);
+      setLocal(formatted);
+      onChange(formatted);
+    }} />;
 }
 
 interface HistoryEntry {
@@ -553,7 +591,7 @@ function App() {
     <div className="rate-rows">
       {rows.map((r, i) => (
         <div key={i} className="rate-row">
-          <FastInput className="field-input small" value={r.amount} onChange={v => updateNested(parent, i, "amount", v)} />
+          <NumericInput className="field-input small" value={r.amount} onChange={v => updateNested(parent, i, "amount", v)} />
           <select className="field-select small" value={r.rate} onChange={e => updateNested(parent, i, "rate", e.target.value)}>
             {rates.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
@@ -574,10 +612,10 @@ function App() {
       <h3>{t("1. 供应商结算", "1. Supplier Settlement")}</h3>
       <div className="card-grid">
         <div className="card-left">
-          <Input label={t("期初累计结算款", "Opening accum.")} value={data.val_1A} onChange={v => updateField("val_1A", v)} confidence={ocrConf("val_1A")} />
-          <Input label={t("本期结算金额", "Current settlement")} value={data.val_1B} onChange={v => { updateField("val_1B", v); }} confidence={ocrConf("val_1B")} />
-          <Input label={t("本期其他增项", "Other additions")} value={data.val_1C} onChange={v => updateField("val_1C", v)} confidence={ocrConf("val_1C")} />
-          <Input label={t("本期扣除额", "Current deductions")} value={data.val_1D} onChange={v => updateField("val_1D", v)} confidence={ocrConf("val_1D")} />
+          <Input label={t("期初累计结算款", "Opening accum.")} value={data.val_1A} onChange={v => updateField("val_1A", v)} confidence={ocrConf("val_1A")} numeric />
+          <Input label={t("本期结算金额", "Current settlement")} value={data.val_1B} onChange={v => { updateField("val_1B", v); }} confidence={ocrConf("val_1B")} numeric />
+          <Input label={t("本期其他增项", "Other additions")} value={data.val_1C} onChange={v => updateField("val_1C", v)} confidence={ocrConf("val_1C")} numeric />
+          <Input label={t("本期扣除额", "Current deductions")} value={data.val_1D} onChange={v => updateField("val_1D", v)} confidence={ocrConf("val_1D")} numeric />
           <Computed label={t("本期供应商结算 (含税)", "Settlement incl. VAT")} value={computed.c_1G} />
           <Computed label={t("期末累计供应商结算", "Ending accumulative")} value={computed.c_1F} highlight />
         </div>
@@ -606,9 +644,9 @@ function App() {
   const Card2 = () => (
     <div className="card">
       <h3>{t("2. 预付款", "2. Advance Payment")}</h3>
-      <Input label={t("预付款总额", "Total advance")} value={data.val_2A} onChange={v => updateField("val_2A", v)} confidence={ocrConf("val_2A")} />
-      <Input label={t("期初预付款扣除", "Initial deduction")} value={data.val_2B} onChange={v => updateField("val_2B", v)} confidence={ocrConf("val_2B")} />
-      <Input label={t("本期预付款扣除", "Current deduction")} value={data.val_2C} onChange={v => updateField("val_2C", v)} confidence={ocrConf("val_2C")} />
+      <Input label={t("预付款总额", "Total advance")} value={data.val_2A} onChange={v => updateField("val_2A", v)} confidence={ocrConf("val_2A")} numeric />
+      <Input label={t("期初预付款扣除", "Initial deduction")} value={data.val_2B} onChange={v => updateField("val_2B", v)} confidence={ocrConf("val_2B")} numeric />
+      <Input label={t("本期预付款扣除", "Current deduction")} value={data.val_2C} onChange={v => updateField("val_2C", v)} confidence={ocrConf("val_2C")} numeric />
       <Computed label={t("期末预付款扣除金额", "Ending deduction")} value={computed.c_2D} highlight />
       <Computed label={t("期末预付款余额", "Ending balance")} value={computed.c_2E} highlight />
     </div>
@@ -624,10 +662,10 @@ function App() {
   const Card4 = () => (
     <div className="card">
       <h3>{t("4. 保留金", "4. Retention")}</h3>
-      <Input label={t("期初保留金", "Initial retention")} value={data.val_4A} onChange={v => updateField("val_4A", v)} confidence={ocrConf("val_4A")} />
+      <Input label={t("期初保留金", "Initial retention")} value={data.val_4A} onChange={v => updateField("val_4A", v)} confidence={ocrConf("val_4A")} numeric />
       <Select label={t("保留金率", "Retention rate")} value={data.ret_rate} options={["0%", "0.5%", "3%", "5%", "10%", "15%"]} onChange={v => updateField("ret_rate", v)} />
       <Computed label={t("本期应扣保留金", "Current deduction")} value={computed.c_4B} />
-      <Input label={t("本期返还保留金", "Current return")} value={data.val_4C} onChange={v => updateField("val_4C", v)} confidence={ocrConf("val_4C")} />
+      <Input label={t("本期返还保留金", "Current return")} value={data.val_4C} onChange={v => updateField("val_4C", v)} confidence={ocrConf("val_4C")} numeric />
       <Computed label={t("期末保留金余额", "Ending balance")} value={computed.c_4D} highlight />
     </div>
   );
@@ -635,10 +673,10 @@ function App() {
   const Card5 = () => (
     <div className="card">
       <h3>{t("5. 临时工社保", "5. Temp. Labour Insurance")}</h3>
-      <Input label={t("期初余额", "Initial balance")} value={data.val_5A} onChange={v => updateField("val_5A", v)} confidence={ocrConf("val_5A")} />
+      <Input label={t("期初余额", "Initial balance")} value={data.val_5A} onChange={v => updateField("val_5A", v)} confidence={ocrConf("val_5A")} numeric />
       <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} />
       <Computed label={t("本期应扣", "Current deductible")} value={computed.c_5B} />
-      <Input label={t("本期返还", "Current return")} value={data.val_5C} onChange={v => updateField("val_5C", v)} confidence={ocrConf("val_5C")} />
+      <Input label={t("本期返还", "Current return")} value={data.val_5C} onChange={v => updateField("val_5C", v)} confidence={ocrConf("val_5C")} numeric />
       <Computed label={t("期末余额", "Ending balance")} value={computed.c_5D} highlight />
     </div>
   );
@@ -646,7 +684,7 @@ function App() {
   const Card6 = () => (
     <div className="card">
       <h3>{t("6. 预提税", "6. WHT")}</h3>
-      <Input label={t("期初累计预提税", "Initial accum. WHT")} value={data.val_6A} onChange={v => updateField("val_6A", v)} confidence={ocrConf("val_6A")} />
+      <Input label={t("期初累计预提税", "Initial accum. WHT")} value={data.val_6A} onChange={v => updateField("val_6A", v)} confidence={ocrConf("val_6A")} numeric />
       <div className="section-header" style={{flexWrap:'wrap',gap:8}}>
         <label className="toggle">
           <input type="checkbox" checked={data.wht_manual} onChange={() => toggleManual("wht_manual")} />
@@ -659,7 +697,7 @@ function App() {
       </div>
       {data.wht_manual_amount ? (
         <>
-          <Input label={t("本期预提税（手动，可为负值）", "Current WHT (manual, may be negative)")} value={data.val_6B} onChange={v => updateField("val_6B", v)} confidence={ocrConf("val_6B")} />
+          <Input label={t("本期预提税（手动，可为负值）", "Current WHT (manual, may be negative)")} value={data.val_6B} onChange={v => updateField("val_6B", v)} confidence={ocrConf("val_6B")} numeric />
           <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
         </>
       ) : data.wht_manual ? (
@@ -682,13 +720,13 @@ function App() {
     <div className="card">
       <h3>{t("8 & 12. 其他扣款与社保", "8 & 12. Others & Social")}</h3>
       <h4>{t("其他扣款", "Other Deductions")}</h4>
-      <Input label={t("期初其他扣款", "Initial other")} value={data.val_8A} onChange={v => updateField("val_8A", v)} />
+      <Input label={t("期初其他扣款", "Initial other")} value={data.val_8A} onChange={v => updateField("val_8A", v)} numeric />
       <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%", "0.45%"]} onChange={v => updateField("oth_rate", v)} />
       <Computed label={t("本期其他扣款", "Current other")} value={computed.c_8B} />
       <Computed label={t("期末累计其他扣款", "Ending other")} value={computed.c_8C} highlight />
 
       <h4>{t("社保", "Social Insurance")}</h4>
-      <Input label={t("期初累计社保", "Initial social")} value={data.val_12A} onChange={v => updateField("val_12A", v)} />
+      <Input label={t("期初累计社保", "Initial social")} value={data.val_12A} onChange={v => updateField("val_12A", v)} numeric />
       <Select label={t("社保比例", "Social rate")} value={data.soc_rate} options={["0%", "3.3%", "3.6%", "11.86%"]} onChange={v => updateField("soc_rate", v)} />
       <Computed label={t("本期应扣社保", "Current social")} value={computed.c_12B} />
       <Computed label={t("期末累计社保", "Ending social")} value={computed.c_12C} highlight />
@@ -698,7 +736,7 @@ function App() {
   const Card9 = () => (
     <div className="card">
       <h3>{t("7. 已付款", "7. Amount Paid")}</h3>
-      <Input label={t("期初累计实付", "Initial accum. paid")} value={data.val_7A} onChange={v => updateField("val_7A", v)} confidence={ocrConf("val_7A")} />
+      <Input label={t("期初累计实付", "Initial accum. paid")} value={data.val_7A} onChange={v => updateField("val_7A", v)} confidence={ocrConf("val_7A")} numeric />
       <Computed label={t("期初累计已付款项合计", "Total initial paid")} value={computed.c_7B} />
     </div>
   );
@@ -713,7 +751,7 @@ function App() {
   const Card11 = () => (
     <div className="card">
       <h3>{t("10 & 11. 实付合计", "10 & 11. Paid Totals")}</h3>
-      <Input label={t("本期实付", "Current paid")} value={data.val_10A} onChange={v => updateField("val_10A", v)} confidence={ocrConf("val_10A")} />
+      <Input label={t("本期实付", "Current paid")} value={data.val_10A} onChange={v => updateField("val_10A", v)} confidence={ocrConf("val_10A")} numeric />
       <Computed label={t("期末累计实付", "Ending accum. paid")} value={computed.c_11A} highlight />
       <Computed label={t("期末累计已付合计", "Ending total paid")} value={computed.c_11B} highlight />
     </div>
@@ -772,9 +810,9 @@ function App() {
           </div>
           <FastInput value={inv.invoice_no} onChange={v => updInv(i, "invoice_no", v)} />
           <FastInput value={inv.seller_tax_id || ""} onChange={v => updInv(i, "seller_tax_id", v)} />
-          <FastInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
-          <FastInput value={inv.vat || "0.00"} onChange={v => updInv(i, "vat", v)} />
-          <FastInput value={inv.wht || "0.00"} onChange={v => updInv(i, "wht", v)} />
+          <NumericInput value={inv.amount} onChange={v => updInv(i, "amount", v)} />
+          <NumericInput value={inv.vat || "0.00"} onChange={v => updInv(i, "vat", v)} />
+          <NumericInput value={inv.wht || "0.00"} onChange={v => updInv(i, "wht", v)} />
           <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
         </div>
       ))}
@@ -1061,8 +1099,8 @@ function App() {
           {/* Commercial Invoice Row */}
           <div style={{display:'grid',gridTemplateColumns:'1fr 130px',gap:12,marginBottom:16}}>
             <div style={{display:'grid',gridTemplateColumns:'1fr 130px',gap:8,alignItems:'end'}}>
-              <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} />
-              <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} />
+              <Input label={t("商业发票金额", "Commercial Invoice Amount")} value={data.import_commercial_amount} onChange={v => updateField("import_commercial_amount", v)} numeric />
+              <Input label={t("汇率", "Rate")} value={data.import_commercial_rate} onChange={v => updateField("import_commercial_rate", v)} numeric maxDecimals={4} />
             </div>
             <div className="field" style={{alignSelf:'end'}}>
               <label className="field-label" style={{color:'var(--accent)',fontWeight:700}}>{t("总额 (EGP)", "Total (EGP)")}</label>
@@ -1085,7 +1123,7 @@ function App() {
             {(data.import_costs ?? [{name:"",amount:"0.00"}]).map((c: any, i: number) => (
               <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 130px 30px',gap:8,alignItems:'center',marginBottom:6}}>
                 <FastInput value={c.name} onChange={v => updCostRow(i, "name", v)} rows={1} />
-                <FastInput value={c.amount} onChange={v => updCostRow(i, "amount", v)} />
+                <NumericInput value={c.amount} onChange={v => updCostRow(i, "amount", v)} />
                 {(data.import_costs ?? []).length > 1 ? (
                   <button className="btn-danger" style={{padding:'6px 8px',height:32}} onClick={() => delCostRow(i)}>✕</button>
                 ) : <div />}
@@ -1135,8 +1173,8 @@ function App() {
                   )}
                   <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
                 </div>
-                <FastInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
-                <FastInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} style={rateVisible ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
+                <NumericInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
+                <NumericInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} maxDecimals={4} style={rateVisible ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
                 <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
                   {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}

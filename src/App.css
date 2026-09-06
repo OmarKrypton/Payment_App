@@ -1,6 +1,6 @@
 :root {
   --bg-body: #f0f2f5;
-  --bg-sidebar: #1e293b;
+  --bg-sidebar: #141e30;
   --bg-card: #ffffff;
   --bg-input: #f8fafc;
   --bg-input-hover: #f1f5f9;
@@ -53,13 +53,14 @@ body {
 .sidebar {
   width: 240px;
   min-width: 240px;
-  background: var(--bg-sidebar);
+  background: linear-gradient(180deg, #16233a 0%, #141e30 55%, #101a2b 100%);
   display: flex;
   flex-direction: column;
   padding: 0;
   user-select: none;
   overflow-y: auto;
   overscroll-behavior: contain;
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.04);
 }
 
 .sidebar::-webkit-scrollbar { width: 4px; }
@@ -69,6 +70,7 @@ body {
 .sidebar-header {
   padding: 24px 20px 20px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: linear-gradient(180deg, rgba(99,102,241,0.08) 0%, transparent 100%);
 }
 
 .sidebar-header .brand {
@@ -116,15 +118,15 @@ body {
 }
 
 .metric {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(99,102,241,0.05) 100%);
+  border: 1px solid rgba(255,255,255,0.08);
   border-radius: var(--radius);
   padding: 10px 12px;
   transition: background 0.15s;
 }
 
 .metric:hover {
-  background: rgba(255,255,255,0.07);
+  background: linear-gradient(135deg, rgba(255,255,255,0.09) 0%, rgba(99,102,241,0.08) 100%);
 }
 
 .metric-label {
@@ -175,12 +177,14 @@ body {
 }
 
 .sidebar-nav button.active {
-  background: var(--accent);
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
   color: #fff;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
 }
 
 .sidebar-nav button.active:hover {
-  background: var(--accent-hover);
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  filter: brightness(1.05);
 }
 
 .sidebar-actions {
