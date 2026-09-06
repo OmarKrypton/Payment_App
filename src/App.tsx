@@ -187,6 +187,14 @@ function formatNumberInput(raw: string, maxDecimals = 2): string {
 // Parse a value (which may contain thousand-separator commas) as a number.
 const toNum = (s: string): number => parseFloat(String(s).replace(/,/g, "")) || 0;
 
+// Import service names sometimes embed the seller tax id as "TAX ID: XXXXXXXXX".
+// When the structured seller_tax_id field is missing, fall back to this.
+const extractTaxIdFromName = (name: string): string => {
+  if (!name) return "";
+  const m = /tax\s*id\s*[:：]\s*(\d{6,})/i.exec(name);
+  return m ? m[1] : "";
+};
+
 function focusNext(current: HTMLElement) {
   const fields = document.querySelectorAll<HTMLElement>('.field-input, .field-select, button, textarea');
   const idx = Array.from(fields).indexOf(current);
@@ -889,16 +897,20 @@ function App() {
     if (k === "service_name") {
       // When a service names an invoice from the pool, prefill VAT/WHT/rate from
       // the memory of the matching seller (last used).
-      const taxId = sellerTaxForService(v);
-      if (taxId && sellerRates[taxId]) {
-        const mem = sellerRates[taxId];
-        updateNested("import_entries", i, "vat_rate", mem.vat || entry.vat_rate);
-        updateNested("import_entries", i, "wht_rate", mem.wht || entry.wht_rate);
-        if (mem.rate) updateNested("import_entries", i, "rate", mem.rate);
-        updateNested("import_entries", i, "seller_tax_id", taxId);
-        entry.vat_rate = mem.vat || entry.vat_rate;
-        entry.wht_rate = mem.wht || entry.wht_rate;
-        entry.seller_tax_id = taxId;
+      const taxId = sellerTaxForService(v) || extractTaxIdFromName(v);
+      if (taxId) {
+        if (!entry.seller_tax_id) {
+          updateNested("import_entries", i, "seller_tax_id", taxId);
+          entry.seller_tax_id = taxId;
+        }
+        if (sellerRates[taxId]) {
+          const mem = sellerRates[taxId];
+          updateNested("import_entries", i, "vat_rate", mem.vat || entry.vat_rate);
+          updateNested("import_entries", i, "wht_rate", mem.wht || entry.wht_rate);
+          if (mem.rate) updateNested("import_entries", i, "rate", mem.rate);
+          entry.vat_rate = mem.vat || entry.vat_rate;
+          entry.wht_rate = mem.wht || entry.wht_rate;
+        }
       }
       updateNested("import_entries", i, "attached_invoice", "");
     }
@@ -2484,7 +2496,8 @@ function App() {
         if (isImport) {
           (parsed.import_entries || []).forEach((e: any) => {
             if (e.attached_invoice) invSet.add(e.attached_invoice);
-            if (e.seller_tax_id) taxSet.add(e.seller_tax_id);
+            const tax = e.seller_tax_id || extractTaxIdFromName(e.service_name);
+            if (tax) taxSet.add(tax);
           });
         } else {
           (parsed.seller_tax_ids || []).forEach((x: string) => x && taxSet.add(x));
@@ -2683,7 +2696,7 @@ function App() {
           </div>
         </div>
         <div className="sidebar-metrics">
-          {tab === "import" ? (
+          {isImport ? (
             <>
               <div className="metric">
                 <span className="metric-label">{fmt(computed.import_grand_total)}</span>
@@ -2947,7 +2960,8 @@ function App() {
                     if (isImport) {
                       (p.import_entries || []).forEach((e: any) => {
                         if (e.attached_invoice) invSet.add(e.attached_invoice);
-                        if (e.seller_tax_id) taxSet.add(e.seller_tax_id);
+                        const tax = e.seller_tax_id || extractTaxIdFromName(e.service_name);
+                        if (tax) taxSet.add(tax);
                       });
                     } else {
                       (p.seller_tax_ids || []).forEach((x: string) => x && taxSet.add(x));
