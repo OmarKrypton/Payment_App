@@ -2,15 +2,15 @@
 use crate::models::{CalcResult, FormData, RateRow};
 
 fn parse_amt(s: &str) -> f64 {
-    s.parse::<f64>().unwrap_or(0.0)
+    s.replace(',', "").parse::<f64>().unwrap_or(0.0)
 }
 
 fn parse_rate(s: &str) -> f64 {
-    s.trim_end_matches('%').parse::<f64>().unwrap_or(0.0)
+    s.trim_end_matches('%').replace(',', "").parse::<f64>().unwrap_or(0.0)
 }
 
 fn parse_exchange_rate(s: &str) -> f64 {
-    let v = s.parse::<f64>().unwrap_or(0.0);
+    let v = s.replace(',', "").parse::<f64>().unwrap_or(0.0);
     if v == 0.0 { 1.0 } else { v }
 }
 
