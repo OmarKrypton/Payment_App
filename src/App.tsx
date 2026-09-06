@@ -184,6 +184,9 @@ function formatNumberInput(raw: string, maxDecimals = 2): string {
   return intFmt;
 }
 
+// Parse a value (which may contain thousand-separator commas) as a number.
+const toNum = (s: string): number => parseFloat(String(s).replace(/,/g, "")) || 0;
+
 function focusNext(current: HTMLElement) {
   const fields = document.querySelectorAll<HTMLElement>('.field-input, .field-select, button, textarea');
   const idx = Array.from(fields).indexOf(current);
@@ -759,9 +762,9 @@ function App() {
 
   const InvoicesCard = () => {
     const totals = (data.invoices ?? []).reduce((acc, inv) => {
-      acc.net += parseFloat(inv.amount) || 0;
-      acc.vat += parseFloat(inv.vat || "0") || 0;
-      acc.wht += parseFloat(inv.wht || "0") || 0;
+      acc.net += toNum(inv.amount);
+      acc.vat += toNum(inv.vat || "0");
+      acc.wht += toNum(inv.wht || "0");
       return acc;
     }, { net: 0, vat: 0, wht: 0 });
     const invVatRate = totals.net > 0 ? (totals.vat / totals.net) * 100 : 0;
@@ -1104,7 +1107,7 @@ function App() {
             </div>
             <div className="field" style={{alignSelf:'end'}}>
               <label className="field-label" style={{color:'var(--accent)',fontWeight:700}}>{t("总额 (EGP)", "Total (EGP)")}</label>
-              <div className="computed-value highlight" style={{fontSize:14,fontWeight:700,padding:'9px 12px',wordBreak:'break-word',overflowWrap:'anywhere',whiteSpace:'normal',minWidth:0}}>{fmt((parseFloat(data.import_commercial_amount)||0) * ((parseFloat(data.import_commercial_rate)||0) || 1))}</div>
+              <div className="computed-value highlight" style={{fontSize:14,fontWeight:700,padding:'9px 12px',wordBreak:'break-word',overflowWrap:'anywhere',whiteSpace:'normal',minWidth:0}}>{fmt(toNum(data.import_commercial_amount) * (toNum(data.import_commercial_rate) || 1))}</div>
             </div>
           </div>
 
@@ -1157,8 +1160,8 @@ function App() {
               <div></div>
             </div>
           {(data.import_entries ?? []).map((e: any, i: number) => {
-            const amt = parseFloat(e.amount) || 0;
-            const rate = parseFloat(e.rate) || 1;
+            const amt = toNum(e.amount);
+            const rate = toNum(e.rate) || 1;
             const egpAmt = amt * rate;
             const displayAmt = rateVisible ? egpAmt : amt;
             const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
@@ -1320,7 +1323,7 @@ function App() {
                   serial,
                   invoice_no: inv.invoice_no || "",
                   seller_tax_id: inv.seller_tax_id || "",
-                  amount: parseFloat(inv.amount) || 0,
+                  amount: toNum(inv.amount),
                   doc_type: dt,
                 });
               }
@@ -1332,7 +1335,7 @@ function App() {
                     serial,
                     invoice_no: e.service_name || "",
                     seller_tax_id: "",
-                    amount: parseFloat(e.amount) || 0,
+                    amount: toNum(e.amount),
                     doc_type: "import",
                   });
                 }
@@ -1364,7 +1367,7 @@ function App() {
                 serial,
                 invoice_no: inv.invoice_no || "",
                 seller_tax_id: inv.seller_tax_id || "",
-                amount: parseFloat(inv.amount) || 0,
+                amount: toNum(inv.amount),
                 doc_type: dt,
               });
             }
@@ -1375,7 +1378,7 @@ function App() {
                   serial,
                   invoice_no: e.service_name || "",
                   seller_tax_id: "",
-                  amount: parseFloat(e.amount) || 0,
+                  amount: toNum(e.amount),
                   doc_type: "import",
                 });
               }
@@ -2680,18 +2683,37 @@ function App() {
           </div>
         </div>
         <div className="sidebar-metrics">
-          <div className="metric">
-            <span className={`metric-label${computed.c_9A < 0 ? ' negative' : ''}`}>{fmt(computed.c_9A)}</span>
-            <span className="metric-sub">{t("应付净额", "Net Payable")}</span>
-          </div>
-          <div className="metric">
-            <span className={`metric-label${computed.total_deductions < 0 ? ' negative' : ''}`} style={{color: '#f59e0b'}}>{fmt(computed.total_deductions)}</span>
-            <span className="metric-sub">{t("扣款合计", "Deductions")}</span>
-          </div>
-          <div className="metric">
-            <span className={`metric-label${computed.c_10A < 0 ? ' negative' : ''}`}>{fmt(computed.c_10A)}</span>
-            <span className="metric-sub">{t("本期实付", "Current Paid")}</span>
-          </div>
+          {tab === "import" ? (
+            <>
+              <div className="metric">
+                <span className="metric-label">{fmt(computed.import_grand_total)}</span>
+                <span className="metric-sub">{t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")}</span>
+              </div>
+              <div className="metric">
+                <span className="metric-label" style={{color: '#f59e0b'}}>{fmt(computed.import_total_vat)}</span>
+                <span className="metric-sub">{t("VAT 合计", "Total VAT")}</span>
+              </div>
+              <div className="metric">
+                <span className="metric-label">{fmt(computed.import_total_wht)}</span>
+                <span className="metric-sub">{t("WHT 合计", "Total WHT")}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="metric">
+                <span className={`metric-label${computed.c_9A < 0 ? ' negative' : ''}`}>{fmt(computed.c_9A)}</span>
+                <span className="metric-sub">{t("应付净额", "Net Payable")}</span>
+              </div>
+              <div className="metric">
+                <span className={`metric-label${computed.total_deductions < 0 ? ' negative' : ''}`} style={{color: '#f59e0b'}}>{fmt(computed.total_deductions)}</span>
+                <span className="metric-sub">{t("扣款合计", "Deductions")}</span>
+              </div>
+              <div className="metric">
+                <span className={`metric-label${computed.c_10A < 0 ? ' negative' : ''}`}>{fmt(computed.c_10A)}</span>
+                <span className="metric-sub">{t("本期实付", "Current Paid")}</span>
+              </div>
+            </>
+          )}
         </div>
         <nav className="sidebar-nav">
           <button className={tab === "bank" ? "active" : ""} onClick={() => setTab("bank")}>{t("银行", "Bank")}</button>
