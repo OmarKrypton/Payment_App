@@ -2777,7 +2777,7 @@ function App() {
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{display:'flex',alignItems:'center',gap:5}}>
                     <span style={{width:7,height:7,borderRadius:'50%',background:synced?'var(--green)':'var(--red)',display:'inline-block',boxShadow:synced?'0 0 4px var(--green)':'none'}} />
-                    <span style={{fontSize:12,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{authUser}</span>
+                    <span style={{fontSize:12,fontWeight:600,color:'rgba(255,255,255,0.92)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{(authUser || "").split("@")[0]}</span>
                   </div>
                   <span style={{fontSize:10,color:synced?'var(--green)':'var(--red)',opacity:0.8}}>{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</span>
                 </div>
