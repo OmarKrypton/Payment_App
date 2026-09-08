@@ -2139,12 +2139,30 @@ function App() {
       showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${p.invoice_id}`);
       return;
     }
+    await ensureDraftNo();
     const current = [...(formRef.current.import_entries ?? [])];
-    if (current.some((e: any) => e.attached_invoice === p.invoice_id)) {
-      showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
+    const entryImp = (e: any) => ({
+      ...e,
+      attached_invoice: p.invoice_id,
+      attached_uuid: p.uuid || "",
+      seller_tax_id: e.seller_tax_id || p.seller_tax_id || "",
+    });
+    // Match an existing typed service entry (by attached invoice or invoice id in
+    // the service name). If found, just attach the pill instead of adding a row.
+    const idx = current.findIndex((e: any) =>
+      e.attached_invoice === p.invoice_id || serviceNameContainsInvoice(e.service_name, p.invoice_id)
+    );
+    if (idx >= 0) {
+      if (current[idx].attached_invoice === p.invoice_id) {
+        showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
+        return;
+      }
+      current[idx] = entryImp(current[idx]);
+      formRef.current = { ...formRef.current, import_entries: current };
+      await recalc(formRef.current);
+      await markPoolClaimed(id);
       return;
     }
-    await ensureDraftNo();
     const arr = [...current, poolToImportEntry(p)];
     formRef.current = { ...formRef.current, import_entries: arr };
     await recalc(formRef.current);
@@ -2153,38 +2171,55 @@ function App() {
 
   const attachBatchImportEntriesFromPool = async (rowIds: number[]) => {
     if (rowIds.length === 0) return;
+    await ensureDraftNo();
     const current = [...(formRef.current.import_entries ?? [])];
     const items = rowIds.map(id => poolList.find((x: any) => x.id === id)).filter(Boolean) as any[];
-    const already = items.filter(p => current.some((e: any) => e.attached_invoice === p.invoice_id));
-    const fresh = items.filter(p => !already.some((a: any) => a.invoice_id === p.invoice_id) && isInvoiceUsable(p.id));
-    const blockedCount = items.length - already.length - fresh.length;
+    const usable = items.filter(p => isInvoiceUsable(p.id));
+    const blockedCount = items.length - usable.length;
     if (blockedCount > 0) {
       showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
     }
-    if (fresh.length === 0) {
-      if (blockedCount === 0) {
-        showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
+    if (usable.length === 0) return;
+    const entries = [...current];
+    const toClaim: any[] = [];
+    const usedClaimed: any[] = [];
+    for (const p of usable) {
+      const idx = entries.findIndex((e: any) =>
+        e.attached_invoice === p.invoice_id || serviceNameContainsInvoice(e.service_name, p.invoice_id)
+      );
+      if (idx >= 0) {
+        if (entries[idx].attached_invoice === p.invoice_id) { usedClaimed.push(p); continue; }
+        entries[idx] = {
+          ...entries[idx],
+          attached_invoice: p.invoice_id,
+          attached_uuid: p.uuid || "",
+          seller_tax_id: entries[idx].seller_tax_id || p.seller_tax_id || "",
+        };
+        toClaim.push(p);
+      } else {
+        entries.push(poolToImportEntry(p));
+        toClaim.push(p);
       }
+    }
+    if (toClaim.length === 0) {
+      if (usedClaimed.length > 0) showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
       return;
     }
-    await ensureDraftNo();
-    const freshEntries = fresh.map((p: any) => poolToImportEntry(p));
-    const arr = [...current, ...freshEntries];
-    formRef.current = { ...formRef.current, import_entries: arr };
+    formRef.current = { ...formRef.current, import_entries: entries };
     await recalc(formRef.current);
     const serial = currentClaimLabel();
-    const freshIds = fresh.map((p: any) => p.id);
+    const freshIds = toClaim.map(p => p.id);
     try {
       await invoke("mark_pool_invoices_used", { ids: freshIds, snapshotId: 0, snapshotLabel: serial });
     } catch {}
     try {
-      if (authUser) await markPoolsUsedRemote(fresh.map((p: any) => ({ uuid: p.uuid })), serial);
+      if (authUser) await markPoolsUsedRemote(toClaim.map((p: any) => ({ uuid: p.uuid })), serial);
     } catch (e) { console.error("markPoolsUsedRemote failed", e); }
     await loadPool();
-    if (fresh.length > 0) {
+    if (toClaim.length > 0) {
       try {
         const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
-        const attached = arr.filter((e: any) => poolIds.has(e.attached_invoice));
+        const attached = entries.filter((e: any) => poolIds.has(e.attached_invoice));
         if (attached.length > 0) {
           const poolRowIds = attached.map((e: any) => {
             const pi = e.attached_uuid
