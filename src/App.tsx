@@ -195,6 +195,13 @@ const extractTaxIdFromName = (name: string): string => {
   return m ? m[1] : "";
 };
 
+// When the same seller tax id is captured in both a truncated and full form
+// (e.g. "533446" and "533446333"), keep only the complete/longest id.
+const dedupeTaxIds = (set: Set<string>): string[] => {
+  const arr = Array.from(set).filter(Boolean);
+  return arr.filter(a => !arr.some(b => b.length > a.length && (b.startsWith(a) || b.endsWith(a))));
+};
+
 function focusNext(current: HTMLElement) {
   const fields = document.querySelectorAll<HTMLElement>('.field-input, .field-select, button, textarea');
   const idx = Array.from(fields).indexOf(current);
@@ -2548,7 +2555,7 @@ function App() {
           dataJson,
           seriesNo: serial,
           entries: [
-            { label: t("卖方税号", "Seller TAX ID"), value: Array.from(taxSet).join(", ") },
+            { label: t("卖方税号", "Seller TAX ID"), value: dedupeTaxIds(taxSet).join(", ") },
             { label: t("公司名称", "Company"), value: Array.from(coSet).join(", ") },
             { label: t("发票", "Invoices"), value: Array.from(invSet).join(", ") },
           ],
@@ -3008,7 +3015,8 @@ function App() {
                       });
                     }
                     const rows: { label: string; value: string }[] = [];
-                    if (taxSet.size > 0) rows.push({ label: t("卖方税号", "Seller TAX ID"), value: Array.from(taxSet).join(", ") });
+                    const keptTax = dedupeTaxIds(taxSet);
+                    if (keptTax.length > 0) rows.push({ label: t("卖方税号", "Seller TAX ID"), value: keptTax.join(", ") });
                     if (coSet.size > 0) rows.push({ label: t("公司名称", "Company"), value: Array.from(coSet).join(", ") });
                     if (invSet.size > 0) rows.push({ label: t("发票", "Invoices"), value: Array.from(invSet).join(", ") });
                     return rows;
