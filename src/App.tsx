@@ -555,6 +555,8 @@ function App() {
   const [resultSearch, setResultSearch] = useState("");
   const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
   const [supplierSearch, setSupplierSearch] = useState("");
+  const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
+  const [suppliersLoading, setSuppliersLoading] = useState(false);
 
   // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
   // prefill with the last-used rates for that seller).
@@ -1391,41 +1393,6 @@ function App() {
   };
 
   const SuppliersTab = () => {
-    const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [loadedOnce, setLoadedOnce] = useState(false);
-
-    useEffect(() => {
-      (async () => {
-        if (loadedOnce) return;
-        setLoading(true);
-        try {
-          let rows: any[];
-          if (authUser) {
-            try {
-              rows = await listSnapshotsRemote("");
-            } catch (e) {
-              console.error("listSnapshotsRemote failed in suppliers", e);
-              rows = await invoke<HistoryEntry[]>("list_history", { search: "" });
-            }
-          } else {
-            rows = await invoke<HistoryEntry[]>("list_history", { search: "" });
-          }
-          let pool: any[] = [];
-          try {
-            if (authUser) await syncPoolRemote();
-            pool = await invoke<any[]>("list_invoice_pool_summary");
-          } catch {}
-          setSupplierData(buildSuppliers(rows, pool));
-          setLoadedOnce(true);
-        } catch (e) {
-          console.error("suppliers load failed", e);
-        } finally {
-          setLoading(false);
-        }
-      })();
-    }, []);
-
     const q = supplierSearch.trim().toLowerCase();
     const filtered = supplierData.filter((s) => {
       if (!q) return true;
@@ -1456,7 +1423,7 @@ function App() {
             value={supplierSearch}
             onChange={e => setSupplierSearch(e.target.value)}
           />
-          {loading ? (
+          {suppliersLoading ? (
             <div className="history-empty">{t("加载中...", "Loading...")}</div>
           ) : filtered.length === 0 ? (
             <div className="history-empty">{t("没有供应商数据。请先保存文档并同步发票池。", "No supplier data. Save documents and sync the invoice pool first.")}</div>
@@ -2420,6 +2387,44 @@ function App() {
     setPoolSelected(new Set());
     loadPool();
   };
+
+  // Load suppliers data whenever the Suppliers tab is opened (once per session
+  // per signed-in user; re-fetch if the logged-in user changes).
+  const suppliersLoadedRef = useRef(false);
+  const lastAuthForSuppliers = useRef<string | null>(null);
+  const loadSuppliersData = async () => {
+    setSuppliersLoading(true);
+    try {
+      let rows: any[];
+      if (authUser) {
+        try {
+          rows = await listSnapshotsRemote("");
+        } catch (e) {
+          console.error("listSnapshotsRemote failed in suppliers", e);
+          rows = await invoke<HistoryEntry[]>("list_history", { search: "" });
+        }
+      } else {
+        rows = await invoke<HistoryEntry[]>("list_history", { search: "" });
+      }
+      let pool: any[] = [];
+      try {
+        if (authUser) await syncPoolRemote();
+        pool = await invoke<any[]>("list_invoice_pool_summary");
+      } catch {}
+      setSupplierData(buildSuppliers(rows, pool));
+    } catch (e) {
+      console.error("suppliers load failed", e);
+    } finally {
+      setSuppliersLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (tab !== "suppliers") return;
+    if (suppliersLoadedRef.current && authUser === lastAuthForSuppliers.current) return;
+    suppliersLoadedRef.current = true;
+    lastAuthForSuppliers.current = authUser;
+    loadSuppliersData();
+  }, [tab, authUser]);
 
   const openPoolForSelect = () => {
     setPoolMode("select");
