@@ -215,7 +215,7 @@ interface SupplierRateValue {
   value: string;
   count: number;
   pct: number;    // obs / total 0..100
-  items: string[]; // invoice item descriptions that used this rate (imports)
+  items: string[]; // invoice line/item descriptions that used this rate
 }
 interface SupplierRateStat {
   total: number;  // observations
@@ -301,10 +301,20 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     }
   };
 
-  const poolByTax = new Map<string, string>();
+  const poolByTax = new Map<string, { name: string; invoices: any[] }>();
   for (const p of pool) {
-    if (p.seller_tax_id && !poolByTax.has(p.seller_tax_id)) poolByTax.set(p.seller_tax_id, p.seller_name || "");
+    const t = (p.seller_tax_id || "").trim();
+    if (!t) continue;
+    if (p.doc_status && p.doc_status !== "Valid") continue;
+    let e = poolByTax.get(t);
+    if (!e) { e = { name: p.seller_name || "", invoices: [] }; poolByTax.set(t, e); }
+    e.invoices.push(p);
+    if (!e.name && p.seller_name) e.name = p.seller_name;
   }
+  const hasInvoices = (taxId: string) => {
+    const e = poolByTax.get(taxId);
+    return !!(e && e.invoices.length);
+  };
 
   for (const h of history) {
     let p: any = null;
@@ -322,11 +332,15 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       (p.import_entries || []).forEach((e: any) => {
         const taxId = (e.seller_tax_id || extractTaxIdFromName(e.service_name || "") || "").trim();
         if (!taxId) return;
-        upsert(taxId, docRef, "", poolByTax.get(taxId) || "");
+        upsert(taxId, docRef, "", poolByTax.get(taxId)?.name || "");
         const a = acc.get(taxId)!;
         const item = cleanItem(e.service_name);
-        bump(a, "vat", e.vat_rate || "0%", item);
-        considerWht(a, e.wht_rate || "0%", !!e.free_wht, item);
+        if (hasInvoices(taxId)) {
+          if (e.free_wht) a.whtFree = true;
+        } else {
+          bump(a, "vat", e.vat_rate || "0%", item);
+          considerWht(a, e.wht_rate || "0%", !!e.free_wht, item);
+        }
       });
     } else {
       const ids = new Set<string>();
@@ -342,14 +356,49 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
         }
       });
       for (const taxId of ids) {
-        upsert(taxId, docRef, companyByTax.get(taxId) || "", poolByTax.get(taxId) || "");
+        upsert(taxId, docRef, companyByTax.get(taxId) || "", poolByTax.get(taxId)?.name || "");
         const a = acc.get(taxId)!;
-        bump(a, "vat", p.vat_rate || "0%");
         bump(a, "ret", p.ret_rate || "0%");
         bump(a, "temp", p.temp_rate || "0%");
         bump(a, "oth", p.oth_rate || "0%");
         bump(a, "soc", p.soc_rate || "0%");
-        considerWht(a, p.wht_rate || "0%", !!p.check_wht_cert);
+        if (hasInvoices(taxId)) {
+          if (p.check_wht_cert) a.whtFree = true;
+        } else {
+          bump(a, "vat", p.vat_rate || "0%");
+          considerWht(a, p.wht_rate || "0%", !!p.check_wht_cert);
+        }
+      }
+    }
+  }
+
+  // Derive VAT and WHT from the supplier's actual invoices in the pool: each
+  // invoice line carries the real VAT rate for that item, and the invoice WHT
+  // total gives the effective WHT percentage for the invoice.
+  for (const [taxId, a] of acc) {
+    const pe = poolByTax.get(taxId);
+    if (!pe || !pe.invoices.length) continue;
+    if (!a.name && pe.name) a.name = pe.name;
+    if (!a.poolName && pe.name) a.poolName = pe.name;
+    for (const inv of pe.invoices) {
+      let lines: any[] = [];
+      try { lines = JSON.parse(inv.lines_json || "[]"); } catch {}
+      const ratedLines = lines.filter((l: any) => (Number(l.vat_rate) || 0) > 0);
+      if (ratedLines.length) {
+        for (const l of ratedLines) {
+          bump(a, "vat", `${Number(l.vat_rate)}%`, cleanItem(String(l.description || "")));
+        }
+      } else if (inv.net_amount > 0) {
+        const r = Math.round(((inv.total_vat || 0) / inv.net_amount) * 100);
+        if (r > 0) bump(a, "vat", `${r}%`, inv.invoice_id);
+      }
+      const whtPct = inv.net_amount > 0 ? Math.round(((inv.total_wht || 0) / inv.net_amount) * 100) : 0;
+      if (whtPct > 0) {
+        const itemDesc = lines.length ? cleanItem(String(lines[0].description || "")) : inv.invoice_id;
+        bump(a, "wht", `${whtPct}%`, itemDesc);
+        a.whtDeductedObs++;
+      } else {
+        if (!a.whtFree) a.whtZeroNoCertObs++;
       }
     }
   }
@@ -2489,7 +2538,7 @@ function App() {
       let pool: any[] = [];
       try {
         if (authUser) await syncPoolRemote();
-        pool = await invoke<any[]>("list_invoice_pool_summary");
+        pool = await invoke<any[]>("list_invoice_pool_detail");
       } catch {}
       setSupplierData(buildSuppliers(rows, pool));
     } catch (e) {

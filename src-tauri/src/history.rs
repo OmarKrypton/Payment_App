@@ -351,6 +351,75 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     Ok(result)
 }
 
+/// Supplier-analysis pool row: full financials plus per-line JSON (used by the
+/// Suppliers tab to derive per-item VAT rates from the real invoices), but no
+/// raw_xml. The lightweight summary omits lines entirely.
+#[derive(serde::Serialize)]
+pub struct PoolInvoiceDetail {
+    pub id: i64,
+    pub invoice_id: String,
+    pub uuid: String,
+    pub seller_tax_id: String,
+    pub seller_name: String,
+    pub buyer_tax_id: String,
+    pub buyer_name: String,
+    pub issue_date: String,
+    pub currency: String,
+    pub net_amount: f64,
+    pub total_vat: f64,
+    pub total_wht: f64,
+    pub grand_total: f64,
+    pub lines_json: String,
+    pub file_name: String,
+    pub doc_status: String,
+    pub status: String,
+    pub used_by_label: String,
+    pub delete_requested_at: Option<String>,
+    pub delete_requested_by: Option<String>,
+    pub created_at: String,
+}
+
+pub fn list_pool_detail(conn: &Connection) -> Result<Vec<PoolInvoiceDetail>, String> {
+    let mut result = Vec::new();
+    let mut stmt = conn
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices ORDER BY created_at DESC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(PoolInvoiceDetail {
+                id: row.get(0)?,
+                invoice_id: row.get(1)?,
+                uuid: row.get(2)?,
+                seller_tax_id: row.get(3)?,
+                seller_name: row.get(4)?,
+                buyer_tax_id: row.get(5)?,
+                buyer_name: row.get(6)?,
+                issue_date: row.get(7)?,
+                currency: row.get(8)?,
+                net_amount: row.get(9)?,
+                total_vat: row.get(10)?,
+                total_wht: row.get(11)?,
+                grand_total: row.get(12)?,
+                lines_json: row.get(13)?,
+                file_name: row.get(14)?,
+                doc_status: {
+                    let s: String = row.get(15)?;
+                    if s.is_empty() { "Valid".to_string() } else { s }
+                },
+                status: row.get(16)?,
+                used_by_label: row.get(17)?,
+                delete_requested_at: row.get(18)?,
+                delete_requested_by: row.get(19)?,
+                created_at: row.get(20)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
 /// Lightweight pool row for the list UI — excludes raw_xml and lines_json
 /// which are large and not needed for display.
 #[derive(serde::Serialize)]
