@@ -207,19 +207,19 @@ const dedupeTaxIds = (set: Set<string>): string[] => {
 // A WHT-free certificate is issued PER COMPANY: if any document for a supplier
 // carries it (bank: check_wht_cert; import: entry.free_wht), the whole supplier
 // is treated as WHT-free. Rates are item-dependent (e.g. 10% VAT for clearance
-// vs 14% VAT for transport, 1% WHT materials vs 3% WHT services), so instead of
-// one "mode" we keep the full distribution of observed rate values.
+// vs 14% VAT for transport, 1% WHT materials vs 3% WHT services) — both values
+// are "right"; they simply map to different invoice items. So instead of a
+// single "mode", we keep every observed rate value with the invoice item
+// descriptions they came from.
 interface SupplierRateValue {
   value: string;
   count: number;
-  pct: number;
+  pct: number;    // obs / total 0..100
+  items: string[]; // invoice item descriptions that used this rate (imports)
 }
 interface SupplierRateStat {
-  dominant: string; // most frequent rate value
-  count: number;    // occurrences of the dominant value
-  total: number;    // observations
-  pct: number;      // dominant obs / total (0..100)
-  values: SupplierRateValue[]; // full distribution, sorted by count desc
+  total: number;  // observations
+  values: SupplierRateValue[]; // sorted by count desc
 }
 interface SupplierDocRef {
   id: number;
@@ -240,28 +240,45 @@ interface SupplierInfo {
   whtZeroNoCertObs: number;  // 0% WHT observations without a company cert
 }
 
+const cleanItem = (s: string): string => {
+  const v = (s || "")
+    .replace(/TAX\s*ID:?\s*[0-9]+/gi, "")
+    .replace(/INV:?\s*[A-Z0-9\-\/]+/gi, "")
+    .replace(/\bADT\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return v || "—";
+};
+
 const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
+  type RateKey = "vat" | "wht" | "ret" | "temp" | "oth" | "soc";
   type Acc = {
     name: string;
     poolName: string;
     docs: SupplierDocRef[];
-    counts: Partial<Record<"vat" | "wht" | "ret" | "temp" | "oth" | "soc", Record<string, number>>>;
-    totals: Partial<Record<"vat" | "wht" | "ret" | "temp" | "oth" | "soc", number>>;
+    counts: Partial<Record<RateKey, Record<string, number>>>;
+    totals: Partial<Record<RateKey, number>>;
+    items: Partial<Record<RateKey, Record<string, Set<string>>>>;
     whtFree: boolean;
     whtDeductedObs: number;
     whtZeroNoCertObs: number;
   };
   const acc = new Map<string, Acc>();
   const seenDocs = new Map<string, Set<number>>();
-  const bump = (a: Acc, key: "vat" | "wht" | "ret" | "temp" | "oth" | "soc", value: string) => {
+  const bump = (a: Acc, key: RateKey, value: string, item?: string) => {
     if (!value || value === "0%") return;
     a.counts[key] = a.counts[key] || {};
     a.counts[key]![value] = (a.counts[key]![value] || 0) + 1;
     a.totals[key] = (a.totals[key] || 0) + 1;
+    if (item) {
+      a.items[key] = a.items[key] || {};
+      a.items[key]![value] = a.items[key]![value] || new Set<string>();
+      a.items[key]![value].add(item);
+    }
   };
-  const considerWht = (a: Acc, rate: string, whtFreeCert: boolean) => {
+  const considerWht = (a: Acc, rate: string, whtFreeCert: boolean, item?: string) => {
     const pct = parseFloat((rate || "0").replace('%', '')) || 0;
-    if (pct > 0) { bump(a, "wht", rate); a.whtDeductedObs++; return; }
+    if (pct > 0) { bump(a, "wht", rate, item); a.whtDeductedObs++; return; }
     if (whtFreeCert) { a.whtFree = true; return; }
     a.whtZeroNoCertObs++;
   };
@@ -270,7 +287,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     taxId = taxId.trim();
     let a = acc.get(taxId);
     if (!a) {
-      a = { name: companyName || poolName, poolName, docs: [], counts: {}, totals: {}, whtFree: false, whtDeductedObs: 0, whtZeroNoCertObs: 0 };
+      a = { name: companyName || poolName, poolName, docs: [], counts: {}, totals: {}, items: {}, whtFree: false, whtDeductedObs: 0, whtZeroNoCertObs: 0 };
       acc.set(taxId, a);
     } else {
       if (companyName && !a.name) a.name = companyName;
@@ -307,8 +324,9 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
         if (!taxId) return;
         upsert(taxId, docRef, "", poolByTax.get(taxId) || "");
         const a = acc.get(taxId)!;
-        bump(a, "vat", e.vat_rate || "0%");
-        considerWht(a, e.wht_rate || "0%", !!e.free_wht);
+        const item = cleanItem(e.service_name);
+        bump(a, "vat", e.vat_rate || "0%", item);
+        considerWht(a, e.wht_rate || "0%", !!e.free_wht, item);
       });
     } else {
       const ids = new Set<string>();
@@ -344,9 +362,14 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       const total = a.totals[key] || 0;
       if (!counts || total === 0) continue;
       const values: SupplierRateValue[] = Object.entries(counts)
-        .map(([value, count]) => ({ value, count, pct: Math.round((count / total) * 100) }))
+        .map(([value, count]) => ({
+          value,
+          count,
+          pct: Math.round((count / total) * 100),
+          items: a.items[key] && a.items[key]![value] ? [...a.items[key]![value]].slice(0, 6) : [],
+        }))
         .sort((x, y) => y.count - x.count || x.value.localeCompare(y.value));
-      rates[key] = { dominant: values[0].value, count: values[0].count, total, pct: values[0].pct, values };
+      rates[key] = { total, values };
     }
     result.push({
       taxId,
@@ -1422,47 +1445,45 @@ function App() {
       const hue = Math.abs(h) % 360;
       return `hsl(${hue} 62% 48%)`;
     };
-    const initials = (s: SupplierInfo): string => {
-      const n = (s.name || s.poolName || "").trim();
-      if (n) {
-        const parts = n.split(/\s+/).filter(Boolean);
-        if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-        return n.slice(0, 2).toUpperCase();
-      }
-      return s.taxId.slice(-2);
-    };
-    const avatarColor = (s: SupplierInfo): string => {
+    const badgeColor = (s: SupplierInfo): { b: string; f: string } => {
       const tax = s.taxId;
       let h = 0;
       for (let i = 0; i < tax.length; i++) h = (h * 31 + tax.charCodeAt(i)) | 0;
       const hue = Math.abs(h) % 360;
-      return `linear-gradient(135deg, hsl(${hue} 60% 55%), hsl(${(hue + 40) % 360} 60% 40%))`;
+      return { b: `hsl(${hue} 22% 96%)`, f: `hsl(${hue} 45% 42%)` };
     };
 
     const rateBlock = (key: string, st: SupplierRateStat) => (
       <div className="rate-block" key={key}>
         <div className="rate-block-head">
           <span className="rate-block-label">{rateLabel(key)}</span>
-          <span className="rate-block-dominant">
-            {st.dominant}
-            <em>{st.pct}%</em>
-            {st.count < st.total && <small>({st.count}/{st.total})</small>}
-          </span>
+          <span className="rate-block-total">{st.total} {t("条", "obs")}</span>
         </div>
         <div className="rate-stack">
           {st.values.map((v) => (
             <span key={v.value} className="rate-seg" style={{ width: `${v.pct}%`, background: rateColor(v.value) }} title={`${v.value} ×${v.count}`} />
           ))}
         </div>
-        <div className="rate-chips">
-          {st.values.map((v, i) => (
-            <span key={v.value} className={`rate-chip${i === 0 ? " dom" : ""}`}>
-              <i style={{ background: rateColor(v.value) }} />
-              {v.value}
-              <b>{v.count}</b>
-            </span>
-          ))}
-        </div>
+        {st.values.map((v, i) => (
+          <div className={`rate-value${i === 0 ? " dom" : ""}`} key={v.value}>
+            <div className="rate-value-head">
+              <span className="rate-chip">
+                <i style={{ background: rateColor(v.value) }} />
+                {v.value}
+                <b>{v.count}</b>
+              </span>
+              {v.pct < 100 && <span className="rate-value-pct">{v.pct}%</span>}
+            </div>
+            {v.items.length > 0 && (
+              <div className="rate-items">
+                {v.items.map((it, j) => (
+                  <span className="rate-item" key={j}>{it}</span>
+                ))}
+                {v.count > v.items.length && <span className="rate-item more">+{v.count - v.items.length}</span>}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     );
 
@@ -1507,7 +1528,14 @@ function App() {
               return (
                 <div key={s.taxId} className="supplier-card">
                   <div className="supplier-card-head">
-                    <div className="supplier-avatar" style={{ background: avatarColor(s) }}>{initials(s)}</div>
+                    <div className="supplier-glyph" style={{ background: badgeColor(s).b, color: badgeColor(s).f }}>
+                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 21h18" />
+                        <path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16" />
+                        <path d="M15 9h2a2 2 0 0 1 2 2v10" />
+                        <path d="M9 7h2M9 11h2M9 15h2" />
+                      </svg>
+                    </div>
                     <div className="supplier-identity">
                       <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
                       <span className="supplier-taxid">{s.taxId}</span>
