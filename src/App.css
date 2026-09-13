@@ -1263,3 +1263,125 @@ body {
   background: var(--accent);
   transition: width 0.15s ease;
 }
+
+/* ── Suppliers Tab ── */
+.suppliers-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.supplier-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.supplier-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.supplier-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-light);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.supplier-rates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 16px;
+}
+
+.rate-bar-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 92px;
+  align-items: center;
+  gap: 8px;
+}
+
+.rate-bar-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.rate-bar-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.rate-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+.rate-bar-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.rate-bar-meta small {
+  color: var(--text-muted);
+}
+
+.supplier-warn,
+.supplier-ok,
+.supplier-info {
+  font-size: 11px;
+  border-radius: 8px;
+  padding: 5px 10px;
+}
+
+.supplier-warn {
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid #fecaca;
+}
+
+.supplier-ok {
+  color: var(--green);
+  background: var(--green-bg);
+  border: 1px solid #bbf7d0;
+}
+
+.supplier-info {
+  color: var(--text-secondary);
+  background: var(--accent-light);
+  border: 1px solid var(--border);
+}
+
+.supplier-docs summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  user-select: none;
+}
+
+.doc-type-chip {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--accent-light);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
