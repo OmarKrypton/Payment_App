@@ -204,16 +204,22 @@ const dedupeTaxIds = (set: Set<string>): string[] => {
 
 // ── Suppliers aggregation ──
 // Builds a per-supplier profile from saved snapshots + the invoice pool.
-// Each bank snapshot contributes its doc-level rates; each import snapshot's
-// entries contribute their per-entry VAT/WHT rates. WHT is only counted toward
-// a supplier's confident rate when a WHT-free certificate is on file
-// (bank: check_wht_cert; import: entry.free_wht), otherwise a 0% WHT marks the
-// supplier as "needs certificate".
-interface SupplierRateStat {
+// A WHT-free certificate is issued PER COMPANY: if any document for a supplier
+// carries it (bank: check_wht_cert; import: entry.free_wht), the whole supplier
+// is treated as WHT-free. Rates are item-dependent (e.g. 10% VAT for clearance
+// vs 14% VAT for transport, 1% WHT materials vs 3% WHT services), so instead of
+// one "mode" we keep the full distribution of observed rate values.
+interface SupplierRateValue {
   value: string;
   count: number;
-  total: number;
-  pct: number; // confidence 0..100
+  pct: number;
+}
+interface SupplierRateStat {
+  dominant: string; // most frequent rate value
+  count: number;    // occurrences of the dominant value
+  total: number;    // observations
+  pct: number;      // dominant obs / total (0..100)
+  values: SupplierRateValue[]; // full distribution, sorted by count desc
 }
 interface SupplierDocRef {
   id: number;
@@ -229,9 +235,9 @@ interface SupplierInfo {
   docCount: number;
   docs: SupplierDocRef[];
   rates: Partial<Record<"vat" | "wht" | "ret" | "temp" | "oth" | "soc", SupplierRateStat>>;
-  whtNeedsCert: number; // docs with 0% WHT and no certificate
-  whtCertified: number; // docs with 0% WHT + certificate
-  whtDeducted: number;  // docs with WHT > 0%
+  whtFree: boolean;          // WHT-free certificate on file for the company
+  whtDeductedObs: number;    // observations where WHT > 0%
+  whtZeroNoCertObs: number;  // 0% WHT observations without a company cert
 }
 
 const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
@@ -241,9 +247,9 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     docs: SupplierDocRef[];
     counts: Partial<Record<"vat" | "wht" | "ret" | "temp" | "oth" | "soc", Record<string, number>>>;
     totals: Partial<Record<"vat" | "wht" | "ret" | "temp" | "oth" | "soc", number>>;
-    whtNeedsCert: number;
-    whtCertified: number;
-    whtDeducted: number;
+    whtFree: boolean;
+    whtDeductedObs: number;
+    whtZeroNoCertObs: number;
   };
   const acc = new Map<string, Acc>();
   const seenDocs = new Map<string, Set<number>>();
@@ -255,16 +261,16 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   };
   const considerWht = (a: Acc, rate: string, whtFreeCert: boolean) => {
     const pct = parseFloat((rate || "0").replace('%', '')) || 0;
-    if (pct > 0) { bump(a, "wht", rate); a.whtDeducted++; return; }
-    if (whtFreeCert) { a.whtCertified++; return; }
-    a.whtNeedsCert++;
+    if (pct > 0) { bump(a, "wht", rate); a.whtDeductedObs++; return; }
+    if (whtFreeCert) { a.whtFree = true; return; }
+    a.whtZeroNoCertObs++;
   };
   const upsert = (taxId: string, docRef: SupplierDocRef, companyName: string, poolName: string) => {
     if (!taxId) return;
     taxId = taxId.trim();
     let a = acc.get(taxId);
     if (!a) {
-      a = { name: companyName || poolName, poolName, docs: [], counts: {}, totals: {}, whtNeedsCert: 0, whtCertified: 0, whtDeducted: 0 };
+      a = { name: companyName || poolName, poolName, docs: [], counts: {}, totals: {}, whtFree: false, whtDeductedObs: 0, whtZeroNoCertObs: 0 };
       acc.set(taxId, a);
     } else {
       if (companyName && !a.name) a.name = companyName;
@@ -337,12 +343,10 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       const counts = a.counts[key];
       const total = a.totals[key] || 0;
       if (!counts || total === 0) continue;
-      let value = "";
-      let count = 0;
-      for (const [v, c] of Object.entries(counts)) {
-        if (c > count) { value = v; count = c; }
-      }
-      rates[key] = { value, count, total, pct: Math.round((count / total) * 100) };
+      const values: SupplierRateValue[] = Object.entries(counts)
+        .map(([value, count]) => ({ value, count, pct: Math.round((count / total) * 100) }))
+        .sort((x, y) => y.count - x.count || x.value.localeCompare(y.value));
+      rates[key] = { dominant: values[0].value, count: values[0].count, total, pct: values[0].pct, values };
     }
     result.push({
       taxId,
@@ -351,9 +355,9 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       docCount: a.docs.length,
       docs: a.docs,
       rates,
-      whtNeedsCert: a.whtNeedsCert,
-      whtCertified: a.whtCertified,
-      whtDeducted: a.whtDeducted,
+      whtFree: a.whtFree,
+      whtDeductedObs: a.whtDeductedObs,
+      whtZeroNoCertObs: a.whtFree ? 0 : a.whtZeroNoCertObs,
     });
   }
   result.sort((x, y) => y.docCount - x.docCount || x.taxId.localeCompare(y.taxId));
@@ -1412,97 +1416,145 @@ function App() {
     };
     const deco = (d: string) => d === "approve" ? "var(--green)" : d === "conditional" ? "var(--orange)" : d === "reject" ? "var(--red)" : "";
 
+    const rateColor = (v: string): string => {
+      let h = 0;
+      for (let i = 0; i < v.length; i++) h = (h * 31 + v.charCodeAt(i)) | 0;
+      const hue = Math.abs(h) % 360;
+      return `hsl(${hue} 62% 48%)`;
+    };
+    const initials = (s: SupplierInfo): string => {
+      const n = (s.name || s.poolName || "").trim();
+      if (n) {
+        const parts = n.split(/\s+/).filter(Boolean);
+        if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+        return n.slice(0, 2).toUpperCase();
+      }
+      return s.taxId.slice(-2);
+    };
+    const avatarColor = (s: SupplierInfo): string => {
+      const tax = s.taxId;
+      let h = 0;
+      for (let i = 0; i < tax.length; i++) h = (h * 31 + tax.charCodeAt(i)) | 0;
+      const hue = Math.abs(h) % 360;
+      return `linear-gradient(135deg, hsl(${hue} 60% 55%), hsl(${(hue + 40) % 360} 60% 40%))`;
+    };
+
+    const rateBlock = (key: string, st: SupplierRateStat) => (
+      <div className="rate-block" key={key}>
+        <div className="rate-block-head">
+          <span className="rate-block-label">{rateLabel(key)}</span>
+          <span className="rate-block-dominant">
+            {st.dominant}
+            <em>{st.pct}%</em>
+            {st.count < st.total && <small>({st.count}/{st.total})</small>}
+          </span>
+        </div>
+        <div className="rate-stack">
+          {st.values.map((v) => (
+            <span key={v.value} className="rate-seg" style={{ width: `${v.pct}%`, background: rateColor(v.value) }} title={`${v.value} ×${v.count}`} />
+          ))}
+        </div>
+        <div className="rate-chips">
+          {st.values.map((v, i) => (
+            <span key={v.value} className={`rate-chip${i === 0 ? " dom" : ""}`}>
+              <i style={{ background: rateColor(v.value) }} />
+              {v.value}
+              <b>{v.count}</b>
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+
+    const totalDocs = supplierData.reduce((n, s) => n + s.docCount, 0);
+    const whtFreeCount = supplierData.filter((s) => s.whtFree).length;
+    const needsCertCount = supplierData.filter((s) => !s.whtFree && s.whtZeroNoCertObs > 0).length;
+
     return (
       <div className="suppliers-tab">
-        <div className="card">
-          <h3>{t("供应商概览", "Suppliers Overview")}</h3>
-          <input
-            className="field-input"
-            style={{ width: '100%', marginBottom: 10, boxSizing: 'border-box' }}
-            placeholder={t("搜索税号或公司名称...", "Search tax ID or company name...")}
-            value={supplierSearch}
-            onChange={e => setSupplierSearch(e.target.value)}
-          />
-          {suppliersLoading ? (
-            <div className="history-empty">{t("加载中...", "Loading...")}</div>
-          ) : filtered.length === 0 ? (
-            <div className="history-empty">{t("没有供应商数据。请先保存文档并同步发票池。", "No supplier data. Save documents and sync the invoice pool first.")}</div>
-          ) : (
-            <div style={{ display: 'grid', gap: 14 }}>
-              {filtered.map((s) => {
-                const wht = s.rates.wht;
-                const rateKeys = Object.keys(s.rates).filter(k => k !== "wht") as Array<keyof typeof s.rates>;
-                return (
-                  <div key={s.taxId} className="supplier-card">
-                    <div className="supplier-head">
-                      <div style={{ minWidth: 0 }}>
-                        <strong style={{ fontSize: 15, display: 'block' }}>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono, monospace)' }}>{s.taxId}</span>
-                      </div>
-                      <span className="supplier-badge">{t("文档", "Docs")}: {s.docCount}</span>
-                    </div>
-
-                    <div className="supplier-rates">
-                      {rateKeys.map((key) => {
-                        const st = s.rates[key]!;
-                        return (
-                          <div key={key} className="rate-bar-row">
-                            <span className="rate-bar-label">{rateLabel(key)}</span>
-                            <div className="rate-bar-track">
-                              <div className="rate-bar-fill" style={{ width: `${st.pct}%`, background: st.pct >= 80 ? 'var(--green)' : st.pct >= 50 ? 'var(--orange)' : 'var(--red)' }} />
-                            </div>
-                            <span className="rate-bar-meta">{st.value} · {st.pct}%<small>({st.count}/{st.total})</small></span>
-                          </div>
-                        );
-                      })}
-                      {wht && (
-                        <div className="rate-bar-row">
-                          <span className="rate-bar-label">{rateLabel("wht")}</span>
-                          <div className="rate-bar-track">
-                            <div className="rate-bar-fill" style={{ width: `${wht.pct}%`, background: wht.pct >= 80 ? 'var(--green)' : wht.pct >= 50 ? 'var(--orange)' : 'var(--red)' }} />
-                          </div>
-                          <span className="rate-bar-meta">{wht.value} · {wht.pct}%<small>({wht.count}/{wht.total})</small></span>
-                        </div>
-                      )}
-                      {s.whtNeedsCert > 0 && (
-                        <div className="supplier-warn" title={t("该供应商的文档中存在 WHT 为 0% 但无免税证明，请补交", "Documents show 0% WHT without a WHT-free certificate — collect one")}>
-                          ⚠️ {t("需要WHT免税证明", "WHT certificate required")}: {s.whtNeedsCert} {t("份文档", "docs")}
-                        </div>
-                      )}
-                      {s.whtCertified > 0 && (
-                        <div className="supplier-ok" title={t("0% WHT 已提供免税证明", "0% WHT backed by certificate")}>
-                          ✓ {t("已提供WHT免税证明", "WHT certificate on file")}: {s.whtCertified}
-                        </div>
-                      )}
-                      {s.whtDeducted > 0 && (
-                        <div className="supplier-info" title={t("WHT > 0% 已扣缴", "WHT > 0% deducted")}>
-                          • {t("已扣缴WHT", "WHT deducted")}: {s.whtDeducted}
-                        </div>
-                      )}
-                    </div>
-
-                    {s.docs.length > 0 && (
-                      <details className="supplier-docs">
-                        <summary>{t("已保存文档", "Saved documents")} ({s.docs.length})</summary>
-                        <div style={{ display: 'grid', gap: 4, paddingTop: 6 }}>
-                          {s.docs.map((d, i) => (
-                            <div key={`${d.id}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                              <span className="decision-dot" style={{ background: deco(d.final_decision) || 'var(--border)', flexShrink: 0 }} title={d.final_decision} />
-                              <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
-                              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</span>
-                              <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{d.created_at}</span>
-                              <button className="btn-load" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-                );
-              })}
+        <div className="card suppliers-header">
+          <div className="suppliers-header-top">
+            <div>
+              <h3>{t("供应商概览", "Suppliers Overview")}</h3>
+              <p className="suppliers-tagline">{t("根据已保存文档与发票池整理的税率分布与合规状态", "Rate distributions and compliance derived from saved documents and the invoice pool")}</p>
             </div>
-          )}
+            <div className="suppliers-stats">
+              <div className="supplier-stat"><span className="num">{supplierData.length}</span><span className="lbl">{t("供应商", "Suppliers")}</span></div>
+              <div className="supplier-stat"><span className="num">{totalDocs}</span><span className="lbl">{t("文档", "Docs")}</span></div>
+              <div className={`supplier-stat${whtFreeCount > 0 ? " ok" : ""}`}><span className="num">{whtFreeCount}</span><span className="lbl">{t("WHT 免税", "WHT-Free")}</span></div>
+              <div className={`supplier-stat${needsCertCount > 0 ? " warn" : ""}`}><span className="num">{needsCertCount}</span><span className="lbl">{t("需免税证明", "Cert. needed")}</span></div>
+            </div>
+          </div>
+          <div className="suppliers-search">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+            <input
+              className="field-input"
+              placeholder={t("搜索税号或公司名称...", "Search tax ID or company name...")}
+              value={supplierSearch}
+              onChange={e => setSupplierSearch(e.target.value)}
+            />
+          </div>
         </div>
+
+        {suppliersLoading ? (
+          <div className="history-empty">{t("加载中...", "Loading...")}</div>
+        ) : filtered.length === 0 ? (
+          <div className="history-empty">{t("没有供应商数据。请先保存文档并同步发票池。", "No supplier data. Save documents and sync the invoice pool first.")}</div>
+        ) : (
+          <div className="suppliers-list">
+            {filtered.map((s) => {
+              const rateKeys = (Object.keys(s.rates) as (keyof SupplierInfo["rates"])[]).filter(k => !!s.rates[k]);
+              return (
+                <div key={s.taxId} className="supplier-card">
+                  <div className="supplier-card-head">
+                    <div className="supplier-avatar" style={{ background: avatarColor(s) }}>{initials(s)}</div>
+                    <div className="supplier-identity">
+                      <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
+                      <span className="supplier-taxid">{s.taxId}</span>
+                    </div>
+                    <div className="supplier-badges">
+                      <span className="supplier-badge">{s.docCount} {t("文档", "docs")}</span>
+                      {s.whtFree ? (
+                        <span className="supplier-badge ok" title={t("该公司已提供 WHT 免税证明，所有文档均无需预扣", "WHT-free certificate on file — no WHT withholding for this company")}>✓ {t("WHT 免税", "WHT-Free")}</span>
+                      ) : s.whtZeroNoCertObs > 0 ? (
+                        <span className="supplier-badge warn" title={t("存在 0% WHT 但无免税证明的记录", "Some records show 0% WHT without a certificate on file")}>⚠ {t("需免税证明", "Cert. needed")}</span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="supplier-rates">
+                    {rateKeys.map((key) => rateBlock(key, s.rates[key]!))}
+                  </div>
+
+                  <div className={`wht-strip${s.whtFree ? " free" : s.whtZeroNoCertObs > 0 ? " warn" : " neutral"}`}>
+                    {s.whtFree
+                      ? <>{t("✓ WHT 免税证明已备案 — 该公司所有文档按 0% 预扣处理", "✓ WHT-free certificate on file — this company's documents are withheld at 0%")}</>
+                      : s.whtZeroNoCertObs > 0
+                        ? <>{t("⚠ 有", "⚠ ")}{s.whtZeroNoCertObs}{t(" 条记录为 0% WHT 但无免税证明，请向该供应商索取", " record(s) at 0% WHT without a certificate — request one from the supplier")}</>
+                        : <>{t("• WHT 按实际税率扣缴", "• WHT withheld at applicable rates")}</>}
+                  </div>
+
+                  {s.docs.length > 0 && (
+                    <details className="supplier-docs">
+                      <summary>{t("已保存文档", "Saved documents")} ({s.docs.length})</summary>
+                      <div className="supplier-docs-list">
+                        {s.docs.map((d, i) => (
+                          <div key={`${d.id}-${i}`} className="supplier-doc-row">
+                            <span className="decision-dot" style={{ background: deco(d.final_decision) || 'var(--border)', flexShrink: 0 }} title={d.final_decision} />
+                            <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
+                            <span className="supplier-doc-label">{d.label}</span>
+                            <span className="supplier-doc-date">{d.created_at}</span>
+                            <button className="btn-load" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
