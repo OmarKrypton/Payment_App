@@ -1365,19 +1365,15 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.supplier-avatar {
-  width: 42px;
-  height: 42px;
+.supplier-glyph {
+  width: 44px;
+  height: 44px;
   border-radius: 12px;
-  color: #fff;
-  font-weight: 700;
-  font-size: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  letter-spacing: 0.5px;
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
 }
 
 .supplier-identity {
@@ -1452,23 +1448,10 @@ body {
   font-weight: 700;
   color: var(--text-secondary);
 }
-.rate-block-dominant {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-.rate-block-dominant em {
-  font-style: normal;
+.rate-block-total {
   font-size: 11px;
-  font-weight: 600;
   color: var(--text-muted);
-  margin-left: 4px;
-}
-.rate-block-dominant small {
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-left: 4px;
+  white-space: nowrap;
 }
 
 .rate-stack {
@@ -1484,22 +1467,32 @@ body {
   min-width: 2px;
 }
 
-.rate-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.rate-value {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
 }
+.rate-value-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rate-value-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .rate-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--text-secondary);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 2px 9px;
 }
 .rate-chip i {
   width: 8px;
@@ -1510,9 +1503,30 @@ body {
 .rate-chip b {
   color: var(--text-primary);
 }
-.rate-chip.dom {
+.rate-value.dom .rate-chip {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.rate-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.rate-item {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rate-item.more {
+  color: var(--text-secondary);
 }
 
 .wht-strip {
