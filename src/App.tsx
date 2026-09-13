@@ -739,7 +739,7 @@ function App() {
       <h3>{t("8 & 12. 其他扣款与社保", "8 & 12. Others & Social")}</h3>
       <h4>{t("其他扣款", "Other Deductions")}</h4>
       <Input label={t("期初其他扣款", "Initial other")} value={data.val_8A} onChange={v => updateField("val_8A", v)} numeric />
-      <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%", "0.45%"]} onChange={v => updateField("oth_rate", v)} />
+      <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%", "0.45%", "0.6%"]} onChange={v => updateField("oth_rate", v)} />
       <Computed label={t("本期其他扣款", "Current other")} value={computed.c_8B} />
       <Computed label={t("期末累计其他扣款", "Ending other")} value={computed.c_8C} highlight />
 
