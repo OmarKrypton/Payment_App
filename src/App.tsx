@@ -206,20 +206,16 @@ const dedupeTaxIds = (set: Set<string>): string[] => {
 // Builds a per-supplier profile from saved snapshots + the invoice pool.
 // A WHT-free certificate is issued PER COMPANY: if any document for a supplier
 // carries it (bank: check_wht_cert; import: entry.free_wht), the whole supplier
-// is treated as WHT-free. Rates are item-dependent (e.g. 10% VAT for clearance
-// vs 14% VAT for transport, 1% WHT materials vs 3% WHT services) — both values
-// are "right"; they simply map to different invoice items. So instead of a
-// single "mode", we keep every observed rate value with the invoice item
-// descriptions they came from.
-interface SupplierRateValue {
-  value: string;
-  count: number;
-  pct: number;    // obs / total 0..100
-  items: string[]; // invoice line/item descriptions that used this rate
-}
-interface SupplierRateStat {
-  total: number;  // observations
-  values: SupplierRateValue[]; // sorted by count desc
+// is treated as WHT-free. When there is no certificate, WHT is still withheld
+// in our documents at whatever rate we set, so that rate (not the invoice total)
+// is what we report. VAT on ETA invoices is per-item: the same supplier can
+// legitimately charge 10% on customs clearance and 14% on transportation.
+// So VAT is summarised as "which item types at which rate", instead of a
+// single rate or a "confidence".
+interface SupplierVatRow {
+  rate: string;          // e.g. "10%"
+  kinds: string[];       // item types (labels), e.g. ["Customs clearance"]
+  count: number;         // number of invoice lines / entries observed
 }
 interface SupplierDocRef {
   id: number;
@@ -234,10 +230,10 @@ interface SupplierInfo {
   poolName: string;
   docCount: number;
   docs: SupplierDocRef[];
-  rates: Partial<Record<"vat" | "wht" | "ret" | "temp" | "oth" | "soc", SupplierRateStat>>;
-  whtFree: boolean;          // WHT-free certificate on file for the company
-  whtDeductedObs: number;    // observations where WHT > 0%
-  whtZeroNoCertObs: number;  // 0% WHT observations without a company cert
+  vat: SupplierVatRow[];       // VAT rates with their item kinds, count desc
+  whtCert: boolean;            // free-WHT certificate on file
+  whtRate: string | null;      // rate actually withheld in documents when no cert
+  whtDocs: number;             // documents where WHT was actively withheld
 }
 
 const cleanItem = (s: string): string => {
@@ -250,44 +246,50 @@ const cleanItem = (s: string): string => {
   return v || "—";
 };
 
+const vatItemKind = (desc: string): string => {
+  const c = cleanItem(desc);
+  if (!c || c === "—") return "—";
+  const lower = c.toLowerCase();
+  if (/custom|customs|clearance|تعتيق|تخليص/i.test(lower)) return "Customs clearance";
+  if (/transport|carriage|trucking|frieght|freight|delivery|نقل|شحن/i.test(lower)) return "Transportation";
+  if (/storage|warehouse|warehousing|مستودع|تخزين/i.test(lower)) return "Storage";
+  if (/guard|security|حراسة|امن/i.test(lower)) return "Security";
+  if (/rent|lease|ايجار|تاجير/i.test(lower)) return "Rental";
+  if (/container|حاوية/i.test(lower)) return "Container";
+  if (/service|خدمة|خدمات/i.test(lower)) return "Services";
+  return c;
+};
+const vatKindLabel = (kind: string, tr: (zh: string, en: string) => string): string => {
+  switch (kind) {
+    case "Customs clearance": return tr("报关清关", "Customs clearance");
+    case "Transportation": return tr("运输", "Transportation");
+    case "Storage": return tr("仓储", "Storage");
+    case "Security": return tr("安保服务", "Security");
+    case "Rental": return tr("租赁", "Rental");
+    case "Container": return tr("集装箱", "Container");
+    case "Services": return tr("服务", "Services");
+    default: return kind;
+  }
+};
+
 const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
-  type RateKey = "vat" | "wht" | "ret" | "temp" | "oth" | "soc";
   type Acc = {
     name: string;
     poolName: string;
     docs: SupplierDocRef[];
-    counts: Partial<Record<RateKey, Record<string, number>>>;
-    totals: Partial<Record<RateKey, number>>;
-    items: Partial<Record<RateKey, Record<string, Set<string>>>>;
-    whtFree: boolean;
-    whtDeductedObs: number;
-    whtZeroNoCertObs: number;
+    vat: Record<string, Map<string, number>>; // rate -> kind -> count
+    whtCert: boolean;
+    whtRates: Map<string, number>;            // withheld rate -> # entries
+    whtDocs: number;
   };
   const acc = new Map<string, Acc>();
   const seenDocs = new Map<string, Set<number>>();
-  const bump = (a: Acc, key: RateKey, value: string, item?: string) => {
-    if (!value || value === "0%") return;
-    a.counts[key] = a.counts[key] || {};
-    a.counts[key]![value] = (a.counts[key]![value] || 0) + 1;
-    a.totals[key] = (a.totals[key] || 0) + 1;
-    if (item) {
-      a.items[key] = a.items[key] || {};
-      a.items[key]![value] = a.items[key]![value] || new Set<string>();
-      a.items[key]![value].add(item);
-    }
-  };
-  const considerWht = (a: Acc, rate: string, whtFreeCert: boolean, item?: string) => {
-    const pct = parseFloat((rate || "0").replace('%', '')) || 0;
-    if (pct > 0) { bump(a, "wht", rate, item); a.whtDeductedObs++; return; }
-    if (whtFreeCert) { a.whtFree = true; return; }
-    a.whtZeroNoCertObs++;
-  };
   const upsert = (taxId: string, docRef: SupplierDocRef, companyName: string, poolName: string) => {
     if (!taxId) return;
     taxId = taxId.trim();
     let a = acc.get(taxId);
     if (!a) {
-      a = { name: companyName || poolName, poolName, docs: [], counts: {}, totals: {}, items: {}, whtFree: false, whtDeductedObs: 0, whtZeroNoCertObs: 0 };
+      a = { name: companyName || poolName, poolName, docs: [], vat: {}, whtCert: false, whtRates: new Map(), whtDocs: 0 };
       acc.set(taxId, a);
     } else {
       if (companyName && !a.name) a.name = companyName;
@@ -298,6 +300,20 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     if (!seen.has(docRef.id)) {
       seen.add(docRef.id);
       a.docs.push(docRef);
+    }
+  };
+  const bumpVat = (a: Acc, rate: string, kind: string) => {
+    const r = (rate || "0%").trim();
+    const pct = parseFloat(r.replace('%', '')) || 0;
+    if (pct <= 0) return;
+    if (!a.vat[r]) a.vat[r] = new Map();
+    a.vat[r].set(kind, (a.vat[r].get(kind) || 0) + 1);
+  };
+  const bumpWht = (a: Acc, rate: string) => {
+    const pct = parseFloat((rate || "0").replace('%', '')) || 0;
+    if (pct > 0) {
+      a.whtRates.set((rate || "").trim(), (a.whtRates.get((rate || "").trim()) || 0) + 1);
+      a.whtDocs++;
     }
   };
 
@@ -334,12 +350,13 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
         if (!taxId) return;
         upsert(taxId, docRef, "", poolByTax.get(taxId)?.name || "");
         const a = acc.get(taxId)!;
-        const item = cleanItem(e.service_name);
+        if (e.free_wht) a.whtCert = true;
         if (hasInvoices(taxId)) {
-          if (e.free_wht) a.whtFree = true;
+          // VAT comes from the actual invoices below; WHT is still withheld by us.
+          bumpWht(a, e.wht_rate || "0%");
         } else {
-          bump(a, "vat", e.vat_rate || "0%", item);
-          considerWht(a, e.wht_rate || "0%", !!e.free_wht, item);
+          bumpVat(a, e.vat_rate || "0%", vatItemKind(e.service_name));
+          bumpWht(a, e.wht_rate || "0%");
         }
       });
     } else {
@@ -358,23 +375,18 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       for (const taxId of ids) {
         upsert(taxId, docRef, companyByTax.get(taxId) || "", poolByTax.get(taxId)?.name || "");
         const a = acc.get(taxId)!;
-        bump(a, "ret", p.ret_rate || "0%");
-        bump(a, "temp", p.temp_rate || "0%");
-        bump(a, "oth", p.oth_rate || "0%");
-        bump(a, "soc", p.soc_rate || "0%");
+        if (p.check_wht_cert) a.whtCert = true;
         if (hasInvoices(taxId)) {
-          if (p.check_wht_cert) a.whtFree = true;
+          bumpWht(a, p.wht_rate || "0%");
         } else {
-          bump(a, "vat", p.vat_rate || "0%");
-          considerWht(a, p.wht_rate || "0%", !!p.check_wht_cert);
+          bumpVat(a, p.vat_rate || "0%", vatItemKind(p.invoices?.[0]?.company_name || ""));
+          bumpWht(a, p.wht_rate || "0%");
         }
       }
     }
   }
 
-  // Derive VAT and WHT from the supplier's actual invoices in the pool: each
-  // invoice line carries the real VAT rate for that item, and the invoice WHT
-  // total gives the effective WHT percentage for the invoice.
+  // VAT per item type straight from the supplier's invoices in the pool.
   for (const [taxId, a] of acc) {
     const pe = poolByTax.get(taxId);
     if (!pe || !pe.invoices.length) continue;
@@ -386,50 +398,40 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       const ratedLines = lines.filter((l: any) => (Number(l.vat_rate) || 0) > 0);
       if (ratedLines.length) {
         for (const l of ratedLines) {
-          bump(a, "vat", `${Number(l.vat_rate)}%`, cleanItem(String(l.description || "")));
+          bumpVat(a, `${Number(l.vat_rate)}%`, vatItemKind(String(l.description || "")));
         }
       } else if (inv.net_amount > 0) {
         const r = Math.round(((inv.total_vat || 0) / inv.net_amount) * 100);
-        if (r > 0) bump(a, "vat", `${r}%`, inv.invoice_id);
-      }
-      const whtPct = inv.net_amount > 0 ? Math.round(((inv.total_wht || 0) / inv.net_amount) * 100) : 0;
-      if (whtPct > 0) {
-        const itemDesc = lines.length ? cleanItem(String(lines[0].description || "")) : inv.invoice_id;
-        bump(a, "wht", `${whtPct}%`, itemDesc);
-        a.whtDeductedObs++;
-      } else {
-        if (!a.whtFree) a.whtZeroNoCertObs++;
+        if (r > 0) bumpVat(a, `${r}%`, vatItemKind(inv.seller_name || inv.invoice_id));
       }
     }
   }
 
   const result: SupplierInfo[] = [];
   for (const [taxId, a] of acc) {
-    const rates: NonNullable<SupplierInfo["rates"]> = {};
-    for (const key of ["vat", "wht", "ret", "temp", "oth", "soc"] as const) {
-      const counts = a.counts[key];
-      const total = a.totals[key] || 0;
-      if (!counts || total === 0) continue;
-      const values: SupplierRateValue[] = Object.entries(counts)
-        .map(([value, count]) => ({
-          value,
-          count,
-          pct: Math.round((count / total) * 100),
-          items: a.items[key] && a.items[key]![value] ? [...a.items[key]![value]].slice(0, 6) : [],
-        }))
-        .sort((x, y) => y.count - x.count || x.value.localeCompare(y.value));
-      rates[key] = { total, values };
-    }
+    const vat: SupplierVatRow[] = Object.entries(a.vat)
+      .map(([rate, kinds]) => ({
+        rate,
+        kinds: [...kinds.entries()]
+          .sort((x, y) => y[1] - x[1])
+          .slice(0, 3)
+          .map(([kind]) => kind),
+        count: [...kinds.values()].reduce((n, c) => n + c, 0),
+      }))
+      .sort((x, y) => y.count - x.count);
+    const whtRate = a.whtRates.size
+      ? [...a.whtRates.entries()].sort((x, y) => y[1] - x[1])[0][0]
+      : null;
     result.push({
       taxId,
       name: a.name || a.poolName || "",
       poolName: a.poolName || "",
       docCount: a.docs.length,
       docs: a.docs,
-      rates,
-      whtFree: a.whtFree,
-      whtDeductedObs: a.whtDeductedObs,
-      whtZeroNoCertObs: a.whtFree ? 0 : a.whtZeroNoCertObs,
+      vat,
+      whtCert: a.whtCert,
+      whtRate,
+      whtDocs: a.whtDocs,
     });
   }
   result.sort((x, y) => y.docCount - x.docCount || x.taxId.localeCompare(y.taxId));
@@ -1475,25 +1477,7 @@ function App() {
       return s.taxId.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.poolName.toLowerCase().includes(q);
     });
 
-    const rateLabel = (key: string): string => {
-      switch (key) {
-        case "vat": return t("VAT", "VAT");
-        case "wht": return t("WHT", "WHT");
-        case "ret": return t("保留金", "Retention");
-        case "temp": return t("临时工", "Temp");
-        case "oth": return t("其他", "Other");
-        case "soc": return t("社保", "Social");
-        default: return key;
-      }
-    };
     const deco = (d: string) => d === "approve" ? "var(--green)" : d === "conditional" ? "var(--orange)" : d === "reject" ? "var(--red)" : "";
-
-    const rateColor = (v: string): string => {
-      let h = 0;
-      for (let i = 0; i < v.length; i++) h = (h * 31 + v.charCodeAt(i)) | 0;
-      const hue = Math.abs(h) % 360;
-      return `hsl(${hue} 62% 48%)`;
-    };
     const badgeColor = (s: SupplierInfo): { b: string; f: string } => {
       const tax = s.taxId;
       let h = 0;
@@ -1502,48 +1486,9 @@ function App() {
       return { b: `hsl(${hue} 22% 96%)`, f: `hsl(${hue} 45% 42%)` };
     };
 
-    const rateBlock = (key: string, st: SupplierRateStat) => {
-      const domItems = [...(st.values[0]?.items ?? [])];
-      for (let i = 1; i < st.values.length && domItems.length < 4; i++) {
-        for (const it of st.values[i].items) {
-          if (!domItems.includes(it)) domItems.push(it);
-          if (domItems.length >= 4) break;
-        }
-      }
-      return (
-        <div className="srate-row" key={key}>
-          <div className="srate-row-main">
-            <div className="srate-row-head">
-              <span className="srate-row-label">{rateLabel(key)}</span>
-              <span className="srate-bar">
-                {st.values.map((v) => (
-                  <span key={v.value} className="rate-seg" style={{ width: `${v.pct}%`, background: rateColor(v.value) }} title={`${v.value} ×${v.count}`} />
-                ))}
-              </span>
-              <span className="srate-row-values">
-                {st.values.map((v) => (
-                  <span className="srate-rv" key={v.value} title={`${v.value} ×${v.count}: ${v.items.join(", ")}`}>
-                    <i style={{ background: rateColor(v.value) }} />
-                    <b>{v.value}</b>
-                    <em>×{v.count}</em>
-                  </span>
-                ))}
-              </span>
-              <span className="srate-row-total">{st.total}</span>
-            </div>
-            {domItems.length > 0 && (
-              <div className="srate-row-items" title={domItems.join(", ")}>
-                {domItems.join(" · ")}
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    };
-
     const totalDocs = supplierData.reduce((n, s) => n + s.docCount, 0);
-    const whtFreeCount = supplierData.filter((s) => s.whtFree).length;
-    const needsCertCount = supplierData.filter((s) => !s.whtFree && s.whtZeroNoCertObs > 0).length;
+    const whtFreeCount = supplierData.filter((s) => s.whtCert).length;
+    const withholdingCount = supplierData.filter((s) => !s.whtCert && s.whtRate).length;
 
     return (
       <div className="suppliers-tab">
@@ -1551,14 +1496,14 @@ function App() {
           <div className="suppliers-header-top">
             <div>
               <h3>{t("供应商概览", "Suppliers Overview")}</h3>
-              <p className="suppliers-tagline">{t("根据已保存文档与发票池整理的税率分布与合规状态", "Rate distributions and compliance derived from saved documents and the invoice pool")}</p>
+              <p className="suppliers-tagline">{t("各供应商的税率情况与 WHT 状态，来自已保存文档和发票池", "VAT by item type and WHT status per supplier, derived from saved documents and the invoice pool")}</p>
             </div>
             <div className="suppliers-stats">
               <span className="supplier-stat">{supplierData.length} {t("供应商", "Suppliers")}</span>
               <span className="dot-sep">·</span>
               <span className="supplier-stat">{totalDocs} {t("文档", "docs")}</span>
               {whtFreeCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span></>}
-              {needsCertCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{needsCertCount} {t("需免税证明", "need cert")}</span></>}
+              {withholdingCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span></>}
             </div>
           </div>
           <div className="suppliers-search">
@@ -1578,56 +1523,89 @@ function App() {
           <div className="history-empty">{t("没有供应商数据。请先保存文档并同步发票池。", "No supplier data. Save documents and sync the invoice pool first.")}</div>
         ) : (
           <div className="suppliers-list">
-            {filtered.map((s) => {
-              const rateKeys = (Object.keys(s.rates) as (keyof SupplierInfo["rates"])[]).filter(k => !!s.rates[k]);
-              return (
-                <div key={s.taxId} className="supplier-card">
-                  <div className="supplier-card-head">
-                    <div className="supplier-glyph" style={{ background: badgeColor(s).b, color: badgeColor(s).f }}>
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 21h18" />
-                        <path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16" />
-                        <path d="M15 9h2a2 2 0 0 1 2 2v10" />
-                        <path d="M9 7h2M9 11h2M9 15h2" />
-                      </svg>
-                    </div>
-                    <div className="supplier-identity">
-                      <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
-                      <span className="supplier-taxid">{s.taxId} · {s.docCount} {t("文档", "docs")}</span>
-                    </div>
+            {filtered.map((s) => (
+              <div key={s.taxId} className="supplier-card">
+                <div className="supplier-card-head">
+                  <div className="supplier-glyph" style={{ background: badgeColor(s).b, color: badgeColor(s).f }}>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 21h18" />
+                      <path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16" />
+                      <path d="M15 9h2a2 2 0 0 1 2 2v10" />
+                      <path d="M9 7h2M9 11h2M9 15h2" />
+                    </svg>
                   </div>
-
-                  <div className="supplier-rates">
-                    {rateKeys.map((key) => rateBlock(key, s.rates[key]!))}
+                  <div className="supplier-identity">
+                    <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
+                    <span className="supplier-taxid">{s.taxId}</span>
                   </div>
+                </div>
 
-                  <div className={`wht-strip${s.whtFree ? " free" : s.whtZeroNoCertObs > 0 ? " warn" : " neutral"}`}>
-                    {s.whtFree
-                      ? <>{t("✓ WHT 免税证明已备案 — 该公司所有文档按 0% 预扣处理", "✓ WHT-free certificate on file — this company's documents are withheld at 0%")}</>
-                      : s.whtZeroNoCertObs > 0
-                        ? <>{t("⚠ 有", "⚠ ")}{s.whtZeroNoCertObs}{t(" 条记录为 0% WHT 但无免税证明，请向该供应商索取", " record(s) at 0% WHT without a certificate — request one from the supplier")}</>
-                        : <>{t("• WHT 按实际税率扣缴", "• WHT withheld at applicable rates")}</>}
-                  </div>
-
-                  {s.docs.length > 0 && (
-                    <details className="supplier-docs">
-                      <summary>{t("已保存文档", "Saved documents")} ({s.docs.length})</summary>
-                      <div className="supplier-docs-list">
-                        {s.docs.map((d, i) => (
-                          <div key={`${d.id}-${i}`} className="supplier-doc-row">
-                            <span className="decision-dot" style={{ background: deco(d.final_decision) || 'var(--border)', flexShrink: 0 }} title={d.final_decision} />
-                            <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
-                            <span className="supplier-doc-label">{d.label}</span>
-                            <span className="supplier-doc-date">{d.created_at}</span>
-                            <button className="btn-load" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
+                <div className="supplier-body">
+                  <div className="supplier-section">
+                    <div className="supplier-section-title">{t("VAT 按项目类型", "VAT by item type")}</div>
+                    {s.vat.length === 0 ? (
+                      <div className="supplier-empty">{t("暂无 VAT 记录", "No VAT records")}</div>
+                    ) : (
+                      <div className="supplier-vat">
+                        {s.vat.map((row) => (
+                          <div className="supplier-vat-row" key={row.rate}>
+                            <span className="supplier-rate">{row.rate}</span>
+                            <span className="supplier-kinds">{row.kinds.map(k => vatKindLabel(k, t)).join(" · ")}</span>
+                            <span className="supplier-count">{row.count} {t("笔", "lines")}</span>
                           </div>
                         ))}
                       </div>
-                    </details>
-                  )}
+                    )}
+                  </div>
+
+                  <div className="supplier-section">
+                    <div className="supplier-section-title">{t("WHT 状态", "WHT status")}</div>
+                    {s.whtCert ? (
+                      <div className="supplier-wht free">
+                        <span className="supplier-wht-dot" />
+                        <div>
+                          <strong>{t("已获 WHT 免税证明", "WHT-free certificate")}</strong>
+                          <span className="supplier-wht-sub">{t("本供应商所有文档按 0% 预扣处理", "all documents are withheld at 0%")}</span>
+                        </div>
+                      </div>
+                    ) : s.whtRate ? (
+                      <div className="supplier-wht warn">
+                        <span className="supplier-wht-dot" />
+                        <div>
+                          <strong>{t("按", "Withholding at ")}{s.whtRate}{t(" 预扣，无免税证明", " — no free-WHT certificate")}</strong>
+                          <span className="supplier-wht-sub">{s.whtDocs} {t("份文档实际扣缴了 WHT", " document(s) actually withheld WHT")}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="supplier-wht neutral">
+                        <span className="supplier-wht-dot" />
+                        <div>
+                          <strong>{t("无 WHT 记录", "No WHT records")}</strong>
+                          <span className="supplier-wht-sub">{t("未保存任何预扣信息", "nothing withheld recorded yet")}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              );
-            })}
+
+                {s.docs.length > 0 && (
+                  <details className="supplier-docs">
+                    <summary>{t("已保存文档", "Saved documents")} ({s.docs.length})</summary>
+                    <div className="supplier-docs-list">
+                      {s.docs.map((d, i) => (
+                        <div key={`${d.id}-${i}`} className="supplier-doc-row">
+                          <span className="decision-dot" style={{ background: deco(d.final_decision) || 'var(--border)', flexShrink: 0 }} title={d.final_decision} />
+                          <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
+                          <span className="supplier-doc-label">{d.label}</span>
+                          <span className="supplier-doc-date">{d.created_at}</span>
+                          <button className="btn-load" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
