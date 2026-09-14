@@ -1502,39 +1502,44 @@ function App() {
       return { b: `hsl(${hue} 22% 96%)`, f: `hsl(${hue} 45% 42%)` };
     };
 
-    const rateBlock = (key: string, st: SupplierRateStat) => (
-      <div className="rate-block" key={key}>
-        <div className="rate-block-head">
-          <span className="rate-block-label">{rateLabel(key)}</span>
-          <span className="rate-block-total">{st.total} {t("条", "obs")}</span>
-        </div>
-        <div className="rate-stack">
-          {st.values.map((v) => (
-            <span key={v.value} className="rate-seg" style={{ width: `${v.pct}%`, background: rateColor(v.value) }} title={`${v.value} ×${v.count}`} />
-          ))}
-        </div>
-        {st.values.map((v, i) => (
-          <div className={`rate-value${i === 0 ? " dom" : ""}`} key={v.value}>
-            <div className="rate-value-head">
-              <span className="rate-chip">
-                <i style={{ background: rateColor(v.value) }} />
-                {v.value}
-                <b>{v.count}</b>
-              </span>
-              {v.pct < 100 && <span className="rate-value-pct">{v.pct}%</span>}
-            </div>
-            {v.items.length > 0 && (
-              <div className="rate-items">
-                {v.items.map((it, j) => (
-                  <span className="rate-item" key={j}>{it}</span>
+    const rateBlock = (key: string, st: SupplierRateStat) => {
+      const domItems = [...(st.values[0]?.items ?? [])];
+      for (let i = 1; i < st.values.length && domItems.length < 4; i++) {
+        for (const it of st.values[i].items) {
+          if (!domItems.includes(it)) domItems.push(it);
+          if (domItems.length >= 4) break;
+        }
+      }
+      return (
+        <div className="srate-row" key={key}>
+          <div className="srate-row-main">
+            <div className="srate-row-head">
+              <span className="srate-row-label">{rateLabel(key)}</span>
+              <span className="srate-bar">
+                {st.values.map((v) => (
+                  <span key={v.value} className="rate-seg" style={{ width: `${v.pct}%`, background: rateColor(v.value) }} title={`${v.value} ×${v.count}`} />
                 ))}
-                {v.count > v.items.length && <span className="rate-item more">+{v.count - v.items.length}</span>}
+              </span>
+              <span className="srate-row-values">
+                {st.values.map((v) => (
+                  <span className="srate-rv" key={v.value} title={`${v.value} ×${v.count}: ${v.items.join(", ")}`}>
+                    <i style={{ background: rateColor(v.value) }} />
+                    <b>{v.value}</b>
+                    <em>×{v.count}</em>
+                  </span>
+                ))}
+              </span>
+              <span className="srate-row-total">{st.total}</span>
+            </div>
+            {domItems.length > 0 && (
+              <div className="srate-row-items" title={domItems.join(", ")}>
+                {domItems.join(" · ")}
               </div>
             )}
           </div>
-        ))}
-      </div>
-    );
+        </div>
+      );
+    };
 
     const totalDocs = supplierData.reduce((n, s) => n + s.docCount, 0);
     const whtFreeCount = supplierData.filter((s) => s.whtFree).length;
@@ -1549,10 +1554,11 @@ function App() {
               <p className="suppliers-tagline">{t("根据已保存文档与发票池整理的税率分布与合规状态", "Rate distributions and compliance derived from saved documents and the invoice pool")}</p>
             </div>
             <div className="suppliers-stats">
-              <div className="supplier-stat"><span className="num">{supplierData.length}</span><span className="lbl">{t("供应商", "Suppliers")}</span></div>
-              <div className="supplier-stat"><span className="num">{totalDocs}</span><span className="lbl">{t("文档", "Docs")}</span></div>
-              <div className={`supplier-stat${whtFreeCount > 0 ? " ok" : ""}`}><span className="num">{whtFreeCount}</span><span className="lbl">{t("WHT 免税", "WHT-Free")}</span></div>
-              <div className={`supplier-stat${needsCertCount > 0 ? " warn" : ""}`}><span className="num">{needsCertCount}</span><span className="lbl">{t("需免税证明", "Cert. needed")}</span></div>
+              <span className="supplier-stat">{supplierData.length} {t("供应商", "Suppliers")}</span>
+              <span className="dot-sep">·</span>
+              <span className="supplier-stat">{totalDocs} {t("文档", "docs")}</span>
+              {whtFreeCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span></>}
+              {needsCertCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{needsCertCount} {t("需免税证明", "need cert")}</span></>}
             </div>
           </div>
           <div className="suppliers-search">
@@ -1587,15 +1593,7 @@ function App() {
                     </div>
                     <div className="supplier-identity">
                       <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
-                      <span className="supplier-taxid">{s.taxId}</span>
-                    </div>
-                    <div className="supplier-badges">
-                      <span className="supplier-badge">{s.docCount} {t("文档", "docs")}</span>
-                      {s.whtFree ? (
-                        <span className="supplier-badge ok" title={t("该公司已提供 WHT 免税证明，所有文档均无需预扣", "WHT-free certificate on file — no WHT withholding for this company")}>✓ {t("WHT 免税", "WHT-Free")}</span>
-                      ) : s.whtZeroNoCertObs > 0 ? (
-                        <span className="supplier-badge warn" title={t("存在 0% WHT 但无免税证明的记录", "Some records show 0% WHT without a certificate on file")}>⚠ {t("需免税证明", "Cert. needed")}</span>
-                      ) : null}
+                      <span className="supplier-taxid">{s.taxId} · {s.docCount} {t("文档", "docs")}</span>
                     </div>
                   </div>
 
