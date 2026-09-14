@@ -1420,6 +1420,18 @@ body {
   gap: 8px;
   font-size: 12.5px;
   min-width: 0;
+  background: none;
+  border: none;
+  padding: 3px 4px;
+  margin: 0 -4px;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  color: inherit;
+}
+.supplier-vat-row:hover {
+  background: var(--bg-input);
 }
 .supplier-rate {
   font-weight: 700;
@@ -1483,6 +1495,64 @@ body {
 }
 .supplier-wht.warn .supplier-wht-dot { background: var(--orange); }
 .supplier-wht.warn strong { color: var(--orange); }
+
+.vat-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.vat-popover {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  width: min(440px, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.vat-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.vat-popover-title strong {
+  font-size: 15px;
+  display: block;
+}
+.vat-popover-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vat-popover-list {
+  overflow-y: auto;
+  display: grid;
+  gap: 2px;
+  padding: 10px 16px 14px;
+}
+.vat-popover-item {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.vat-popover-item:last-child {
+  border-bottom: none;
+}
 
 .supplier-docs {
   padding: 0 16px 6px;

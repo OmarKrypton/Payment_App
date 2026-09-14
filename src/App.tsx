@@ -214,7 +214,8 @@ const dedupeTaxIds = (set: Set<string>): string[] => {
 // single rate or a "confidence".
 interface SupplierVatRow {
   rate: string;          // e.g. "10%"
-  kinds: string[];       // item types (labels), e.g. ["Customs clearance"]
+  kinds: string[];       // top item types (labels) shown inline, e.g. ["Customs clearance"]
+  allKinds: string[];    // full distinct item list (for the popover)
   count: number;         // number of invoice lines / entries observed
 }
 interface SupplierDocRef {
@@ -257,7 +258,7 @@ const vatItemKind = (desc: string): string => {
   if (/rent|lease|ايجار|تاجير/i.test(lower)) return "Rental";
   if (/container|حاوية/i.test(lower)) return "Container";
   if (/service|خدمة|خدمات/i.test(lower)) return "Services";
-  return c;
+  return c.replace(/\s+[A-Z]*\d{6,}[A-Z0-9]*$/, "").trim() || c;
 };
 const vatKindLabel = (kind: string, tr: (zh: string, en: string) => string): string => {
   switch (kind) {
@@ -410,14 +411,15 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   const result: SupplierInfo[] = [];
   for (const [taxId, a] of acc) {
     const vat: SupplierVatRow[] = Object.entries(a.vat)
-      .map(([rate, kinds]) => ({
-        rate,
-        kinds: [...kinds.entries()]
-          .sort((x, y) => y[1] - x[1])
-          .slice(0, 3)
-          .map(([kind]) => kind),
-        count: [...kinds.values()].reduce((n, c) => n + c, 0),
-      }))
+      .map(([rate, kinds]) => {
+        const sorted = [...kinds.entries()].sort((x, y) => y[1] - x[1]);
+        return {
+          rate,
+          kinds: sorted.slice(0, 3).map(([kind]) => kind),
+          allKinds: sorted.map(([kind]) => kind),
+          count: sorted.reduce((n, [, c]) => n + c, 0),
+        };
+      })
       .sort((x, y) => y.count - x.count);
     const whtRate = a.whtRates.size
       ? [...a.whtRates.entries()].sort((x, y) => y[1] - x[1])[0][0]
@@ -635,6 +637,7 @@ function App() {
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
+  const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; kinds: string[] } | null>(null);
 
   // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
   // prefill with the last-used rates for that seller).
@@ -1548,11 +1551,21 @@ function App() {
                     ) : (
                       <div className="supplier-vat">
                         {s.vat.map((row) => (
-                          <div className="supplier-vat-row" key={row.rate}>
+                          <button
+                            type="button"
+                            className="supplier-vat-row"
+                            key={row.rate}
+                            onClick={() => setVatPopover(
+                              vatPopover && vatPopover.taxId === s.taxId && vatPopover.rate === row.rate
+                                ? null
+                                : { taxId: s.taxId, rate: row.rate, kinds: row.allKinds }
+                            )}
+                            title={t("点击查看全部项目", "Click to view all items")}
+                          >
                             <span className="supplier-rate">{row.rate}</span>
                             <span className="supplier-kinds">{row.kinds.map(k => vatKindLabel(k, t)).join(" · ")}</span>
-                            <span className="supplier-count">{row.count} {t("笔", "lines")}</span>
-                          </div>
+                            <span className="supplier-count">{row.count} {t("项", "lines")}</span>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -3965,6 +3978,29 @@ function App() {
           </div>
         </div>
       )}
+      {vatPopover && (() => {
+        const sup = supplierData.find(x => x.taxId === vatPopover.taxId);
+        return (
+          <div className="vat-popover-backdrop" onClick={() => setVatPopover(null)}>
+            <div className="vat-popover" onClick={e => e.stopPropagation()}>
+              <div className="vat-popover-head">
+                <div className="vat-popover-title">
+                  <strong>{vatPopover.rate} VAT</strong>
+                  <span className="vat-popover-sub">{sup ? (sup.name || vatPopover.taxId) : vatPopover.taxId}</span>
+                </div>
+                <button className="btn-load" onClick={() => setVatPopover(null)}>{t("关闭", "Close")}</button>
+              </div>
+              <div className="vat-popover-list">
+                {vatPopover.kinds.length === 0
+                  ? <div className="supplier-empty">{t("暂无明细", "No items")}</div>
+                  : vatPopover.kinds.map((k, i) => (
+                    <div className="vat-popover-item" key={`${k}-${i}`}>{vatKindLabel(k, t)}</div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
