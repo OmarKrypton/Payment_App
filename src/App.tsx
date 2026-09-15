@@ -373,7 +373,10 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
           companyByTax.set(String(inv.seller_tax_id).trim(), inv.company_name);
         }
       });
-      for (const taxId of ids) {
+      // One bank document may list the same seller in both truncated and full
+      // form (e.g. "686478" and "686478444"); keep only the complete IDs so the
+      // truncated one does not spawn a phantom supplier.
+      for (const taxId of dedupeTaxIds(ids)) {
         upsert(taxId, docRef, companyByTax.get(taxId) || "", poolByTax.get(taxId)?.name || "");
         const a = acc.get(taxId)!;
         if (p.check_wht_cert) a.whtCert = true;
@@ -409,6 +412,41 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   }
 
   const result: SupplierInfo[] = [];
+  // Merge truncated tax IDs into their full counterparts. A service name can
+  // embed a shortened seller id (e.g. "686478") that is really a prefix/suffix
+  // of the complete id ("686478444") seen in another document or the pool.
+  // Collapsing them keeps one supplier instead of two phantom entries.
+  const taxIds = [...acc.keys()];
+  const mergeMap = new Map<string, string>();
+  for (const id of taxIds) {
+    let best = id;
+    for (const other of taxIds) {
+      if (other.length > best.length && (other.startsWith(best) || other.endsWith(best))) best = other;
+    }
+    if (best !== id) mergeMap.set(id, best);
+  }
+  for (const [from, to] of mergeMap) {
+    const fromAcc = acc.get(from);
+    const toAcc = acc.get(to);
+    if (!fromAcc || !toAcc) continue;
+    for (const d of fromAcc.docs) {
+      let seen = seenDocs.get(to);
+      if (!seen) { seen = new Set(); seenDocs.set(to, seen); }
+      if (!seen.has(d.id)) { seen.add(d.id); toAcc.docs.push(d); }
+    }
+    for (const [rate, kinds] of Object.entries(fromAcc.vat)) {
+      if (!toAcc.vat[rate]) toAcc.vat[rate] = new Map();
+      for (const [kind, count] of kinds) toAcc.vat[rate].set(kind, (toAcc.vat[rate].get(kind) || 0) + count);
+    }
+    if (fromAcc.whtCert) toAcc.whtCert = true;
+    for (const [rate, count] of fromAcc.whtRates) {
+      toAcc.whtRates.set(rate, (toAcc.whtRates.get(rate) || 0) + count);
+    }
+    toAcc.whtDocs += fromAcc.whtDocs;
+    if (!toAcc.name && fromAcc.name) toAcc.name = fromAcc.name;
+    if (!toAcc.poolName && fromAcc.poolName) toAcc.poolName = fromAcc.poolName;
+    acc.delete(from);
+  }
   for (const [taxId, a] of acc) {
     const vat: SupplierVatRow[] = Object.entries(a.vat)
       .map(([rate, kinds]) => {
