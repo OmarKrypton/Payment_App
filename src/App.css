@@ -599,6 +599,24 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.btn-load {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: none;
+  font-family: inherit;
+}
+
+.btn-load:hover {
+  background: var(--accent-hover);
+  box-shadow: var(--shadow-sm);
+}
+
 /* ── Final Decision ── */
 .decision-options {
   display: flex;
@@ -1003,23 +1021,6 @@ body {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
-}
-
-.history-actions .btn-load {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  padding: 6px 14px;
-  border-radius: var(--radius);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: none;
-}
-
-.history-actions .btn-load:hover {
-  background: var(--accent-hover);
-  box-shadow: var(--shadow-sm);
 }
 
 .history-actions .btn-delete {
