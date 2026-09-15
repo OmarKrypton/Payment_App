@@ -120,6 +120,7 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
     let mut in_document_json = false;
     let mut document_json = String::new();
     let mut doc_depth = 0;
+    let mut validation_depth = 0u32;
 
     loop {
         match reader.read_event() {
@@ -133,6 +134,10 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                         in_document_json = true;
                     }
                     doc_depth += 1;
+                }
+
+                if tag == "validationResults" {
+                    validation_depth += 1;
                 }
             }
             Ok(Event::Text(e)) => {
@@ -170,12 +175,19 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                         "receiverName" => { invoice.buyer_name = text; }
                         "dateTimeIssued" => { invoice.issue_date = text; }
                         "status" => {
-                            // Portal wrapper status: Valid / Rejected / Cancelled
-                            let lower = text.to_lowercase();
-                            if lower.contains("reject") { invoice.doc_status = "Rejected".to_string(); }
-                            else if lower.contains("cancel") || lower.contains("void") { invoice.doc_status = "Cancelled".to_string(); }
-                            else if !text.is_empty() { invoice.doc_status = "Valid".to_string(); }
+                            // Portal wrapper status: Valid / Rejected / Cancelled.
+                            // Ignore <status> inside <validationResults> — that block
+                            // records the ORIGINAL validation outcome (often still
+                            // "Valid" for documents cancelled later) and must not
+                            // override the authoritative wrapper state.
+                            if validation_depth == 0 {
+                                let lower = text.to_lowercase();
+                                if lower.contains("reject") { invoice.doc_status = "Rejected".to_string(); }
+                                else if lower.contains("cancel") || lower.contains("void") { invoice.doc_status = "Cancelled".to_string(); }
+                                else if !text.is_empty() { invoice.doc_status = "Valid".to_string(); }
+                            }
                         }
+                        "validationResults" => { validation_depth = validation_depth.saturating_sub(1); }
                         "netAmount" => { invoice.net_amount = parse_f64(&text); }
                         "total" => { invoice.grand_total = parse_f64(&text); }
                         _ => {}
@@ -821,6 +833,26 @@ mod tests {
         assert_eq!(inv.total_vat, 147.0);
         assert_eq!(inv.grand_total, 1197.0);
         assert_eq!(inv.lines.len(), 1);
+    }
+
+    #[test]
+    fn wrapper_status_cancelled_not_overridden_by_validation_results() {
+        // ETA portal downloads carry the authoritative top-level <status> (here
+        // Cancelled) plus a <validationResults> block whose <status> reflects the
+        // ORIGINAL validation outcome (Valid). The validation block used to win
+        // because it came last; it must not override the wrapper state.
+        let xml = r#"<document><uuid>BSHTQNS7J3X6RYRF0SCH8DEK10</uuid>
+<internalId>165</internalId>
+<issuerId>699633362</issuerId><issuerName>S</issuerName>
+<receiverId>100489095</receiverId><receiverName>R</receiverName>
+<dateTimeIssued>2026-01-07T22:16:13</dateTimeIssued>
+<netAmount>60000</netAmount><total>68400</total>
+<status>Cancelled</status>
+<document>{}</document>
+<validationResults><status>Valid</status><validationSteps><name>Step-03.ITIDA Signature Validator</name><status>Valid</status></validationSteps></validationResults>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.doc_status, "Cancelled");
     }
 
     #[test]
