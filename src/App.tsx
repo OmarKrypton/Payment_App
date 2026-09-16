@@ -215,7 +215,7 @@ const dedupeTaxIds = (set: Set<string>): string[] => {
 interface SupplierVatRow {
   rate: string;          // e.g. "10%"
   kinds: string[];       // top item types (labels) shown inline, e.g. ["Customs clearance"]
-  allKinds: string[];    // full distinct item list (for the popover)
+  allKinds: { kind: string; count: number }[]; // full item list with line counts (popover)
   count: number;         // number of invoice lines / entries observed
 }
 interface SupplierDocRef {
@@ -454,7 +454,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
         return {
           rate,
           kinds: sorted.slice(0, 3).map(([kind]) => kind),
-          allKinds: sorted.map(([kind]) => kind),
+          allKinds: sorted.map(([kind, count]) => ({ kind, count })),
           count: sorted.reduce((n, [, c]) => n + c, 0),
         };
       })
@@ -675,7 +675,7 @@ function App() {
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
-  const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; kinds: string[] } | null>(null);
+  const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; items: { kind: string; count: number }[] } | null>(null);
 
   // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
   // prefill with the last-used rates for that seller).
@@ -1596,7 +1596,7 @@ function App() {
                             onClick={() => setVatPopover(
                               vatPopover && vatPopover.taxId === s.taxId && vatPopover.rate === row.rate
                                 ? null
-                                : { taxId: s.taxId, rate: row.rate, kinds: row.allKinds }
+                                : { taxId: s.taxId, rate: row.rate, items: row.allKinds }
                             )}
                             title={t("点击查看全部项目", "Click to view all items")}
                           >
@@ -4029,10 +4029,13 @@ function App() {
                 <button className="btn-load" onClick={() => setVatPopover(null)}>{t("关闭", "Close")}</button>
               </div>
               <div className="vat-popover-list">
-                {vatPopover.kinds.length === 0
+                {vatPopover.items.length === 0
                   ? <div className="supplier-empty">{t("暂无明细", "No items")}</div>
-                  : vatPopover.kinds.map((k, i) => (
-                    <div className="vat-popover-item" key={`${k}-${i}`}>{vatKindLabel(k, t)}</div>
+                  : vatPopover.items.map((it, i) => (
+                    <div className="vat-popover-item" key={`${it.kind}-${i}`}>
+                      <span>{vatKindLabel(it.kind, t)}</span>
+                      <span className="vat-popover-count">{it.count} {t("项", "lines")}</span>
+                    </div>
                   ))}
               </div>
             </div>
