@@ -65,6 +65,7 @@ interface FormData {
   draft_no: number | null;
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
+  checklist: Record<string, { s: "" | "pass" | "fail" | "na"; n?: string }>;
   final_decision: string; conditional_reason: string; reject_reason: string; auditor: string;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   wht_manual_amount: boolean;
@@ -109,6 +110,7 @@ const EMPTY_FORM: FormData = {
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [], remainder_of: "",
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
+  checklist: {},
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
@@ -136,6 +138,7 @@ const DEFAULT_FORM: FormData = {
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [], remainder_of: "",
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
+  checklist: {},
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
@@ -380,7 +383,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       for (const taxId of dedupeTaxIds(ids)) {
         upsert(taxId, docRef, companyByTax.get(taxId) || "", poolByTax.get(taxId)?.name || "");
         const a = acc.get(taxId)!;
-        if (p.check_wht_cert) a.whtCert = true;
+        if ((p.checklist && p.checklist.check_wht_cert?.s === "pass") || p.check_wht_cert) a.whtCert = true;
         if (hasInvoices(taxId)) {
           bumpWht(a, p.wht_rate || "0%");
         } else {
@@ -1251,6 +1254,94 @@ function App() {
   const isImport = data.doc_type === "import";
   const isRemainder = !!data.remainder_of;
   const AuditTab = () => {
+    const cl = data.checklist || {};
+    const setCheck = (key: string, s: "pass" | "fail" | "na" | "") =>
+      updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), s } });
+    const setCheckNote = (key: string, n: string) =>
+      updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), n } });
+
+    const poolByInv = new Map<string, any>();
+    const poolByTax = new Map<string, any>();
+    for (const p of poolList) {
+      const ik = String(p.invoice_id || "").trim();
+      if (ik && !poolByInv.has(ik)) poolByInv.set(ik, p);
+      const tk = String(p.seller_tax_id || "").trim();
+      if (tk && !poolByTax.has(tk)) poolByTax.set(tk, p);
+    }
+    const idxExists = (label: string) => (savedDocsIndex || []).some((d: any) => d.label === label);
+
+    const invs = data.invoices || [];
+    let check_invoices_auto: "pass" | "fail" | "" = "";
+    if (invs.length) {
+      let bad = false;
+      for (const inv of invs) {
+        if (!String(inv.invoice_no || "").trim() || (toNum(inv.amount) || 0) <= 0) { bad = true; break; }
+        const m = poolByInv.get(String(inv.invoice_no).trim());
+        if (m) {
+          const pa = toNum(m.n ?? m.net_amount);
+          if (pa > 0 && Math.abs(pa - (toNum(inv.amount) || 0)) > 0.01) { bad = true; break; }
+        }
+      }
+      check_invoices_auto = bad ? "fail" : "pass";
+    }
+    let check_company_name_auto: "pass" | "fail" | "" = "";
+    if (invs.length) {
+      let bad = false;
+      for (const inv of invs) {
+        const tid = String(inv.seller_tax_id || "").trim();
+        const cname = String(inv.company_name || "").trim();
+        if (!tid || !cname) { bad = true; break; }
+        const m = poolByTax.get(tid);
+        if (m && String(m.seller_name || "").trim() && String(m.seller_name).trim().toLowerCase() !== cname.toLowerCase()) { bad = true; break; }
+      }
+      check_company_name_auto = bad ? "fail" : "pass";
+    }
+
+    let rem_parent_auto: "pass" | "fail" | "" = "";
+    if (isRemainder) rem_parent_auto = idxExists(data.remainder_of) ? "pass" : "fail";
+
+    let remHint = "";
+    if (isRemainder) {
+      const parent = (savedDocsIndex || []).find((d: any) => d.label === data.remainder_of);
+      let parentTotal = 0, curTotal = 0;
+      for (const inv of parent?.invoices || []) parentTotal += toNum(inv.amount);
+      for (const inv of invs) curTotal += toNum(inv.amount);
+      remHint = `${t("父文档合计", "Parent total")} ${fmt(parentTotal)} · ${t("本单据合计", "This doc total")} ${fmt(curTotal)}`;
+    }
+
+    const ITEM_ZH: Record<string, string> = {
+      check_cover: "封面及结算核对", check_invoices: "发票金额核对", check_company_name: "封面公司名与发票公司名一致", check_wht_cert: "免WHT公司提供WHT证明",
+      check_sad: "SAD 报关单", check_import_invoice: "商业发票", check_bill_lading: "提单", check_packing_list: "装箱单",
+      check_cert_origin: "原产地证明", check_nafeza: "Nafeza 文件", check_form_4_6: "Form 4 或 6",
+      rem_parent: "父文档存在于历史记录", rem_reconcile: "剩余金额与父文档核对一致",
+    };
+    const ITEM_EN: Record<string, string> = {
+      check_cover: "Cover & Settlement Check", check_invoices: "Invoices Match Amount", check_company_name: "Company Name on Cover Matches Invoices", check_wht_cert: "WHT-Free Company Provided WHT Certificate",
+      check_sad: "SAD Customs Declaration", check_import_invoice: "Commercial Invoice", check_bill_lading: "Bill of Lading", check_packing_list: "Packing List",
+      check_cert_origin: "Certificate of Origin", check_nafeza: "Nafeza Paper", check_form_4_6: "Form 4 or 6",
+      rem_parent: "Parent document exists in history", rem_reconcile: "Remainder amount reconciles with parent",
+    };
+
+    const items: any[] = [
+      ...(isImport ? [
+        { key: "check_sad" }, { key: "check_import_invoice" }, { key: "check_bill_lading" }, { key: "check_packing_list" },
+        { key: "check_cert_origin" }, { key: "check_nafeza" }, { key: "check_form_4_6" },
+      ] : [
+        { key: "check_cover" },
+        { key: "check_invoices", auto: check_invoices_auto },
+        { key: "check_company_name", auto: check_company_name_auto },
+        { key: "check_wht_cert" },
+        ...(isRemainder ? [
+          { key: "rem_parent", auto: rem_parent_auto },
+          { key: "rem_reconcile", hint: remHint, remainder: true },
+        ] : []),
+      ]),
+    ];
+    const shownOf = (it: any) => it.auto ? (cl[it.key]?.s || it.auto) : (cl[it.key]?.s || "");
+    const failedItems = items.filter((it: any) => shownOf(it) === "fail").map((it: any) => t(ITEM_ZH[it.key], ITEM_EN[it.key]));
+    const passedCount = items.filter((it: any) => shownOf(it) === "pass").length;
+    const checkSummary = items.length ? `${passedCount}/${items.length}` : "";
+
     return (
     <div className="audit-tab">
       <div className="card">
@@ -1337,58 +1428,41 @@ function App() {
       )}
 
       <div className="card">
-        <h3>{t("核对清单", "Verification Checklist")}</h3>
-        {isImport ? (
-          <>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_sad} onChange={e => updateField("check_sad", e.target.checked)} />
-              {t("SAD 报关单", "SAD Customs Declaration")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_import_invoice} onChange={e => updateField("check_import_invoice", e.target.checked)} />
-              {t("商业发票", "Commercial Invoice")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_bill_lading} onChange={e => updateField("check_bill_lading", e.target.checked)} />
-              {t("提单", "Bill of Lading")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_packing_list} onChange={e => updateField("check_packing_list", e.target.checked)} />
-              {t("装箱单", "Packing List")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_cert_origin} onChange={e => updateField("check_cert_origin", e.target.checked)} />
-              {t("原产地证明", "Certificate of Origin")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_nafeza} onChange={e => updateField("check_nafeza", e.target.checked)} />
-              {t("Nafeza 文件", "Nafeza Paper")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_form_4_6} onChange={e => updateField("check_form_4_6", e.target.checked)} />
-              {t("Form 4 或 6", "Form 4 or 6")}
-            </label>
-          </>
-        ) : (
-          <>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_cover} onChange={e => updateField("check_cover", e.target.checked)} />
-              {t("封面及结算核对", "Cover & Settlement Check")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_invoices} onChange={e => updateField("check_invoices", e.target.checked)} />
-              {t("发票金额核对", "Invoices Match Amount")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_company_name} onChange={e => updateField("check_company_name", e.target.checked)} />
-              {t("封面公司名与发票公司名一致", "Company Name on Cover Matches Invoices")}
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={data.check_wht_cert} onChange={e => updateField("check_wht_cert", e.target.checked)} />
-              {t("免WHT公司提供WHT证明", "WHT-Free Company Provided WHT Certificate")}
-            </label>
-          </>
-        )}
+        <h3 style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span>{t("核对清单", "Verification Checklist")}</span>
+          {checkSummary && (
+            <span className={`checklist-summary ${passedCount === items.length ? "ok" : failedItems.length ? "bad" : ""}`}>
+              {checkSummary} {t("通过", "passed")}
+            </span>
+          )}
+        </h3>
+        {items.map((it: any) => {
+          const shown = shownOf(it);
+          const isAuto = !!it.auto && !cl[it.key]?.s;
+          const note = cl[it.key]?.n || "";
+          return (
+            <div key={it.key} className={`check-item ${shown ? `ci-${shown}` : ""}`}>
+              <div className="check-item-top">
+                <div className="check-item-label">
+                  <span>{t(ITEM_ZH[it.key], ITEM_EN[it.key])}</span>
+                  <span className="check-item-flags">
+                    {isAuto && <span className="check-item-chip auto">{t("自动", "auto")}</span>}
+                    {it.remainder && <span className="check-item-chip rem">{t("剩余", "rem.")}</span>}
+                  </span>
+                </div>
+                <div className="check-item-c">
+                  <button className={`ci-btn pass ${shown === "pass" ? "on" : ""}`} onClick={() => setCheck(it.key, shown === "pass" ? "na" : "pass")} title={t("通过", "Pass")}>✓</button>
+                  <button className={`ci-btn fail ${shown === "fail" ? "on" : ""}`} onClick={() => setCheck(it.key, shown === "fail" ? "na" : "fail")} title={t("失败", "Fail")}>✕</button>
+                  <button className={`ci-btn na ${shown === "na" ? "on" : ""}`} onClick={() => setCheck(it.key, shown === "na" ? "" : "na")} title={t("不适用", "N/A")}>—</button>
+                </div>
+              </div>
+              {it.hint && <div className="check-item-hint">{it.hint}</div>}
+              {(shown === "fail" || note) && (
+                <FastInput className="check-item-note" rows={1} value={note} onChange={v => setCheckNote(it.key, v)} />
+              )}
+            </div>
+          );
+        })}
       </div>
       <div className="card">
         <h3>{t("审计备注", "Audit Notes")}</h3>
@@ -1406,7 +1480,12 @@ function App() {
             <span className="decision-label">{t("有条件批准", "Conditional Approve")}</span>
           </label>
           <label className={`decision-option ${data.final_decision === "reject" ? "decision-selected reject" : ""}`}>
-            <input type="radio" name="final_decision" checked={data.final_decision === "reject"} onChange={() => updateField("final_decision", "reject")} />
+            <input type="radio" name="final_decision" checked={data.final_decision === "reject"} onChange={() => {
+              updateField("final_decision", "reject");
+              if (failedItems.length && !(data.reject_reason || "").trim()) {
+                updateField("reject_reason", failedItems.map(l => `• ${l}`).join("\n"));
+              }
+            }} />
             <span className="decision-label">{t("拒绝", "Reject")}</span>
           </label>
         </div>
@@ -1418,7 +1497,14 @@ function App() {
         )}
         {data.final_decision === "reject" && (
           <div className="field" style={{marginTop: 12}}>
-            <label className="field-label">{t("拒绝原因", "Reason for Reject")}</label>
+            <label className="field-label" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <span>{t("拒绝原因", "Reason for Reject")}</span>
+              {failedItems.length > 0 && (
+                <button className="btn-load" style={{padding:'2px 8px',fontSize:11}} onClick={() => updateField("reject_reason", failedItems.map(l => `• ${l}`).join("\n"))}>
+                  {t("从失败项生成", "Generate from failures")}
+                </button>
+              )}
+            </label>
             <FastInput className="audit-notes" value={data.reject_reason} onChange={v => updateField("reject_reason", v)} rows={3} />
           </div>
         )}
@@ -2186,6 +2272,12 @@ function App() {
       if (!parsed.final_decision) parsed.final_decision = "";
       if (!parsed.conditional_reason) parsed.conditional_reason = "";
       if (!parsed.reject_reason) parsed.reject_reason = "";
+      if (!parsed.checklist) {
+        parsed.checklist = {};
+        for (const k of ["check_cover","check_invoices","check_company_name","check_wht_cert","check_sad","check_import_invoice","check_bill_lading","check_packing_list","check_cert_origin","check_nafeza","check_form_4_6"]) {
+          if (parsed[k]) parsed.checklist[k] = { s: "pass" };
+        }
+      }
       if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
       setDraftNo((parsed.doc_serial ? null : snapshotDraftNo(parsed)));
