@@ -1286,25 +1286,29 @@ function App() {
             ))}
           </div>
         )}
-        <div className="field">
-          <label className="field-label">{t("剩余部分", "Remainder")}</label>
-          {isRemainder ? (
-            <div className="remainder-badge">
-              <span>⤷ {t("此文档为", "This document is the remaining part of")} <strong>{data.remainder_of}</strong></span>
-              <button className="btn-danger" onClick={() => updateField("remainder_of", "")}>✕</button>
-            </div>
-          ) : (
-            <button className="btn-add" onClick={() => { loadSavedDocsIndex(); setShowRemainderPicker(true); }}>
-              ⤷ {t("标记为剩余部分…", "Link as remainder of…")}
-            </button>
-          )}
-        </div>
-        {isRemainder && (
-          <div className="field-warning" style={{color: 'var(--green)'}}>
-            {t("VAT/预提税/临时工社保/其他扣款已在", "VAT/WHT/Temp-labour/Other deductions are applied on")} <strong>{data.remainder_of}</strong>
-            ；{t("本单据上述扣除强制为0%", "this document's deductions are forced to 0%")}
+        {!isImport && (
+        <>
+          <div className="field">
+            <label className="field-label">{t("剩余部分", "Remainder")}</label>
+            {isRemainder ? (
+              <div className="remainder-badge">
+                <span>⤷ {t("此文档为", "This document is the remaining part of")} <strong>{data.remainder_of}</strong></span>
+                <button className="btn-danger" onClick={() => updateField("remainder_of", "")}>✕</button>
+              </div>
+            ) : (
+              <button className="btn-add" onClick={() => { loadSavedDocsIndex(); setShowRemainderPicker(true); }}>
+                ⤷ {t("标记为剩余部分…", "Link as remainder of…")}
+              </button>
+            )}
           </div>
-        )}
+          {isRemainder && (
+            <div className="field-warning" style={{color: 'var(--green)'}}>
+              {t("VAT/预提税/临时工社保/其他扣款已在", "VAT/WHT/Temp-labour/Other deductions are applied on")} <strong>{data.remainder_of}</strong>
+              ；{t("本单据上述扣除强制为0%", "this document's deductions are forced to 0%")}
+            </div>
+          )}
+        </>
+      )}
         <div className="field"><label className="field-label">{t("日期", "Date")}</label><div className="computed-value">{new Date().toLocaleDateString()}</div></div>
         <Input label={t("买方税号", "Buyer TAX ID")} value={data.buyer_tax_id} onChange={v => updateField("buyer_tax_id", v)} />
         {data.buyer_tax_id && data.buyer_tax_id !== "100489095" && (
@@ -4172,7 +4176,7 @@ function App() {
               <div className="vat-popover-title">
                 <strong>{t("选择包含本结算完整费用的文档", "Select the document that carries the full deductions")}</strong>
               </div>
-              <button className="btn-load" onClick={() => setShowRemainderPicker(false)}>{t("关闭", "Close")}</button>
+              <button className="modal-close" onClick={() => setShowRemainderPicker(false)}>✕</button>
             </div>
             <div className="remainder-picker-list">
               {savedDocsIndex.length === 0
@@ -4211,7 +4215,7 @@ function App() {
                   <strong>{vatPopover.rate} VAT</strong>
                   <span className="vat-popover-sub">{sup ? (sup.name || vatPopover.taxId) : vatPopover.taxId}</span>
                 </div>
-                <button className="btn-load" onClick={() => setVatPopover(null)}>{t("关闭", "Close")}</button>
+                <button className="modal-close" onClick={() => setVatPopover(null)}>✕</button>
               </div>
               <div className="vat-popover-list">
                 {vatPopover.items.length === 0
