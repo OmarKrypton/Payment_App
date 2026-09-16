@@ -629,7 +629,7 @@ const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boo
 };
 
 function App() {
-  const [tab, setTab] = useState<"bank" | "final_decision" | "import" | "suppliers">("bank");
+  const [tab, setTab] = useState<"bank" | "import" | "suppliers">("bank");
   const [lang, setLang] = useState<"zh" | "en">("en");
   const [appVersion, setAppVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -1253,12 +1253,11 @@ function App() {
 
   const isImport = data.doc_type === "import";
   const isRemainder = !!data.remainder_of;
-  const AuditTab = () => {
-    const cl = data.checklist || {};
-    const setCheck = (key: string, s: "pass" | "fail" | "na" | "") =>
-      updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), s } });
-    const setCheckNote = (key: string, n: string) =>
-      updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), n } });
+  const cl = data.checklist || {};
+  const setCheck = (key: string, s: "pass" | "fail" | "na" | "") =>
+    updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), s } });
+  const setCheckNote = (key: string, n: string) =>
+    updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), n } });
 
     const poolByInv = new Map<string, any>();
     const poolByTax = new Map<string, any>();
@@ -1340,12 +1339,11 @@ function App() {
     const shownOf = (it: any) => it.auto ? (cl[it.key]?.s || it.auto) : (cl[it.key]?.s || "");
     const failedItems = items.filter((it: any) => shownOf(it) === "fail").map((it: any) => t(ITEM_ZH[it.key], ITEM_EN[it.key]));
     const passedCount = items.filter((it: any) => shownOf(it) === "pass").length;
-    const checkSummary = items.length ? `${passedCount}/${items.length}` : "";
+  const checkSummary = items.length ? `${passedCount}/${items.length}` : "";
 
-    return (
-    <div className="audit-tab">
-      <div className="card">
-        <h3>{t("文件信息", "Document Information")}</h3>
+  const AuditInfoCard = () => (
+    <div className="card">
+      <h3>{t("文件信息", "Document Information")}</h3>
         <div className="field"><label className="field-label">{t("文档类型", "Doc Type")}</label>
           <div style={{display:'flex',gap:8}}>
             <button onClick={() => updateField("doc_type", "bank")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="bank"?'var(--accent)':'transparent',color:data.doc_type==="bank"?'#fff':'inherit',cursor:'pointer'}}>
@@ -1413,22 +1411,12 @@ function App() {
           </div>
         ))}
         <button className="btn-add" onClick={addSellerTaxId}>+ {t("添加卖方税号", "Add Seller TAX ID")}</button>
-      </div>
+    </div>
+  );
 
-      {!isImport && (
-        <>
-          <div className="card">
-            <h3>{t("计算值", "Computed Values")}</h3>
-            <Computed label={t("净应付金额 (9A)", "Net Amount Payable (9A)")} value={computed.c_9A} />
-            <Computed label={t("本期实付 (10A)", "Current Paid (10A)")} value={computed.c_10A} />
-            <Computed label={t("期末累计实付 (11A)", "Ending Accum. Paid (11A)")} value={computed.c_11A} />
-            <Computed label={t("期末已付合计 (11B)", "Ending Total Paid (11B)")} value={computed.c_11B} />
-          </div>
-        </>
-      )}
-
-      <div className="card">
-        <h3 style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+  const AuditChecklistCard = () => (
+    <div className="card">
+      <h3 style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span>{t("核对清单", "Verification Checklist")}</span>
           {checkSummary && (
             <span className={`checklist-summary ${passedCount === items.length ? "ok" : failedItems.length ? "bad" : ""}`}>
@@ -1463,7 +1451,11 @@ function App() {
             </div>
           );
         })}
-      </div>
+    </div>
+  );
+
+  const AuditNotesDecisionCard = () => (
+    <>
       <div className="card">
         <h3>{t("审计备注", "Audit Notes")}</h3>
         <FastInput className="audit-notes" value={data.audit_notes} onChange={v => updateField("audit_notes", v)} rows={5} />
@@ -1508,10 +1500,9 @@ function App() {
             <FastInput className="audit-notes" value={data.reject_reason} onChange={v => updateField("reject_reason", v)} rows={3} />
           </div>
         )}
-      </div>
     </div>
-    );
-  };
+    </>
+  );
 
   const ImportTab = () => {
     return (
@@ -3486,7 +3477,6 @@ function App() {
           <button className={tab === "bank" ? "active" : ""} onClick={() => setTab("bank")}>{t("银行", "Bank")}</button>
           <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>{t("进口", "Import")}</button>
           <button className={tab === "suppliers" ? "active" : ""} onClick={() => setTab("suppliers")}>{t("供应商", "Suppliers")}</button>
-          <button className={tab === "final_decision" ? "active" : ""} onClick={() => setTab("final_decision")}>{t("最终决定", "Final Decision")}</button>
         </nav>
         <div style={{padding:'6px 0 2px', display:'flex', flexDirection:'column', gap:8}}>
           <div
@@ -3658,6 +3648,7 @@ function App() {
       <main className="content">
         {tab === "bank" ? (
           <>
+            {AuditInfoCard()}
             {Card1()}
             <div className="card-row">
               {Card2()}{Card3()}
@@ -3673,13 +3664,18 @@ function App() {
             </div>
             {Card11()}
             {!isImport && InvoicesCard()}
+            {AuditChecklistCard()}
+            {AuditNotesDecisionCard()}
           </>
         ) : tab === "import" ? (
-          ImportTab()
-        ) : tab === "suppliers" ? (
-          SuppliersTab()
+          <>
+            {AuditInfoCard()}
+            {ImportTab()}
+            {AuditChecklistCard()}
+            {AuditNotesDecisionCard()}
+          </>
         ) : (
-          AuditTab()
+          SuppliersTab()
         )}
       </main>
 
