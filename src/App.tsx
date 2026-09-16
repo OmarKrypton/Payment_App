@@ -2671,16 +2671,25 @@ function App() {
         let p: any = {};
         try { p = JSON.parse(r.data_json || "{}"); } catch {}
         const invoices: { no: string; amount: string }[] = [];
+        const sellers = new Set<string>();
+        const taxIds = new Set<string>();
         if (p.doc_type === "import") {
           (p.import_entries || []).forEach((e: any) => {
             if (e.attached_invoice) invoices.push({ no: String(e.attached_invoice), amount: String(e.amount ?? "") });
+            if (e.company_name) sellers.add(String(e.company_name).trim());
+            const sid = e.seller_tax_id || extractTaxIdFromName(e.service_name || "");
+            if (sid) taxIds.add(String(sid).trim());
           });
         } else {
+          (p.seller_tax_ids || []).forEach((x: string) => x && x.trim() && taxIds.add(x.trim()));
+          if (p.seller_tax_id) taxIds.add(String(p.seller_tax_id).trim());
           (p.invoices || []).forEach((inv: any) => {
             if (inv.invoice_no) invoices.push({ no: String(inv.invoice_no), amount: String(inv.amount ?? "") });
+            if (inv.company_name) sellers.add(String(inv.company_name).trim());
+            if (inv.seller_tax_id) taxIds.add(String(inv.seller_tax_id).trim());
           });
         }
-        merged.push({ label, doc_type: p.doc_type || "bank", invoices, remainder_of: p.remainder_of || "" });
+        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "" });
       }
       setSavedDocsIndex(merged);
     } catch {}
@@ -2741,6 +2750,7 @@ function App() {
       temp_labour: false,
       attached_invoice: p.invoice_id,
       seller_tax_id: p.seller_tax_id || "",
+      company_name: p.seller_name || "",
       attached_uuid: p.uuid || "",
     };
   };
@@ -4164,25 +4174,26 @@ function App() {
               </div>
               <button className="btn-load" onClick={() => setShowRemainderPicker(false)}>{t("关闭", "Close")}</button>
             </div>
-            <div className="vat-popover-list" style={{maxHeight:'60vh'}}>
+            <div className="remainder-picker-list">
               {savedDocsIndex.length === 0
                 ? <div className="supplier-empty">{t("无已保存文档", "No saved documents")}</div>
                 : savedDocsIndex.map((d: any, i: number) => {
                   const related = currentInvNos.size > 0 && d.invoices.some((di: any) => currentInvNos.has(di.no));
+                  const sellerName = d.sellers && d.sellers.length > 0
+                    ? d.sellers.join(" · ")
+                    : (d.taxIds && d.taxIds.length > 0 ? (poolList.find((p: any) => p.seller_tax_id === d.taxIds[0])?.seller_name || "") : "");
                   return (
                     <button
                       key={`${d.label}-${i}`}
-                      className="remainder-picker-row"
-                      style={{display:'flex',gap:10,alignItems:'center',justifyContent:'space-between',width:'100%',background:related ? 'rgba(16,185,129,0.08)' : 'transparent',borderBottom:'1px dashed var(--border)',padding:'8px 10px',cursor:'pointer',borderLeft:related ? '3px solid var(--green)' : 'none',textAlign:'left'}}
+                      className={`remainder-picker-row${related ? " related" : ""}`}
                       onClick={() => linkRemainderOf(d.label)}
                     >
-                      <span style={{minWidth:0}}>
-                        <strong style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</strong>
-                        <small style={{opacity:0.7}}>
-                          {d.doc_type} · {d.invoices.map((di: any) => di.no).join(', ')}
-                        </small>
+                      <span className="remainder-picker-main">
+                        <strong className="remainder-picker-label">{d.label}</strong>
+                        {sellerName && <small className="remainder-picker-sellers">{sellerName}</small>}
+                        <small className="remainder-picker-meta">{d.invoices.map((di: any) => di.no).join(", ") || "—"}</small>
                       </span>
-                      {related && <span style={{flexShrink:0,color:'var(--green)'}}>⬅ {t("同一发票", "same invoice")}</span>}
+                      {related && <span className="remainder-picker-tag">⬅ {t("同一发票", "same invoice")}</span>}
                     </button>
                   );
                 })}
