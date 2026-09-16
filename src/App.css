@@ -1591,18 +1591,20 @@ body {
   justify-content: space-between;
   gap: 12px;
   cursor: pointer;
-  background: var(--bg-card);
+  background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 9px 12px;
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 12px;
   text-align: left;
   font: inherit;
   color: inherit;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition: none;
 }
 .remainder-picker-row:hover {
+  background: var(--bg-input-hover);
   border-color: var(--accent);
-  background: rgba(15, 118, 255, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 .remainder-picker-row.related {
   border-left: 3px solid var(--green);
@@ -1614,24 +1616,25 @@ body {
 }
 .remainder-picker-label {
   display: block;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .remainder-picker-sellers {
   display: block;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-secondary);
-  margin-top: 1px;
+  margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .remainder-picker-meta {
   display: block;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
   margin-top: 2px;
   overflow: hidden;
