@@ -282,11 +282,11 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
 
     if let Some(id) = existing_id {
         conn.execute(
-            "UPDATE eta_invoices SET invoice_id=?2, seller_name=?3, buyer_tax_id=?4, buyer_name=?5,
-             issue_date=?6, currency=?7, net_amount=?8, total_vat=?9, total_wht=?10, grand_total=?11,
-             lines_json=?12, raw_xml=?13, file_name=?14, doc_status=?15 WHERE id=?1",
+            "UPDATE eta_invoices SET invoice_id=?2, seller_tax_id=?3, seller_name=?4, buyer_tax_id=?5, buyer_name=?6,
+             issue_date=?7, currency=?8, net_amount=?9, total_vat=?10, total_wht=?11, grand_total=?12,
+             lines_json=?13, raw_xml=?14, file_name=?15, doc_status=?16 WHERE id=?1",
             params![
-                id, invoice.invoice_id, invoice.seller_name, invoice.buyer_tax_id,
+                id, invoice.invoice_id, invoice.seller_tax_id, invoice.seller_name, invoice.buyer_tax_id,
                 invoice.buyer_name, invoice.issue_date, invoice.currency, invoice.net_amount,
                 invoice.total_vat, invoice.total_wht, invoice.grand_total, lines_json,
                 raw_xml, file_name, incoming_status
@@ -616,11 +616,11 @@ mod pool_supersede_tests {
         }
     }
 
-    fn row(conn: &Connection, uuid: &str) -> (String, String, String) {
+    fn row(conn: &Connection, uuid: &str) -> (String, String, String, String) {
         conn.query_row(
-            "SELECT invoice_id, doc_status, status FROM eta_invoices WHERE uuid = ?1",
+            "SELECT invoice_id, doc_status, status, used_by_label FROM eta_invoices WHERE uuid = ?1",
             params![uuid],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).unwrap()
     }
 
@@ -664,11 +664,25 @@ mod pool_supersede_tests {
         assert!(matches!(o, PoolAddOutcome::Inserted(_)));
         assert_eq!(row_count_where(&conn, "X"), 3);
 
-        // 6. Claim survives a refresh (status untouched by add_to_pool)
+        // 6. Claim survives a refresh (status + serial untouched by add_to_pool)
         mark_invoice_used(&conn, 1, 1, "SER-1").unwrap();
         add_to_pool(&conn, &sample("X", "UUID-A", "Rejected"), "<x/>", "a.xml").unwrap();
         assert_eq!(row(&conn, "UUID-A").1, "Rejected");
         assert_eq!(row(&conn, "UUID-A").2, "used");
+        assert_eq!(row(&conn, "UUID-A").3, "SER-1");
+
+        // 7. The refresh must ALSO update the seller identity (a re-upload that
+        //    now carries the seller tax id fixes a previously-empty value).
+        let o = add_to_pool(&conn, &sample_seller("X", "UUID-A", "Valid", "645923168"), "<x/>", "a.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Updated(_)));
+        let seller: String = conn.query_row(
+            "SELECT seller_tax_id FROM eta_invoices WHERE uuid = ?1",
+            params!["UUID-A"],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(seller, "645923168");
+        assert_eq!(row(&conn, "UUID-A").2, "used", "claim survives the seller refresh too");
+        assert_eq!(row(&conn, "UUID-A").3, "SER-1");
     }
 
     #[test]
