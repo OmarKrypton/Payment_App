@@ -2544,23 +2544,35 @@ function App() {
     loadPool();
   };
 
-  // Load suppliers data whenever the Suppliers tab is opened (once per session
-  // per signed-in user; re-fetch if the logged-in user changes).
-  const suppliersLoadedRef = useRef(false);
-  const lastAuthForSuppliers = useRef<string | null>(null);
+  // Load suppliers data whenever the Suppliers tab is opened.
   const loadSuppliersData = async () => {
     setSuppliersLoading(true);
     try {
       let rows: any[];
+      let localRows: any[] = [];
+      let remoteRows: any[] = [];
+      try {
+        localRows = await invoke<HistoryEntry[]>("list_history", { search: "" });
+      } catch (e) {
+        console.error("list_history failed in suppliers", e);
+      }
       if (authUser) {
         try {
-          rows = await listSnapshotsRemote("");
+          remoteRows = await listSnapshotsRemote("");
         } catch (e) {
           console.error("listSnapshotsRemote failed in suppliers", e);
-          rows = await invoke<HistoryEntry[]>("list_history", { search: "" });
         }
-      } else {
-        rows = await invoke<HistoryEntry[]>("list_history", { search: "" });
+      }
+      // Merge remote + local on document label. A doc is identified by its
+      // serial (uniqueness is enforced on save), so a doc saved locally but
+      // not yet synced to the cloud still appears; a synced doc never doubles.
+      // Remote rows win so cross-device edits are preferred.
+      const seen = new Set<string>();
+      rows = [];
+      for (const r of [...remoteRows, ...localRows]) {
+        if (seen.has(r.label)) continue;
+        seen.add(r.label);
+        rows.push(r);
       }
       let pool: any[] = [];
       try {
@@ -2575,10 +2587,9 @@ function App() {
     }
   };
   useEffect(() => {
+    // Always refresh the Suppliers view when the tab is opened so a document
+    // saved moments ago shows up for its supplier without an app restart.
     if (tab !== "suppliers") return;
-    if (suppliersLoadedRef.current && authUser === lastAuthForSuppliers.current) return;
-    suppliersLoadedRef.current = true;
-    lastAuthForSuppliers.current = authUser;
     loadSuppliersData();
   }, [tab, authUser]);
 
