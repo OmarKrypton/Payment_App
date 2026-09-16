@@ -61,6 +61,7 @@ interface FormData {
   soc_rate: string; val_12A: string;
   val_7A: string; val_10A: string; val_11A: string; val_11B: string;
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
+  remainder_of: string; // serial of the document that carries this invoice's deductions (split settlement)
   draft_no: number | null;
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
@@ -105,7 +106,7 @@ const EMPTY_FORM: FormData = {
   oth_rate: "0%", val_8A: "0.00",
   soc_rate: "0%", val_12A: "0.00",
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
-  doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
+  doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [], remainder_of: "",
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
@@ -132,7 +133,7 @@ const DEFAULT_FORM: FormData = {
   oth_rate: "0%", val_8A: "0.00",
   soc_rate: "0%", val_12A: "0.00",
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
-  doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [],
+  doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [], remainder_of: "",
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
@@ -516,14 +517,14 @@ function Input({ label, sub, value, onChange, width, confidence, numeric, maxDec
   );
 }
 
-function Select({ label, sub, value, options, onChange }: {
-  label: string; sub?: string; value: string; options: string[]; onChange: (v: string) => void;
+function Select({ label, sub, value, options, onChange, disabled }: {
+  label: string; sub?: string; value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean;
 }) {
   return (
     <div className="field">
       <label className="field-label">{label}{sub ? <><br /><span className="field-sub">{sub}</span></> : null}</label>
       <select
-        className="field-select" value={value}
+        className="field-select" value={value} disabled={!!disabled}
         onChange={e => onChange(e.target.value)}
         onKeyDown={e => {
           if (e.key === 'Escape') { e.currentTarget.blur(); }
@@ -676,6 +677,8 @@ function App() {
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
   const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; items: { kind: string; count: number }[] } | null>(null);
+  const [showRemainderPicker, setShowRemainderPicker] = useState(false);
+  const [savedDocsIndex, setSavedDocsIndex] = useState<any[]>([]);
 
   // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
   // prefill with the last-used rates for that seller).
@@ -900,8 +903,8 @@ function App() {
     </div>
   );
 
-  const renderAutoRate = (key: string, value: string, rates: string[]) => (
-    <Select label="" value={value} options={rates} onChange={v => updateField(key as any, v)} />
+  const renderAutoRate = (key: string, value: string, rates: string[], disabled?: boolean) => (
+    <Select label="" value={value} options={rates} onChange={v => updateField(key as any, v)} disabled={disabled} />
   );
 
   // ── Cards ──
@@ -925,13 +928,13 @@ function App() {
               {t("多税率模式", "Multi-Rate")}
             </label>
           </div>
-          {data.vat_manual ? (
-            <>
-              {renderRateRows(data.vat_rows, "vat_rows", ["0%", "5%", "9%", "10%", "14%"])}
-              <div className="rate-total">VAT: {fmt(computed.c_1E)}</div>
-            </>
-          ) : (
-            renderAutoRate("vat_rate", data.vat_rate, ["0%", "5%", "9%", "10%", "14%"])
+{data.vat_manual && !isRemainder ? (
+              <>
+                {renderRateRows(data.vat_rows, "vat_rows", ["0%", "5%", "9%", "10%", "14%"])}
+                <div className="rate-total">VAT: {fmt(computed.c_1E)}</div>
+              </>
+            ) : (
+            renderAutoRate("vat_rate", data.vat_rate, ["0%", "5%", "9%", "10%", "14%"], isRemainder)
           )}
           <Computed label={t("本期增值税额", "Current VAT amount")} sub={t("", "VAT")} value={computed.c_1E} />
         </div>
@@ -972,7 +975,7 @@ function App() {
     <div className="card">
       <h3>{t("5. 临时工社保", "5. Temp. Labour Insurance")}</h3>
       <Input label={t("期初余额", "Initial balance")} value={data.val_5A} onChange={v => updateField("val_5A", v)} confidence={ocrConf("val_5A")} numeric />
-      <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} />
+      <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} disabled={isRemainder} />
       <Computed label={t("本期应扣", "Current deductible")} value={computed.c_5B} />
       <Input label={t("本期返还", "Current return")} value={data.val_5C} onChange={v => updateField("val_5C", v)} confidence={ocrConf("val_5C")} numeric />
       <Computed label={t("期末余额", "Ending balance")} value={computed.c_5D} highlight />
@@ -985,27 +988,27 @@ function App() {
       <Input label={t("期初累计预提税", "Initial accum. WHT")} value={data.val_6A} onChange={v => updateField("val_6A", v)} confidence={ocrConf("val_6A")} numeric />
       <div className="section-header" style={{flexWrap:'wrap',gap:8}}>
         <label className="toggle">
-          <input type="checkbox" checked={data.wht_manual} onChange={() => toggleManual("wht_manual")} />
+          <input type="checkbox" checked={data.wht_manual} disabled={isRemainder} onChange={() => toggleManual("wht_manual")} />
           {t("多税率", "Multi-Rate")}
         </label>
         <label className="toggle">
-          <input type="checkbox" checked={data.wht_manual_amount} onChange={() => toggleManual("wht_manual_amount")} />
+          <input type="checkbox" checked={data.wht_manual_amount} disabled={isRemainder} onChange={() => toggleManual("wht_manual_amount")} />
           {t("手动金额", "Manual Amount")}
         </label>
       </div>
-      {data.wht_manual_amount ? (
+      {!isRemainder && data.wht_manual_amount ? (
         <>
           <Input label={t("本期预提税（手动，可为负值）", "Current WHT (manual, may be negative)")} value={data.val_6B} onChange={v => updateField("val_6B", v)} confidence={ocrConf("val_6B")} numeric />
           <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
         </>
-      ) : data.wht_manual ? (
+      ) : !isRemainder && data.wht_manual ? (
         <>
           {renderRateRows(data.wht_rows, "wht_rows", ["0%", "1%", "3%", "5%"])}
           <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
         </>
       ) : (
         <>
-          <Select label={t("预提税率", "WHT Rate")} value={data.wht_rate} options={["0%", "1%", "3%", "5%"]} onChange={v => updateField("wht_rate", v)} />
+          <Select label={t("预提税率", "WHT Rate")} value={data.wht_rate} options={["0%", "1%", "3%", "5%"]} onChange={v => updateField("wht_rate", v)} disabled={isRemainder} />
           <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
         </>
       )}
@@ -1019,7 +1022,7 @@ function App() {
       <h3>{t("8 & 12. 其他扣款与社保", "8 & 12. Others & Social")}</h3>
       <h4>{t("其他扣款", "Other Deductions")}</h4>
       <Input label={t("期初其他扣款", "Initial other")} value={data.val_8A} onChange={v => updateField("val_8A", v)} numeric />
-      <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%", "0.45%", "0.6%"]} onChange={v => updateField("oth_rate", v)} />
+      <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%", "0.45%", "0.6%"]} onChange={v => updateField("oth_rate", v)} disabled={isRemainder} />
       <Computed label={t("本期其他扣款", "Current other")} value={computed.c_8B} />
       <Computed label={t("期末累计其他扣款", "Ending other")} value={computed.c_8C} highlight />
 
@@ -1246,6 +1249,7 @@ function App() {
   };
 
   const isImport = data.doc_type === "import";
+  const isRemainder = !!data.remainder_of;
   const AuditTab = () => {
     return (
     <div className="audit-tab">
@@ -1272,6 +1276,33 @@ function App() {
         {isSerialDuplicate && (
           <div className="field-warning" style={{color: 'var(--red)'}}>
             {t("警告: 该文档编号已存在!", "Warning: This document serial already exists!")}
+          </div>
+        )}
+        {doublePayWarnings.length > 0 && (
+          <div className="field-warning" style={{color: 'var(--orange)'}}>
+            <div>{t("发票已在其他文档中被引用（可能重复支付）", "Invoice(s) already referenced in other documents (possible double payment):")}</div>
+            {doublePayWarnings.map(w => (
+              <div key={w.invoice}>· {w.invoice} → {w.serials.join(", ")}</div>
+            ))}
+          </div>
+        )}
+        <div className="field">
+          <label className="field-label">{t("剩余部分", "Remainder")}</label>
+          {isRemainder ? (
+            <div className="remainder-badge">
+              <span>⤷ {t("此文档为", "This document is the remaining part of")} <strong>{data.remainder_of}</strong></span>
+              <button className="btn-danger" onClick={() => updateField("remainder_of", "")}>✕</button>
+            </div>
+          ) : (
+            <button className="btn-add" onClick={() => { loadSavedDocsIndex(); setShowRemainderPicker(true); }}>
+              ⤷ {t("标记为剩余部分…", "Link as remainder of…")}
+            </button>
+          )}
+        </div>
+        {isRemainder && (
+          <div className="field-warning" style={{color: 'var(--green)'}}>
+            {t("VAT/预提税/临时工社保/其他扣款已在", "VAT/WHT/Temp-labour/Other deductions are applied on")} <strong>{data.remainder_of}</strong>
+            ；{t("本单据上述扣除强制为0%", "this document's deductions are forced to 0%")}
           </div>
         )}
         <div className="field"><label className="field-label">{t("日期", "Date")}</label><div className="computed-value">{new Date().toLocaleDateString()}</div></div>
@@ -1478,10 +1509,10 @@ function App() {
                 <NumericInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
                 <NumericInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} maxDecimals={4} style={rateVisible ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
                 <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
-                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
+                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.vat_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
                   {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
-                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.wht_rate} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
+                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.wht_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
                   {["0%","1%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
@@ -2075,17 +2106,43 @@ function App() {
     }
     const label = serial || draftLabel(draftNumber);
     const saveData = { ...data, draft_no: draftNumber, auditor: data.auditor || authUser || "" };
+    // Enforce settlement rules for remainder docs: the parent document carries
+    // all VAT/WHT/temp-labour/other deductions for the whole settlement, so
+    // this one must not apply them a second time.
+    if (saveData.remainder_of) {
+      if (saveData.remainder_of === label) {
+        showAlert(t("不能将文档链接为自身的剩余部分", "Cannot link a document as a remainder of itself"));
+        saveData.remainder_of = "";
+      } else {
+        saveData.vat_rate = "0%";
+        saveData.wht_rate = "0%";
+        saveData.temp_rate = "0%";
+        saveData.oth_rate = "0%";
+        if (saveData.wht_manual_amount) saveData.val_6B = "0.00";
+        saveData.wht_manual = false;
+        saveData.wht_manual_amount = false;
+        saveData.vat_manual = false;
+        saveData.oth_manual = false;
+        if (Array.isArray(saveData.import_entries)) {
+          saveData.import_entries = saveData.import_entries.map((e: any) => ({
+            ...e, vat_rate: "0%", wht_rate: "0%"
+          }));
+        }
+      }
+    }
     const dataJson = JSON.stringify(saveData);
     if (authUser) {
       try {
         await saveSnapshotRemote(label, "", dataJson);
         setSynced(true);
+        loadSavedDocsIndex();
         showAlert(`${t("快照已保存并同步", "Snapshot saved & synced")} (${label})`);
       } catch (e: any) {
         console.error("saveSnapshotRemote failed", e);
         try {
           await invoke("save_history", { label, notes: "", dataJson });
           setSynced(false);
+          loadSavedDocsIndex();
           showAlert(`${t("快照已保存(本地)", "Snapshot saved (local)")} (${label})`);
         } catch (e2) {
           console.error("save_history fallback failed", e2);
@@ -2093,6 +2150,7 @@ function App() {
       }
     } else {
       await invoke("save_history", { label, notes: "", dataJson });
+      loadSavedDocsIndex();
       showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
     }
   };
@@ -2592,6 +2650,73 @@ function App() {
     if (tab !== "suppliers") return;
     loadSuppliersData();
   }, [tab, authUser]);
+
+  // Index of every saved document (local + cloud, deduped on the serial) with
+  // the invoices it references. Used for the remainder picker and for warning
+  // when an invoice is attached to more than one document (double-pay risk).
+  const loadSavedDocsIndex = useCallback(async () => {
+    try {
+      let local: any[] = [];
+      let remote: any[] = [];
+      try { local = await invoke<any[]>("list_history", { search: "" }); } catch {}
+      if (authUser) {
+        try { remote = await listSnapshotsRemote(""); } catch {}
+      }
+      const seen = new Set<string>();
+      const merged: any[] = [];
+      for (const r of [...remote, ...local]) {
+        const label = r.label || "";
+        if (!label || seen.has(label)) continue;
+        seen.add(label);
+        let p: any = {};
+        try { p = JSON.parse(r.data_json || "{}"); } catch {}
+        const invoices: { no: string; amount: string }[] = [];
+        if (p.doc_type === "import") {
+          (p.import_entries || []).forEach((e: any) => {
+            if (e.attached_invoice) invoices.push({ no: String(e.attached_invoice), amount: String(e.amount ?? "") });
+          });
+        } else {
+          (p.invoices || []).forEach((inv: any) => {
+            if (inv.invoice_no) invoices.push({ no: String(inv.invoice_no), amount: String(inv.amount ?? "") });
+          });
+        }
+        merged.push({ label, doc_type: p.doc_type || "bank", invoices, remainder_of: p.remainder_of || "" });
+      }
+      setSavedDocsIndex(merged);
+    } catch {}
+  }, [authUser]);
+  useEffect(() => { loadSavedDocsIndex(); }, [loadSavedDocsIndex]);
+
+  // Link the current document as the "remaining part" of a settlement. The
+  // parent document already carries the VAT/WHT/temp-labour/other deductions
+  // for the whole settlement, so this one must not add them again.
+  const linkRemainderOf = (parentSerial: string) => {
+    updateField("remainder_of", parentSerial);
+    updateField("vat_rate", "0%");
+    updateField("wht_rate", "0%");
+    updateField("temp_rate", "0%");
+    updateField("oth_rate", "0%");
+    updateField("val_6B", "0.00");
+    updateField("wht_manual", false);
+    updateField("wht_manual_amount", false);
+    updateField("vat_manual", false);
+    updateField("oth_manual", false);
+    setShowRemainderPicker(false);
+  };
+
+  // Invoices referenced by the document being edited that are ALSO referenced
+  // by other saved documents and not reconciled through a remainder link.
+  const currentSqlDefault = (formRef.current.doc_serial || "").trim();
+  const currentInvNos = new Set<string>();
+  (formRef.current.invoices || []).forEach((inv: any) => { if (inv.invoice_no) currentInvNos.add(String(inv.invoice_no)); });
+  (formRef.current.import_entries || []).forEach((e: any) => { if (e.attached_invoice) currentInvNos.add(String(e.attached_invoice)); });
+  const doublePayWarnings: { invoice: string; serials: string[] }[] = [];
+  if (!formRef.current.remainder_of) {
+    for (const invNo of currentInvNos) {
+      const others = savedDocsIndex.filter((d: any) => d.label !== currentSqlDefault && d.invoices.some((i: any) => i.no === invNo));
+      if (others.length > 0) doublePayWarnings.push({ invoice: invNo, serials: others.map(o => o.label) });
+    }
+  }
 
   const openPoolForSelect = () => {
     setPoolMode("select");
@@ -3499,6 +3624,7 @@ function App() {
                       });
                     }
                     const rows: { label: string; value: string }[] = [];
+                    if (p.remainder_of) rows.push({ label: t("剩余部分", "Remainder of"), value: p.remainder_of });
                     const keptTax = dedupeTaxIds(taxSet);
                     if (keptTax.length > 0) rows.push({ label: t("卖方税号", "Seller TAX ID"), value: keptTax.join(", ") });
                     if (coSet.size > 0) rows.push({ label: t("公司名称", "Company"), value: Array.from(coSet).join(", ") });
@@ -3506,6 +3632,7 @@ function App() {
                     return rows;
                   } catch { return [] as { label: string; value: string }[]; }
                 })();
+                const remInfo = snapInfo.find(r => r.label === t("剩余部分", "Remainder of"));
                 return (
                 <div key={h.id} className="history-item" style={{flexDirection:'column',alignItems:'stretch',justifyContent:'flex-start',gap:6,...(pendingDelete ? {background:'rgba(239,68,68,0.08)',borderLeft:'3px solid #ef4444'} : {})}}>
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,minWidth:0}}>
@@ -3518,6 +3645,7 @@ function App() {
                           {auditorName ? ` · ${auditorName}` : ''}
                           {h.owner && authUserId && !isOwn ? ` · ${t("他人", "Other user")}` : ''}
                           {pendingDelete ? ` · ⚠️ ${t("待删除", "Pending delete")}` : ''}
+                          {remInfo ? ` · ⤷ ${t("剩余", "remainder of")} ${remInfo.value}` : ''}
                         </small></p>
                       </div>
                     </div>
@@ -4024,6 +4152,41 @@ function App() {
                 </>
               );
             })()}
+          </div>
+        </div>
+      )}
+      {showRemainderPicker && (
+        <div className="vat-popover-backdrop" onClick={() => setShowRemainderPicker(false)}>
+          <div className="vat-popover" style={{maxWidth:520}} onClick={e => e.stopPropagation()}>
+            <div className="vat-popover-head">
+              <div className="vat-popover-title">
+                <strong>{t("选择包含本结算完整费用的文档", "Select the document that carries the full deductions")}</strong>
+              </div>
+              <button className="btn-load" onClick={() => setShowRemainderPicker(false)}>{t("关闭", "Close")}</button>
+            </div>
+            <div className="vat-popover-list" style={{maxHeight:'60vh'}}>
+              {savedDocsIndex.length === 0
+                ? <div className="supplier-empty">{t("无已保存文档", "No saved documents")}</div>
+                : savedDocsIndex.map((d: any, i: number) => {
+                  const related = currentInvNos.size > 0 && d.invoices.some((di: any) => currentInvNos.has(di.no));
+                  return (
+                    <button
+                      key={`${d.label}-${i}`}
+                      className="remainder-picker-row"
+                      style={{display:'flex',gap:10,alignItems:'center',justifyContent:'space-between',width:'100%',background:related ? 'rgba(16,185,129,0.08)' : 'transparent',borderBottom:'1px dashed var(--border)',padding:'8px 10px',cursor:'pointer',borderLeft:related ? '3px solid var(--green)' : 'none',textAlign:'left'}}
+                      onClick={() => linkRemainderOf(d.label)}
+                    >
+                      <span style={{minWidth:0}}>
+                        <strong style={{display:'block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</strong>
+                        <small style={{opacity:0.7}}>
+                          {d.doc_type} · {d.invoices.map((di: any) => di.no).join(', ')}
+                        </small>
+                      </span>
+                      {related && <span style={{flexShrink:0,color:'var(--green)'}}>⬅ {t("同一发票", "same invoice")}</span>}
+                    </button>
+                  );
+                })}
+            </div>
           </div>
         </div>
       )}
