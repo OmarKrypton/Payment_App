@@ -203,6 +203,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
     sheet2.set_name("Audit Checklist").map_err(|e| e.to_string())?;
     sheet2.set_column_width(0, 35).map_err(|e| e.to_string())?;
     sheet2.set_column_width(1, 55).map_err(|e| e.to_string())?;
+    sheet2.set_column_width(2, 45).map_err(|e| e.to_string())?;
 
     let mut r = 0u32;
 
@@ -307,32 +308,97 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .write_with_format(r, 0, "Verification Checklist", &section2_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
-    let check_items: Vec<(&str, bool)> = if is_import {
+    sheet2
+        .write_with_format(r, 0, "Check", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    sheet2
+        .write_with_format(r, 1, "Status", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    sheet2
+        .write_with_format(r, 2, "Notes", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    r += 1;
+
+    // (key, label) pairs that mirror the in-app Verification Checklist.
+    let check_items: Vec<(&str, &str)> = if is_import {
         vec![
-            ("SAD Customs Declaration", data.check_sad),
-            ("Commercial Invoice", data.check_import_invoice),
-            ("Bill of Lading", data.check_bill_lading),
-            ("Packing List", data.check_packing_list),
-            ("Certificate of Origin", data.check_cert_origin),
-            ("Nafeza Paper", data.check_nafeza),
-            ("Form 4 or 6", data.check_form_4_6),
+            ("check_sad", "SAD Customs Declaration"),
+            ("check_import_invoice", "Commercial Invoice"),
+            ("check_bill_lading", "Bill of Lading"),
+            ("check_packing_list", "Packing List"),
+            ("check_cert_origin", "Certificate of Origin"),
+            ("check_nafeza", "Nafeza Paper"),
+            ("check_form_4_6", "Form 4 or 6"),
         ]
     } else {
-        vec![
-            ("Cover & Settlement Check", data.check_cover),
-            ("Invoices Match Amount", data.check_invoices),
-            ("Company Name on Cover Matches Invoices", data.check_company_name),
-            ("WHT-Free Company Provided WHT Certificate", data.check_wht_cert),
-        ]
+        let mut v = vec![
+            ("check_cover", "Cover & Settlement Check"),
+            ("check_invoices", "Invoices Match Amount"),
+            ("check_company_name", "Company Name on Cover Matches Invoices"),
+            ("check_wht_cert", "WHT-Free Company Provided WHT Certificate"),
+        ];
+        if !data.remainder_of.trim().is_empty() {
+            v.push(("rem_parent", "Parent document exists in history"));
+            v.push(("rem_reconcile", "Remainder amount reconciles with parent"));
+        }
+        v
     };
-    for (label, ok) in &check_items {
+
+    let fail_fmt = Format::new()
+        .set_font_size(10)
+        .set_font_color(Color::RGB(0xDC2626))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
+    let na_fmt = Format::new()
+        .set_font_size(10)
+        .set_font_color(Color::RGB(0x808080))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
+    let note_fmt = Format::new()
+        .set_font_size(9)
+        .set_border(FormatBorder::Thin)
+        .set_text_wrap();
+
+    for (key, label) in &check_items {
         sheet2
             .write_with_format(r, 0, *label, &normal_fmt)
             .map_err(|e| e.to_string())?;
-        let status = if *ok { "✓ Passed" } else { "⏳ Pending" };
-        let fmt: &Format = if *ok { &pass_fmt } else { &pending_fmt };
+
+        let entry = data.checklist.get(*key);
+        let state = entry.map(|e| e.s.as_str()).unwrap_or("");
+        let legacy = match *key {
+            "check_cover" => data.check_cover,
+            "check_invoices" => data.check_invoices,
+            "check_company_name" => data.check_company_name,
+            "check_wht_cert" => data.check_wht_cert,
+            "check_sad" => data.check_sad,
+            "check_import_invoice" => data.check_import_invoice,
+            "check_bill_lading" => data.check_bill_lading,
+            "check_packing_list" => data.check_packing_list,
+            "check_cert_origin" => data.check_cert_origin,
+            "check_nafeza" => data.check_nafeza,
+            "check_form_4_6" => data.check_form_4_6,
+            _ => false,
+        };
+        let (status, fmt): (&str, &Format) = match state {
+            "pass" => ("✓ Passed", &pass_fmt),
+            "fail" => ("✗ Failed", &fail_fmt),
+            "na" => ("— N/A", &na_fmt),
+            _ => {
+                if legacy {
+                    ("✓ Passed", &pass_fmt)
+                } else {
+                    ("⏳ Pending", &pending_fmt)
+                }
+            }
+        };
         sheet2
             .write_with_format(r, 1, status, fmt)
+            .map_err(|e| e.to_string())?;
+
+        let note = entry.map(|e| e.n.as_str()).unwrap_or("");
+        sheet2
+            .write_with_format(r, 2, note, &note_fmt)
             .map_err(|e| e.to_string())?;
         r += 1;
     }

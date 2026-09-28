@@ -10,6 +10,14 @@ pub struct OcrFieldInfo {
     pub ocr_values: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChecklistEntry {
+    #[serde(default)]
+    pub s: String,
+    #[serde(default)]
+    pub n: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct FormData {
@@ -48,6 +56,10 @@ pub struct FormData {
     pub seller_tax_ids: Vec<String>,
     #[serde(default)]
     pub doc_type: String,
+    #[serde(default)]
+    pub remainder_of: String,
+    #[serde(default)]
+    pub checklist: std::collections::HashMap<String, ChecklistEntry>,
     pub check_cover: bool,
     pub check_invoices: bool,
     #[serde(default)]
@@ -143,6 +155,8 @@ impl Default for FormData {
             seller_tax_id: String::new(),
             seller_tax_ids: vec![],
             doc_type: "bank".into(),
+            remainder_of: String::new(),
+            checklist: std::collections::HashMap::new(),
             check_cover: false,
             check_invoices: false,
             check_company_name: false,
