@@ -5,7 +5,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -680,12 +680,19 @@ function App() {
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
-  // Locally-added suppliers (TAX ID -> name) that have no documents or pool
-  // rows of their own. Existing suppliers are never renamed.
-  const supplierMetaRef = useRef<Record<string, { name: string }>>((() => {
+  // Manually-added suppliers (TAX ID -> name) that have no documents or pool
+  // rows of their own. Synced via Supabase when signed in; localStorage is the
+  // offline cache. Existing suppliers are never renamed.
+  const manualSuppliersRef = useRef<Record<string, string>>((() => {
     try { return JSON.parse(localStorage.getItem("supplier_meta") || "{}"); } catch { return {}; }
   })());
   const [supplierEditor, setSupplierEditor] = useState<{ taxId: string; name: string } | null>(null);
+  // WHT-free certificate validity per supplier TAX ID. Synced via Supabase when
+  // signed in; a local cache keeps the last known dates available offline.
+  const [whtCerts, setWhtCerts] = useState<Record<string, { valid_until: string; supplier_name?: string }>>(() => {
+    try { return JSON.parse(localStorage.getItem("wht_certs") || "{}"); } catch { return {}; }
+  });
+  const [certEditor, setCertEditor] = useState<{ taxId: string; name: string; validUntil: string } | null>(null);
   const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; items: { kind: string; count: number }[] } | null>(null);
   const [showRemainderPicker, setShowRemainderPicker] = useState(false);
   const [remainderSearch, setRemainderSearch] = useState("");
@@ -1634,10 +1641,17 @@ function App() {
 
   const SuppliersTab = () => {
     const q = supplierSearch.trim().toLowerCase();
-    const filtered = supplierData.filter((s) => {
-      if (!q) return true;
-      return s.taxId.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.poolName.toLowerCase().includes(q);
-    });
+    const certLevelPriority = (s: SupplierInfo): number => {
+      if (!s.whtCert && !whtCerts[s.taxId]) return 0;
+      const lvl = certStatus(s.taxId).level;
+      return lvl === "expired" || lvl === "missing" ? 2 : lvl === "soon" ? 1 : 0;
+    };
+    const filtered = supplierData
+      .filter((s) => {
+        if (!q) return true;
+        return s.taxId.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.poolName.toLowerCase().includes(q);
+      })
+      .sort((a, b) => certLevelPriority(b) - certLevelPriority(a));
 
     const deco = (d: string) => d === "approve" ? "var(--green)" : d === "conditional" ? "var(--orange)" : d === "reject" ? "var(--red)" : "";
     const badgeColor = (s: SupplierInfo): { b: string; f: string } => {
@@ -1651,6 +1665,11 @@ function App() {
     const totalDocs = supplierData.reduce((n, s) => n + s.docCount, 0);
     const whtFreeCount = supplierData.filter((s) => s.whtCert).length;
     const withholdingCount = supplierData.filter((s) => !s.whtCert && s.whtRate).length;
+    const certsToRenew = supplierData.filter((s) => {
+      if (!s.whtCert && !whtCerts[s.taxId]) return false;
+      const lvl = certStatus(s.taxId).level;
+      return lvl === "expired" || lvl === "missing";
+    }).length;
 
     return (
       <div className="suppliers-tab">
@@ -1666,6 +1685,7 @@ function App() {
               <span className="supplier-stat">{totalDocs} {t("文档", "docs")}</span>
               {whtFreeCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span></>}
               {withholdingCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span></>}
+              {certsToRenew > 0 && <><span className="dot-sep">·</span><span className="supplier-stat bad">{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</span></>}
             </div>
           </div>
           <div className="suppliers-header-tools">
@@ -1705,6 +1725,13 @@ function App() {
                     <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
                     <span className="supplier-taxid">{s.taxId}</span>
                   </div>
+                  {s.docCount === 0 && (
+                    <button
+                      className="supplier-remove"
+                      title={t("删除供应商", "Remove supplier")}
+                      onClick={() => removeManualSupplier(s.taxId)}
+                    >✕</button>
+                  )}
                 </div>
 
                 <div className="supplier-body">
@@ -1762,6 +1789,25 @@ function App() {
                         </div>
                       </div>
                     )}
+                    {(s.whtCert || whtCerts[s.taxId]) && (() => {
+                      const st = certStatus(s.taxId);
+                      const label = st.level === "valid" ? t("有效", "Valid")
+                        : st.level === "soon" ? t("即将到期", "Expiring soon")
+                        : st.level === "expired" ? t("已过期", "Expired")
+                        : t("未登记", "Not recorded");
+                      return (
+                        <div className={`supplier-cert ${st.level}`}>
+                          <div className="supplier-cert-main">
+                            <strong>{t("免税证明有效期", "Certificate validity")}</strong>
+                            <span className="supplier-cert-sub">
+                              {st.validUntil ? `${t("有效期至", "valid until")} ${st.validUntil}` : t("未登记有效期", "no validity date recorded")}
+                            </span>
+                          </div>
+                          <span className={`supplier-cert-badge ${st.level}`}>{label}</span>
+                          <button className="btn-load" onClick={() => openCertEditor(s.taxId, s.name || s.poolName)}>{t("更新", "Update")}</button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -1812,6 +1858,37 @@ function App() {
               <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:14}}>
                 <button className="btn-load" onClick={() => setSupplierEditor(null)}>{t("取消", "Cancel")}</button>
                 <button className="btn-add" onClick={saveSupplierEditor}>{t("保存", "Save")}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {certEditor && (
+          <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setCertEditor(null)}>
+            <div className="modal" style={{width:440}} onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>{t("WHT 免税证明", "WHT-Free Certificate")}</h3>
+                <button className="modal-close" onClick={() => setCertEditor(null)}>✕</button>
+              </div>
+              <div className="field">
+                <label className="field-label">{t("供应商", "Supplier")}</label>
+                <div className="computed-value">{certEditor.name ? `${certEditor.name} · ` : ""}{certEditor.taxId}</div>
+              </div>
+              <div className="field">
+                <label className="field-label">{t("有效期至", "Valid until")}</label>
+                <input
+                  className="field-input"
+                  type="date"
+                  value={certEditor.validUntil}
+                  onChange={e => setCertEditor({ ...certEditor, validUntil: e.target.value })}
+                />
+              </div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
+                {t("免税证明每年年底失效，供应商续期后在此登记新的有效期。", "WHT-free certificates expire at year end; record the renewed validity date here.")}
+              </div>
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:14}}>
+                <button className="btn-load" onClick={() => setCertEditor(null)}>{t("取消", "Cancel")}</button>
+                <button className="btn-add" onClick={saveCertEditor}>{t("保存", "Save")}</button>
               </div>
             </div>
           </div>
@@ -2779,13 +2856,13 @@ function App() {
       const base = buildSuppliers(rows, pool);
       // Surface manually-added suppliers (a saved name with no documents or pool
       // rows of its own). Existing suppliers are never renamed.
-      const meta = supplierMetaRef.current;
+      const meta = manualSuppliersRef.current;
       const merged = [...base];
-      for (const [taxId, m] of Object.entries(meta)) {
+      for (const [taxId, supplierName] of Object.entries(meta)) {
         if (!merged.some(s => s.taxId === taxId)) {
           merged.push({
             taxId,
-            name: m.name || "",
+            name: supplierName || "",
             poolName: "",
             docCount: 0,
             docs: [],
@@ -2806,16 +2883,29 @@ function App() {
   useEffect(() => {
     // Always refresh the Suppliers view when the tab is opened so a document
     // saved moments ago shows up for its supplier without an app restart.
+    // Pull the synced supplier directory + certificate dates first so the list
+    // includes entries added on other devices.
     if (tab !== "suppliers") return;
-    loadSuppliersData();
+    (async () => {
+      await Promise.all([loadManualSuppliers(), loadWhtCerts()]);
+      loadSuppliersData();
+    })();
   }, [tab, authUser]);
 
-  const persistSupplierMeta = (next: Record<string, { name: string }>) => {
-    supplierMetaRef.current = next;
-    try { localStorage.setItem("supplier_meta", JSON.stringify(next)); } catch {}
+  const loadManualSuppliers = async () => {
+    if (!authUser) return; // keep the local cache when signed out
+    try {
+      const rows = await listManualSuppliersRemote();
+      const map: Record<string, string> = {};
+      for (const r of rows) map[r.tax_id] = r.name;
+      manualSuppliersRef.current = map;
+      try { localStorage.setItem("supplier_meta", JSON.stringify(map)); } catch {}
+    } catch (e) {
+      console.error("loadManualSuppliers failed", e);
+    }
   };
 
-  const saveSupplierEditor = () => {
+  const saveSupplierEditor = async () => {
     const ed = supplierEditor;
     if (!ed) return;
     const taxId = ed.taxId.trim();
@@ -2828,9 +2918,89 @@ function App() {
       showAlert(t("该税号的供应商已存在", "A supplier with this TAX ID already exists"));
       return;
     }
-    persistSupplierMeta({ ...supplierMetaRef.current, [taxId]: { name } });
+    manualSuppliersRef.current = { ...manualSuppliersRef.current, [taxId]: name };
+    try { localStorage.setItem("supplier_meta", JSON.stringify(manualSuppliersRef.current)); } catch {}
     setSupplierEditor(null);
+    if (authUser) {
+      try {
+        await upsertManualSupplierRemote({ tax_id: taxId, name });
+      } catch (e: any) {
+        showAlert(`${t("同步失败（已保存在本机）", "Sync failed (saved locally)")}: ${e.message || e}`);
+      }
+    }
     loadSuppliersData();
+  };
+
+  const removeManualSupplier = async (taxId: string) => {
+    if (!window.confirm(t("确定要删除该供应商吗？", "Delete this supplier?"))) return;
+    const next = { ...manualSuppliersRef.current };
+    delete next[taxId];
+    manualSuppliersRef.current = next;
+    try { localStorage.setItem("supplier_meta", JSON.stringify(next)); } catch {}
+    if (authUser) {
+      try { await deleteManualSupplierRemote(taxId); }
+      catch (e: any) { showAlert(`${t("删除同步失败", "Delete sync failed")}: ${e.message || e}`); }
+    }
+    loadSuppliersData();
+  };
+
+  // ── WHT-free certificate validity ──
+  const loadWhtCerts = async () => {
+    let map: Record<string, { valid_until: string; supplier_name?: string }> = {};
+    try {
+      if (authUser) {
+        const rows = await listWhtCertsRemote();
+        for (const r of rows) map[r.tax_id] = { valid_until: r.valid_until, supplier_name: r.supplier_name };
+      } else {
+        map = JSON.parse(localStorage.getItem("wht_certs") || "{}");
+      }
+    } catch (e) {
+      console.error("loadWhtCerts failed", e);
+      try { map = JSON.parse(localStorage.getItem("wht_certs") || "{}"); } catch {}
+    }
+    setWhtCerts(map);
+    try { localStorage.setItem("wht_certs", JSON.stringify(map)); } catch {}
+  };
+
+  const defaultCertDate = () => `${new Date().getFullYear()}-12-31`;
+
+  const certStatus = (taxId: string): { level: "valid" | "soon" | "expired" | "missing"; validUntil: string } => {
+    const c = whtCerts[taxId];
+    if (!c || !c.valid_until) return { level: "missing", validUntil: "" };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const exp = new Date(`${c.valid_until}T23:59:59`);
+    const days = Math.ceil((exp.getTime() - today.getTime()) / 86400000);
+    if (days < 0) return { level: "expired", validUntil: c.valid_until };
+    if (days <= 30) return { level: "soon", validUntil: c.valid_until };
+    return { level: "valid", validUntil: c.valid_until };
+  };
+
+  const openCertEditor = (taxId: string, name: string) => {
+    const existing = whtCerts[taxId]?.valid_until;
+    setCertEditor({ taxId, name, validUntil: existing || defaultCertDate() });
+  };
+
+  const saveCertEditor = async () => {
+    const ed = certEditor;
+    if (!ed) return;
+    const taxId = ed.taxId.trim();
+    const validUntil = ed.validUntil.trim();
+    if (!taxId || !validUntil) {
+      showAlert(t("请选择有效期", "Please choose a validity date"));
+      return;
+    }
+    const next = { ...whtCerts, [taxId]: { valid_until: validUntil, supplier_name: ed.name || "" } };
+    setWhtCerts(next);
+    try { localStorage.setItem("wht_certs", JSON.stringify(next)); } catch {}
+    setCertEditor(null);
+    if (authUser) {
+      try {
+        await upsertWhtCertRemote({ tax_id: taxId, supplier_name: ed.name || "", valid_until: validUntil });
+      } catch (e: any) {
+        showAlert(`${t("同步失败", "Sync failed")}: ${e.message || e}`);
+      }
+    }
   };
 
   // Index of every saved document (local + cloud, deduped on the serial) with

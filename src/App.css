@@ -1446,6 +1446,7 @@ body {
 }
 .supplier-stat.ok { color: var(--green); }
 .supplier-stat.warn { color: var(--orange); }
+.supplier-stat.bad { color: var(--red); }
 .dot-sep { color: var(--border); }
 
 .suppliers-header-tools {
@@ -1645,6 +1646,56 @@ body {
 }
 .supplier-wht.warn .supplier-wht-dot { background: var(--orange); }
 .supplier-wht.warn strong { color: var(--orange); }
+
+/* WHT-free certificate validity */
+.supplier-cert {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+}
+.supplier-cert.valid { border-color: var(--green); background: var(--green-bg); }
+.supplier-cert.soon { border-color: var(--orange); background: #fffbeb; }
+.supplier-cert.expired { border-color: var(--red); background: var(--red-bg); }
+.supplier-cert.missing { border-style: dashed; }
+.supplier-cert-main { flex: 1; min-width: 0; }
+.supplier-cert-main strong { display: block; font-size: 12px; color: var(--text-primary); }
+.supplier-cert-sub { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.supplier-cert-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  background: var(--bg-card);
+}
+.supplier-cert-badge.valid { color: var(--green); border-color: var(--green); }
+.supplier-cert-badge.soon { color: var(--orange); border-color: var(--orange); }
+.supplier-cert-badge.expired { color: var(--red); border-color: var(--red); }
+.supplier-cert-badge.missing { color: var(--text-muted); }
+
+.supplier-remove {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--red);
+  font-size: 12px;
+  cursor: pointer;
+  transition: none;
+}
+.supplier-remove:hover { background: var(--red-bg); border-color: var(--red); }
 
 .vat-popover-backdrop {
   position: fixed;
