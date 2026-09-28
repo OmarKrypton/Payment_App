@@ -660,6 +660,7 @@ function App() {
   const [rateVisible, setRateVisible] = useState(true);
   const [historyFilter, setHistoryFilter] = useState<"all" | "bank" | "import">("all");
   const [etaResult, setEtaResult] = useState<any[] | null>(null);
+  const [showEtaResult, setShowEtaResult] = useState(false);
   const [showPool, setShowPool] = useState(false);
   const [poolList, setPoolList] = useState<any[]>([]);
   const [poolLoading, setPoolLoading] = useState(false);
@@ -1133,6 +1134,9 @@ function App() {
       <div style={{display:'flex',gap:8,marginTop:8}}>
         <button className="btn-add" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
         <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+        <button className="btn-validation" onClick={() => setShowEtaResult(true)} disabled={!etaResult || etaResult.length === 0}>
+          {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
+        </button>
       </div>
       {hasInvoices && shown.length > 0 && (
         <div className="invoice-compare">
@@ -1347,12 +1351,16 @@ function App() {
       <h3>{t("文件信息", "Document Information")}</h3>
         <div className="field"><label className="field-label">{t("文档类型", "Doc Type")}</label>
           <div style={{display:'flex',gap:8}}>
-            <button onClick={() => updateField("doc_type", "bank")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="bank"?'var(--accent)':'transparent',color:data.doc_type==="bank"?'#fff':'inherit',cursor:'pointer'}}>
-              {t("银行", "Bank")}
-            </button>
-            <button onClick={() => updateField("doc_type", "import")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="import"?'var(--accent)':'transparent',color:data.doc_type==="import"?'#fff':'inherit',cursor:'pointer'}}>
-              {t("进口", "Import")}
-            </button>
+            {tab !== "import" && (
+              <button onClick={() => updateField("doc_type", "bank")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="bank"?'var(--accent)':'transparent',color:data.doc_type==="bank"?'#fff':'inherit',cursor:'pointer'}}>
+                {t("银行", "Bank")}
+              </button>
+            )}
+            {tab !== "bank" && (
+              <button onClick={() => updateField("doc_type", "import")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="import"?'var(--accent)':'transparent',color:data.doc_type==="import"?'#fff':'inherit',cursor:'pointer'}}>
+                {t("进口", "Import")}
+              </button>
+            )}
           </div>
         </div>
         <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={v => {
@@ -1610,6 +1618,9 @@ function App() {
           <div style={{display:'flex',gap:8,marginTop:8}}>
           <button className="btn-add" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
           <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+          <button className="btn-validation" onClick={() => setShowEtaResult(true)} disabled={!etaResult || etaResult.length === 0}>
+            {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
+          </button>
         </div>
         </div>
         <div className="card">
@@ -2843,6 +2854,29 @@ function App() {
     };
   };
 
+  // Validate every pool-attached entry currently in the document against the
+  // document fields and open the validation result modal. Shared by the single
+  // "Add" button and the "Attach Selected" batch button so both behave the same.
+  const validateImportEntries = async (entries: any[]) => {
+    try {
+      const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
+      const attached = entries.filter((e: any) => poolIds.has(e.attached_invoice));
+      if (attached.length === 0) return;
+      const poolRowIds = attached.map((e: any) => {
+        const pi = e.attached_uuid
+          ? poolList.find((x: any) => x.uuid === e.attached_uuid)
+          : poolList.find((x: any) => x.invoice_id === e.attached_invoice);
+        return pi?.id;
+      }).filter((x): x is number => x != null);
+      if (poolRowIds.length === 0) return;
+      const formJson = JSON.stringify(formRef.current);
+      const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
+      showEtaResults(results);
+    } catch (e: any) {
+      showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+    }
+  };
+
   const attachImportEntryFromPool = async (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
@@ -2863,21 +2897,21 @@ function App() {
     const idx = current.findIndex((e: any) =>
       e.attached_invoice === p.invoice_id || serviceNameContainsInvoice(e.service_name, p.invoice_id)
     );
+    let nextEntries: any[];
     if (idx >= 0) {
       if (current[idx].attached_invoice === p.invoice_id) {
         showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
         return;
       }
       current[idx] = entryImp(current[idx]);
-      formRef.current = { ...formRef.current, import_entries: current };
-      await recalc(formRef.current);
-      await markPoolClaimed(id);
-      return;
+      nextEntries = current;
+    } else {
+      nextEntries = [...current, poolToImportEntry(p)];
     }
-    const arr = [...current, poolToImportEntry(p)];
-    formRef.current = { ...formRef.current, import_entries: arr };
+    formRef.current = { ...formRef.current, import_entries: nextEntries };
     await recalc(formRef.current);
     await markPoolClaimed(id);
+    await validateImportEntries(nextEntries);
   };
 
   const attachBatchImportEntriesFromPool = async (rowIds: number[]) => {
@@ -2927,27 +2961,7 @@ function App() {
       if (authUser) await markPoolsUsedRemote(toClaim.map((p: any) => ({ uuid: p.uuid })), serial);
     } catch (e) { console.error("markPoolsUsedRemote failed", e); }
     await loadPool();
-    if (toClaim.length > 0) {
-      try {
-        const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
-        const attached = entries.filter((e: any) => poolIds.has(e.attached_invoice));
-        if (attached.length > 0) {
-          const poolRowIds = attached.map((e: any) => {
-            const pi = e.attached_uuid
-              ? poolList.find((x: any) => x.uuid === e.attached_uuid)
-              : poolList.find((x: any) => x.invoice_id === e.attached_invoice);
-            return pi?.id;
-          }).filter((x): x is number => x != null);
-          if (poolRowIds.length > 0) {
-            const formJson = JSON.stringify(formRef.current);
-            const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
-            setEtaResult(results);
-          }
-        }
-      } catch (e: any) {
-        showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
-      }
-    }
+    await validateImportEntries(entries);
   };
 
   const markPoolClaimed = async (id: number) => {
@@ -3007,7 +3021,7 @@ function App() {
         if (poolRowIds.length > 0) {
           const formJson = JSON.stringify(formRef.current);
           const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
-          setEtaResult(results);
+          showEtaResults(results);
         }
       }
     } catch (e: any) {
@@ -3071,7 +3085,7 @@ function App() {
           if (poolRowIds.length > 0) {
             const formJson = JSON.stringify(formRef.current);
             const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
-            setEtaResult(results);
+            showEtaResults(results);
           }
         }
       } catch (e: any) {
@@ -3192,11 +3206,17 @@ function App() {
       const formJson = JSON.stringify(formRef.current);
       const result = await invoke<any[]>("validate_from_pool", { ids, formJson });
       await attachValidatedInvoices(result);
-      setEtaResult(result);
+      showEtaResults(result);
       setShowPool(false);
     } catch (e: any) {
       showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
     }
+  };
+
+  const showEtaResults = (results: any[]) => {
+    setEtaResult(results);
+    setResultSearch("");
+    setShowEtaResult(true);
   };
 
   const exportValidationReport = async () => {
@@ -3868,16 +3888,16 @@ function App() {
         </div>
       )}
 
-      {etaResult && etaResult.length > 0 && (
-        <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setEtaResult(null)}>
-          <div className="modal" style={{width:700, maxHeight:'85vh'}} onClick={e => e.stopPropagation()}>
+      {showEtaResult && etaResult && etaResult.length > 0 && (
+        <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setShowEtaResult(false)}>
+          <div className="modal eta-result-modal" style={{width:700, maxHeight:'85vh'}} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{t("ETA XML 验证结果", "ETA XML Validation Result")} ({etaResult.length} {t("发票", "invoices")})</h3>
               <div style={{display:'flex',gap:8,alignItems:'center'}}>
                 <button className="btn-add" style={{background:'var(--accent)'}} onClick={exportValidationReport}>
                   {t("导出报告", "Export Report")}
                 </button>
-                <button className="modal-close" onClick={() => setEtaResult(null)}>✕</button>
+                <button className="modal-close" onClick={() => setShowEtaResult(false)}>✕</button>
               </div>
             </div>
 
@@ -3925,7 +3945,7 @@ function App() {
               );
             })()}
 
-            <div style={{display:'flex',flexDirection:'column',gap:12,maxHeight:'calc(85vh - 180px)',overflowY:'auto'}}>
+            <div className="eta-result-list">
               {(() => {
                 const rq = resultSearch.trim().toLowerCase();
                 const shownResults = rq ? etaResult.filter((r: any) => {

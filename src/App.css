@@ -548,6 +548,26 @@ body {
   filter: brightness(1.05);
 }
 
+.btn-validation {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: none;
+}
+.btn-validation:hover:not(:disabled) {
+  background: var(--accent-light);
+}
+.btn-validation:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .btn-danger {
   background: transparent;
   color: var(--red);
@@ -1060,6 +1080,29 @@ body {
 .modal-search {
   margin-bottom: 16px;
 }
+
+/* Validation result modal: fixed header + single scrollable result list, so
+   many invoices never overlap or hide behind each other. */
+.eta-result-modal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.eta-result-modal > * {
+  flex: none;
+}
+.eta-result-modal > .eta-result-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+.eta-result-list::-webkit-scrollbar { width: 6px; }
+.eta-result-list::-webkit-scrollbar-track { background: transparent; }
+.eta-result-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 .history-list {
   display: flex;
