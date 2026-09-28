@@ -1100,6 +1100,12 @@ body {
   gap: 12px;
   padding-right: 4px;
 }
+/* Cards must keep their content height: as flex items with overflow:hidden
+   their automatic minimum size resolves to 0, so without this they shrink and
+   their contents overlap the following card when many invoices are shown. */
+.eta-result-list > * {
+  flex: none;
+}
 .eta-result-list::-webkit-scrollbar { width: 6px; }
 .eta-result-list::-webkit-scrollbar-track { background: transparent; }
 .eta-result-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
