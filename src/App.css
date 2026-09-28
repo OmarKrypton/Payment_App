@@ -888,8 +888,10 @@ body {
 .invoice-compare-row .flag { font-weight: 700; }
 .invoice-compare-row.ok .flag { color: var(--green); }
 .invoice-compare-row.bad .flag { color: var(--red); }
+.invoice-compare-row.warn .flag { color: var(--orange); }
 .invoice-compare-row.bad { background: var(--red-bg); }
 .invoice-compare-row.ok { background: var(--green-bg); }
+.invoice-compare-row.warn { background: #fffbeb; }
 
 /* ── Audit Tab ── */
 .audit-tab {
@@ -1446,6 +1448,19 @@ body {
 .supplier-stat.warn { color: var(--orange); }
 .dot-sep { color: var(--border); }
 
+.suppliers-header-tools {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.suppliers-header-tools .suppliers-search {
+  flex: 1;
+}
+.suppliers-header-tools .btn-add {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .suppliers-search {
   position: relative;
 }
@@ -1512,6 +1527,27 @@ body {
   font-size: 12px;
   color: var(--text-muted);
   font-family: var(--font-mono, monospace);
+}
+
+.supplier-edit {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: none;
+}
+.supplier-edit:hover {
+  background: var(--bg-input);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .supplier-body {

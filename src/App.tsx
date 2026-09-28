@@ -680,6 +680,12 @@ function App() {
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
+  // Local, user-editable supplier names keyed by TAX ID. Entries for TAX IDs
+  // that have no documents/pool rows become manually-added suppliers.
+  const supplierMetaRef = useRef<Record<string, { name: string }>>((() => {
+    try { return JSON.parse(localStorage.getItem("supplier_meta") || "{}"); } catch { return {}; }
+  })());
+  const [supplierEditor, setSupplierEditor] = useState<{ mode: "add" | "edit"; taxId: string; name: string } | null>(null);
   const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; items: { kind: string; count: number }[] } | null>(null);
   const [showRemainderPicker, setShowRemainderPicker] = useState(false);
   const [remainderSearch, setRemainderSearch] = useState("");
@@ -1075,21 +1081,25 @@ function App() {
     const invWhtRate = totals.net > 0 ? (totals.wht / totals.net) * 100 : 0;
     const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
     const docWhtRate = parseFloat((data.wht_rate || "0").replace('%', '')) || 0;
-    const matcher = (label: string, inv: number, doc: number, fmtV: (n: number) => string, active = true) => ({
-      label, active, inv, doc, ok: Math.abs(inv - doc) <= 0.5, fmtV,
+    const matcher = (label: string, inv: number, doc: number, fmtV: (n: number) => string, active = true, warn = false) => ({
+      label, active, inv, doc, ok: Math.abs(inv - doc) <= 0.5, warn, fmtV,
     });
     const comparisons = [
       matcher(t("净额 vs 结算−扣除(折扣)", "Net vs Settlement−Deductions"), totals.net, computed.c_1B - computed.c_1D, fmtShort),
       matcher(t("VAT vs 本期VAT", "VAT vs Current VAT Amount"), totals.vat, computed.c_1E, fmtShort),
       matcher(t("VAT率 vs 设定税率", "VAT Rate vs Set VAT Rate"), invVatRate, docVatRate, n => `${n.toFixed(1)}%`, docVatRate > 0),
-      matcher(t("WHT vs 本期WHT", "WHT vs Current WHT Amount"), totals.wht, computed.c_6B, fmtShort, computed.c_6B > 0 || totals.wht > 0),
-      matcher(t("WHT率 vs 设定税率", "WHT Rate vs Set WHT Rate"), invWhtRate, docWhtRate, n => `${n.toFixed(1)}%`, docWhtRate > 0),
+      // A supplier may invoice without WHT while we still withhold on the
+      // settlement, so invoice WHT of 0 vs a non-zero document WHT is a warning,
+      // not an error.
+      matcher(t("WHT vs 本期WHT", "WHT vs Current WHT Amount"), totals.wht, computed.c_6B, fmtShort, computed.c_6B > 0 || totals.wht > 0, totals.wht <= 0.005 && computed.c_6B > 0.005),
+      matcher(t("WHT率 vs 设定税率", "WHT Rate vs Set WHT Rate"), invWhtRate, docWhtRate, n => `${n.toFixed(1)}%`, docWhtRate > 0, invWhtRate <= 0.0005 && docWhtRate > 0),
       {
         label: t("本期实付 vs 净应付(9A)", "Current Paid vs Net Payable (9A)"),
         active: computed.c_9A > 0 || computed.c_10A > 0,
         inv: computed.c_10A,
         doc: computed.c_9A,
         ok: computed.c_10A <= computed.c_9A + 0.5,
+        warn: false,
         fmtV: fmtShort,
       },
     ];
@@ -1143,12 +1153,12 @@ function App() {
         <div className="invoice-compare">
           <div style={{fontWeight:600,fontSize:11,marginBottom:6}}>{t("与文档字段对比", "Comparison vs Document Fields")}</div>
           {shown.map((c, i) => (
-            <div key={i} className={`invoice-compare-row ${c.ok ? 'ok' : 'bad'}`}>
+            <div key={i} className={`invoice-compare-row ${c.warn ? 'warn' : c.ok ? 'ok' : 'bad'}`}>
               <span>{c.label}</span>
               <span>{c.fmtV(c.inv)}</span>
               <span className="arrow">→</span>
               <span>{c.fmtV(c.doc)}</span>
-              <span className="flag">{c.ok ? '✓' : '✗'}</span>
+              <span className="flag">{c.warn ? '⚠' : c.ok ? '✓' : '✗'}</span>
             </div>
           ))}
         </div>
@@ -1658,14 +1668,19 @@ function App() {
               {withholdingCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span></>}
             </div>
           </div>
-          <div className="suppliers-search">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-            <input
-              className="field-input"
-              placeholder={t("搜索税号或公司名称...", "Search tax ID or company name...")}
-              value={supplierSearch}
-              onChange={e => setSupplierSearch(e.target.value)}
-            />
+          <div className="suppliers-header-tools">
+            <div className="suppliers-search">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+              <input
+                className="field-input"
+                placeholder={t("搜索税号或公司名称...", "Search tax ID or company name...")}
+                value={supplierSearch}
+                onChange={e => setSupplierSearch(e.target.value)}
+              />
+            </div>
+            <button className="btn-add" onClick={() => setSupplierEditor({ mode: "add", taxId: "", name: "" })}>
+              + {t("添加供应商", "Add Supplier")}
+            </button>
           </div>
         </div>
 
@@ -1690,6 +1705,11 @@ function App() {
                     <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
                     <span className="supplier-taxid">{s.taxId}</span>
                   </div>
+                  <button
+                    className="supplier-edit"
+                    title={t("修改名称", "Edit name")}
+                    onClick={() => setSupplierEditor({ mode: "edit", taxId: s.taxId, name: s.name || s.poolName || "" })}
+                  >✎</button>
                 </div>
 
                 <div className="supplier-body">
@@ -1768,6 +1788,38 @@ function App() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {supplierEditor && (
+          <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setSupplierEditor(null)}>
+            <div className="modal" style={{width:420}} onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>{supplierEditor.mode === "add" ? t("添加供应商", "Add Supplier") : t("修改供应商名称", "Edit Supplier Name")}</h3>
+                <button className="modal-close" onClick={() => setSupplierEditor(null)}>✕</button>
+              </div>
+              <div className="field">
+                <label className="field-label">{t("税号", "TAX ID")}</label>
+                <input
+                  className="field-input"
+                  value={supplierEditor.taxId}
+                  disabled={supplierEditor.mode === "edit"}
+                  onChange={e => setSupplierEditor({ ...supplierEditor, taxId: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label className="field-label">{t("名称", "Name")}</label>
+                <input
+                  className="field-input"
+                  value={supplierEditor.name}
+                  onChange={e => setSupplierEditor({ ...supplierEditor, name: e.target.value })}
+                />
+              </div>
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:14}}>
+                <button className="btn-load" onClick={() => setSupplierEditor(null)}>{t("取消", "Cancel")}</button>
+                <button className="btn-add" onClick={saveSupplierEditor}>{t("保存", "Save")}</button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -2730,7 +2782,27 @@ function App() {
         if (authUser) await syncPoolRemote();
         pool = await invoke<any[]>("list_invoice_pool_detail");
       } catch {}
-      setSupplierData(buildSuppliers(rows, pool));
+      const base = buildSuppliers(rows, pool);
+      // Apply user-defined names, then surface manually-added suppliers (those
+      // with a saved name but no documents/pool rows of their own).
+      const meta = supplierMetaRef.current;
+      const merged = base.map(s => (meta[s.taxId]?.name ? { ...s, name: meta[s.taxId].name } : s));
+      for (const [taxId, m] of Object.entries(meta)) {
+        if (!merged.some(s => s.taxId === taxId)) {
+          merged.push({
+            taxId,
+            name: m.name || "",
+            poolName: "",
+            docCount: 0,
+            docs: [],
+            vat: [],
+            whtCert: false,
+            whtRate: null,
+            whtDocs: 0,
+          });
+        }
+      }
+      setSupplierData(merged);
     } catch (e) {
       console.error("suppliers load failed", e);
     } finally {
@@ -2743,6 +2815,25 @@ function App() {
     if (tab !== "suppliers") return;
     loadSuppliersData();
   }, [tab, authUser]);
+
+  const persistSupplierMeta = (next: Record<string, { name: string }>) => {
+    supplierMetaRef.current = next;
+    try { localStorage.setItem("supplier_meta", JSON.stringify(next)); } catch {}
+  };
+
+  const saveSupplierEditor = () => {
+    const ed = supplierEditor;
+    if (!ed) return;
+    const taxId = ed.taxId.trim();
+    const name = ed.name.trim();
+    if (!taxId || !name) {
+      showAlert(t("请填写税号和名称", "Please enter both TAX ID and name"));
+      return;
+    }
+    persistSupplierMeta({ ...supplierMetaRef.current, [taxId]: { name } });
+    setSupplierEditor(null);
+    loadSuppliersData();
+  };
 
   // Index of every saved document (local + cloud, deduped on the serial) with
   // the invoices it references. Used for the remainder picker and for warning
