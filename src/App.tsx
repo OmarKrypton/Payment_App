@@ -1841,6 +1841,9 @@ function App() {
     formRef.current = { ...EMPTY_FORM };
     setComputed(EMPTY_CALC);
     setTab("bank");
+    setEtaResult(null);
+    setShowEtaResult(false);
+    setResultSearch("");
     setOverwriteTarget(null);
     await recalc(formRef.current);
     try { await invoke("save_config", { data: formRef.current }); } catch {}
@@ -2271,6 +2274,9 @@ function App() {
       if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
       setTab(parsed.doc_type === "import" ? "import" : "bank");
+      setEtaResult(null);
+      setShowEtaResult(false);
+      setResultSearch("");
       setDraftNo((parsed.doc_serial ? null : snapshotDraftNo(parsed)));
       await recalc(parsed);
       await reconcilePillsFromPool();
