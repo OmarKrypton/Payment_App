@@ -400,3 +400,84 @@ export async function rejectPoolDeleteRemote(uuid: string): Promise<void> {
     .eq("uuid", uuid);
   if (error) throw error;
 }
+
+// ── WHT-free certificates (shared across auditors) ──────────────────────────
+export interface WhtCertRow {
+  tax_id: string;
+  supplier_name: string;
+  valid_until: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export async function listWhtCertsRemote(): Promise<WhtCertRow[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { data, error } = await supabase
+    .from("wht_certificates")
+    .select("tax_id, supplier_name, valid_until, updated_at, updated_by")
+    .order("tax_id", { ascending: true });
+  if (error) throw error;
+  return (data || []) as WhtCertRow[];
+}
+
+export async function upsertWhtCertRemote(row: { tax_id: string; supplier_name: string; valid_until: string }): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("wht_certificates")
+    .upsert(
+      {
+        tax_id: row.tax_id,
+        supplier_name: row.supplier_name || "",
+        valid_until: row.valid_until || "",
+        updated_at: new Date().toISOString(),
+        updated_by: session.user.id,
+      },
+      { onConflict: "tax_id" }
+    );
+  if (error) throw error;
+}
+
+// ── Manually-added suppliers (shared across devices) ────────────────────────
+export interface ManualSupplierRow {
+  tax_id: string;
+  name: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export async function listManualSuppliersRemote(): Promise<ManualSupplierRow[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { data, error } = await supabase
+    .from("manual_suppliers")
+    .select("tax_id, name, updated_at, updated_by")
+    .order("tax_id", { ascending: true });
+  if (error) throw error;
+  return (data || []) as ManualSupplierRow[];
+}
+
+export async function upsertManualSupplierRemote(row: { tax_id: string; name: string }): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("manual_suppliers")
+    .upsert(
+      {
+        tax_id: row.tax_id,
+        name: row.name || "",
+        updated_at: new Date().toISOString(),
+        updated_by: session.user.id,
+      },
+      { onConflict: "tax_id" }
+    );
+  if (error) throw error;
+}
+
+export async function deleteManualSupplierRemote(taxId: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase.from("manual_suppliers").delete().eq("tax_id", taxId);
+  if (error) throw error;
+}
