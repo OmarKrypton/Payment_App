@@ -681,6 +681,7 @@ function App() {
   const [suppliersLoading, setSuppliersLoading] = useState(false);
   const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; items: { kind: string; count: number }[] } | null>(null);
   const [showRemainderPicker, setShowRemainderPicker] = useState(false);
+  const [remainderSearch, setRemainderSearch] = useState("");
   const [savedDocsIndex, setSavedDocsIndex] = useState<any[]>([]);
 
   // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
@@ -1385,7 +1386,7 @@ function App() {
                 <button className="btn-danger" onClick={() => updateField("remainder_of", "")}>✕</button>
               </div>
             ) : (
-              <button className="btn-add" onClick={() => { loadSavedDocsIndex(); setShowRemainderPicker(true); }}>
+              <button className="btn-add" onClick={() => { loadSavedDocsIndex(); setRemainderSearch(""); setShowRemainderPicker(true); }}>
                 ⤷ {t("标记为剩余部分…", "Link as remainder of…")}
               </button>
             )}
@@ -2776,7 +2777,7 @@ function App() {
             if (inv.seller_tax_id) taxIds.add(String(inv.seller_tax_id).trim());
           });
         }
-        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "" });
+        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "", final_decision: p.final_decision || "", created_at: r.created_at || "" });
       }
       setSavedDocsIndex(merged);
     } catch {}
@@ -4264,14 +4265,27 @@ function App() {
               <h3>{t("选择包含本结算完整费用的文档", "Select the document that carries the full deductions")}</h3>
               <button className="modal-close" onClick={() => setShowRemainderPicker(false)}>✕</button>
             </div>
+            <div className="modal-search">
+              <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={remainderSearch} onChange={e => setRemainderSearch(e.target.value)} />
+            </div>
             <div className="history-list">
-              {savedDocsIndex.length === 0
-                ? <div className="history-empty">{t("无已保存文档", "No saved documents")}</div>
-                : savedDocsIndex.map((d: any, i: number) => {
+              {(() => {
+                const q = remainderSearch.trim().toLowerCase();
+                const filtered = !q ? savedDocsIndex : savedDocsIndex.filter((d: any) =>
+                  (d.label || "").toLowerCase().includes(q) ||
+                  (d.sellers || []).some((s: string) => s.toLowerCase().includes(q)) ||
+                  (d.taxIds || []).some((s: string) => String(s).toLowerCase().includes(q)) ||
+                  (d.invoices || []).some((di: any) => String(di.no).toLowerCase().includes(q))
+                );
+                if (filtered.length === 0) {
+                  return <div className="history-empty">{savedDocsIndex.length === 0 ? t("无已保存文档", "No saved documents") : t("未找到快照", "No snapshots found")}</div>;
+                }
+                return filtered.map((d: any, i: number) => {
                   const related = currentInvNos.size > 0 && d.invoices.some((di: any) => currentInvNos.has(di.no));
                   const sellerName = d.sellers && d.sellers.length > 0
                     ? d.sellers.join(" · ")
                     : (d.taxIds && d.taxIds.length > 0 ? (poolList.find((p: any) => p.seller_tax_id === d.taxIds[0])?.seller_name || "") : "");
+                  const decisionColor = d.final_decision === "approve" ? "var(--green)" : d.final_decision === "conditional" ? "var(--orange)" : d.final_decision === "reject" ? "var(--red)" : "";
                   return (
                     <button
                       key={`${d.label}-${i}`}
@@ -4279,14 +4293,18 @@ function App() {
                       onClick={() => linkRemainderOf(d.label)}
                     >
                       <span className="remainder-picker-main">
-                        <strong className="remainder-picker-label">{d.label}</strong>
+                        <span className="remainder-picker-title">
+                          {decisionColor && <span className="decision-dot" style={{ background: decisionColor }} title={d.final_decision} />}
+                          <strong className="remainder-picker-label">{d.label}</strong>
+                        </span>
                         {sellerName && <small className="remainder-picker-sellers">{sellerName}</small>}
                         <small className="remainder-picker-meta">{d.invoices.map((di: any) => di.no).join(", ") || "—"}</small>
                       </span>
                       {related && <span className="remainder-picker-tag">⬅ {t("同一发票", "same invoice")}</span>}
                     </button>
                   );
-                })}
+                });
+              })()}
             </div>
           </div>
         </div>

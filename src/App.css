@@ -1692,6 +1692,12 @@ body {
   min-width: 0;
   flex: 1;
 }
+.remainder-picker-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .remainder-picker-label {
   display: block;
   font-size: 12px;
@@ -1700,6 +1706,10 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.remainder-picker-title .remainder-picker-label {
+  min-width: 0;
+  flex: 1;
 }
 .remainder-picker-sellers {
   display: block;
