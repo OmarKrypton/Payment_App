@@ -771,6 +771,7 @@ function App() {
       try {
         const cfg = await invoke<FormData>("load_config");
         formRef.current = cfg;
+        setTab(cfg.doc_type === "import" ? "import" : "bank");
         recalc(cfg);
       } catch (e) {
         console.error("load_config failed", e);
@@ -1134,7 +1135,7 @@ function App() {
       <div style={{display:'flex',gap:8,marginTop:8}}>
         <button className="btn-add" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
         <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
-        <button className="btn-validation" onClick={() => setShowEtaResult(true)} disabled={!etaResult || etaResult.length === 0}>
+        <button className="btn-validation" onClick={openValidationResults} disabled={!(data.invoices ?? []).some(inv => inv.attached_invoice) && !(etaResult && etaResult.length > 0)}>
           {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
         </button>
       </div>
@@ -1349,20 +1350,6 @@ function App() {
   const AuditInfoCard = () => (
     <div className="card">
       <h3>{t("文件信息", "Document Information")}</h3>
-        <div className="field"><label className="field-label">{t("文档类型", "Doc Type")}</label>
-          <div style={{display:'flex',gap:8}}>
-            {tab !== "import" && (
-              <button onClick={() => updateField("doc_type", "bank")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="bank"?'var(--accent)':'transparent',color:data.doc_type==="bank"?'#fff':'inherit',cursor:'pointer'}}>
-                {t("银行", "Bank")}
-              </button>
-            )}
-            {tab !== "bank" && (
-              <button onClick={() => updateField("doc_type", "import")} style={{padding:'4px 12px',border:'1px solid var(--border)',borderRadius:4,background:data.doc_type==="import"?'var(--accent)':'transparent',color:data.doc_type==="import"?'#fff':'inherit',cursor:'pointer'}}>
-                {t("进口", "Import")}
-              </button>
-            )}
-          </div>
-        </div>
         <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={v => {
           updateField("doc_serial", v);
           if (v && v.trim()) {
@@ -1618,7 +1605,7 @@ function App() {
           <div style={{display:'flex',gap:8,marginTop:8}}>
           <button className="btn-add" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
           <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
-          <button className="btn-validation" onClick={() => setShowEtaResult(true)} disabled={!etaResult || etaResult.length === 0}>
+          <button className="btn-validation" onClick={openValidationResults} disabled={!(data.import_entries ?? []).some(e => e.attached_invoice) && !(etaResult && etaResult.length > 0)}>
             {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
           </button>
         </div>
@@ -2283,6 +2270,7 @@ function App() {
       }
       if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
+      setTab(parsed.doc_type === "import" ? "import" : "bank");
       setDraftNo((parsed.doc_serial ? null : snapshotDraftNo(parsed)));
       await recalc(parsed);
       await reconcilePillsFromPool();
@@ -2875,6 +2863,56 @@ function App() {
     } catch (e: any) {
       showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
     }
+  };
+
+  // Validate every pool-attached invoice/entry currently in the document and
+  // show the result modal. Works for the live document and for a loaded saved
+  // document, because attached invoices stay claimed (and thus present) in the
+  // invoice pool. Handles both bank (invoices) and import (import_entries).
+  const validateAttachedInvoices = async () => {
+    const cur: any = formRef.current;
+    const isImp = cur.doc_type === "import";
+    const poolIds = new Set(poolList.map((x: any) => x.invoice_id));
+    const rows: { uuid?: string; no: string; seller: string }[] = (isImp ? (cur.import_entries ?? []) : (cur.invoices ?? []))
+      .filter((e: any) => e.attached_invoice && poolIds.has(e.attached_invoice))
+      .map((e: any) => ({ uuid: e.attached_uuid, no: e.attached_invoice, seller: e.seller_tax_id || "" }));
+    if (rows.length === 0) {
+      showAlert(t("本文档没有可验证的已附加发票", "This document has no attached invoices to validate"));
+      return;
+    }
+    const poolRowIds = rows.map(r => {
+      const pi = r.uuid
+        ? poolList.find((x: any) => x.uuid === r.uuid)
+        : poolList.find((x: any) => x.invoice_id === r.no && (isImp || x.seller_tax_id === r.seller));
+      return pi?.id;
+    }).filter((x): x is number => x != null);
+    if (poolRowIds.length === 0) {
+      showAlert(t("在发票池中找不到已附加的发票", "Attached invoices were not found in the pool"));
+      return;
+    }
+    try {
+      const formJson = JSON.stringify(cur);
+      const results = await invoke<any[]>("validate_from_pool", { ids: poolRowIds, formJson });
+      showEtaResults(results);
+    } catch (e: any) {
+      showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
+    }
+  };
+
+  // Re-validate the current document's attached invoices; fall back to showing
+  // the last cached report when the document has no attached invoices.
+  const openValidationResults = async () => {
+    const cur: any = formRef.current;
+    const arr = cur.doc_type === "import" ? (cur.import_entries ?? []) : (cur.invoices ?? []);
+    if (arr.some((e: any) => e.attached_invoice)) {
+      await validateAttachedInvoices();
+      return;
+    }
+    if (etaResult && etaResult.length > 0) {
+      setShowEtaResult(true);
+      return;
+    }
+    showAlert(t("本文档没有可验证的已附加发票", "This document has no attached invoices to validate"));
   };
 
   const attachImportEntryFromPool = async (id: number) => {
@@ -3495,8 +3533,8 @@ function App() {
           )}
         </div>
         <nav className="sidebar-nav">
-          <button className={tab === "bank" ? "active" : ""} onClick={() => setTab("bank")}>{t("银行", "Bank")}</button>
-          <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}>{t("进口", "Import")}</button>
+          <button className={tab === "bank" ? "active" : ""} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>{t("银行", "Bank")}</button>
+          <button className={tab === "import" ? "active" : ""} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>{t("进口", "Import")}</button>
           <button className={tab === "suppliers" ? "active" : ""} onClick={() => setTab("suppliers")}>{t("供应商", "Suppliers")}</button>
         </nav>
         <div style={{padding:'6px 0 2px', display:'flex', flexDirection:'column', gap:8}}>
