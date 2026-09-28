@@ -4258,17 +4258,15 @@ function App() {
         </div>
       )}
       {showRemainderPicker && (
-        <div className="vat-popover-backdrop" onClick={() => setShowRemainderPicker(false)}>
-          <div className="vat-popover" style={{maxWidth:520}} onClick={e => e.stopPropagation()}>
-            <div className="vat-popover-head">
-              <div className="vat-popover-title">
-                <strong>{t("选择包含本结算完整费用的文档", "Select the document that carries the full deductions")}</strong>
-              </div>
+        <div className="modal-overlay" onClick={() => setShowRemainderPicker(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t("选择包含本结算完整费用的文档", "Select the document that carries the full deductions")}</h3>
               <button className="modal-close" onClick={() => setShowRemainderPicker(false)}>✕</button>
             </div>
-            <div className="remainder-picker-list">
+            <div className="history-list">
               {savedDocsIndex.length === 0
-                ? <div className="supplier-empty">{t("无已保存文档", "No saved documents")}</div>
+                ? <div className="history-empty">{t("无已保存文档", "No saved documents")}</div>
                 : savedDocsIndex.map((d: any, i: number) => {
                   const related = currentInvNos.size > 0 && d.invoices.some((di: any) => currentInvNos.has(di.no));
                   const sellerName = d.sellers && d.sellers.length > 0
