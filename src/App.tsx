@@ -680,12 +680,12 @@ function App() {
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
-  // Local, user-editable supplier names keyed by TAX ID. Entries for TAX IDs
-  // that have no documents/pool rows become manually-added suppliers.
+  // Locally-added suppliers (TAX ID -> name) that have no documents or pool
+  // rows of their own. Existing suppliers are never renamed.
   const supplierMetaRef = useRef<Record<string, { name: string }>>((() => {
     try { return JSON.parse(localStorage.getItem("supplier_meta") || "{}"); } catch { return {}; }
   })());
-  const [supplierEditor, setSupplierEditor] = useState<{ mode: "add" | "edit"; taxId: string; name: string } | null>(null);
+  const [supplierEditor, setSupplierEditor] = useState<{ taxId: string; name: string } | null>(null);
   const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; items: { kind: string; count: number }[] } | null>(null);
   const [showRemainderPicker, setShowRemainderPicker] = useState(false);
   const [remainderSearch, setRemainderSearch] = useState("");
@@ -1678,7 +1678,7 @@ function App() {
                 onChange={e => setSupplierSearch(e.target.value)}
               />
             </div>
-            <button className="btn-add" onClick={() => setSupplierEditor({ mode: "add", taxId: "", name: "" })}>
+            <button className="btn-add" onClick={() => setSupplierEditor({ taxId: "", name: "" })}>
               + {t("添加供应商", "Add Supplier")}
             </button>
           </div>
@@ -1705,11 +1705,6 @@ function App() {
                     <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
                     <span className="supplier-taxid">{s.taxId}</span>
                   </div>
-                  <button
-                    className="supplier-edit"
-                    title={t("修改名称", "Edit name")}
-                    onClick={() => setSupplierEditor({ mode: "edit", taxId: s.taxId, name: s.name || s.poolName || "" })}
-                  >✎</button>
                 </div>
 
                 <div className="supplier-body">
@@ -1795,7 +1790,7 @@ function App() {
           <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setSupplierEditor(null)}>
             <div className="modal" style={{width:420}} onClick={e => e.stopPropagation()}>
               <div className="modal-header">
-                <h3>{supplierEditor.mode === "add" ? t("添加供应商", "Add Supplier") : t("修改供应商名称", "Edit Supplier Name")}</h3>
+                <h3>{t("添加供应商", "Add Supplier")}</h3>
                 <button className="modal-close" onClick={() => setSupplierEditor(null)}>✕</button>
               </div>
               <div className="field">
@@ -1803,7 +1798,6 @@ function App() {
                 <input
                   className="field-input"
                   value={supplierEditor.taxId}
-                  disabled={supplierEditor.mode === "edit"}
                   onChange={e => setSupplierEditor({ ...supplierEditor, taxId: e.target.value })}
                 />
               </div>
@@ -2783,10 +2777,10 @@ function App() {
         pool = await invoke<any[]>("list_invoice_pool_detail");
       } catch {}
       const base = buildSuppliers(rows, pool);
-      // Apply user-defined names, then surface manually-added suppliers (those
-      // with a saved name but no documents/pool rows of their own).
+      // Surface manually-added suppliers (a saved name with no documents or pool
+      // rows of its own). Existing suppliers are never renamed.
       const meta = supplierMetaRef.current;
-      const merged = base.map(s => (meta[s.taxId]?.name ? { ...s, name: meta[s.taxId].name } : s));
+      const merged = [...base];
       for (const [taxId, m] of Object.entries(meta)) {
         if (!merged.some(s => s.taxId === taxId)) {
           merged.push({
@@ -2828,6 +2822,10 @@ function App() {
     const name = ed.name.trim();
     if (!taxId || !name) {
       showAlert(t("请填写税号和名称", "Please enter both TAX ID and name"));
+      return;
+    }
+    if (supplierData.some(s => s.taxId === taxId)) {
+      showAlert(t("该税号的供应商已存在", "A supplier with this TAX ID already exists"));
       return;
     }
     persistSupplierMeta({ ...supplierMetaRef.current, [taxId]: { name } });

@@ -1529,27 +1529,6 @@ body {
   font-family: var(--font-mono, monospace);
 }
 
-.supplier-edit {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: none;
-}
-.supplier-edit:hover {
-  background: var(--bg-input);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .supplier-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
