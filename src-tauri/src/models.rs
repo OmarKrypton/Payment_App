@@ -232,6 +232,8 @@ pub struct ImportEntry {
     #[serde(default)]
     pub temp_labour: bool,
     #[serde(default)]
+    pub exclude_split: bool,
+    #[serde(default)]
     pub attached_invoice: String,
 }
 

@@ -33,6 +33,7 @@ interface ImportEntry {
   attached_invoice: string;
   seller_tax_id?: string;
   attached_uuid?: string;
+  exclude_split?: boolean; // excluded from the EGP/USD summary amounts
 }
 
 interface InvoiceData {
@@ -762,7 +763,7 @@ function App() {
     queueFlush();
   }, [queueFlush]);
 
-  const updateNested = useCallback((parent: string, index: number, key: string, value: string) => {
+  const updateNested = useCallback((parent: string, index: number, key: string, value: any) => {
     const arr = [...(formRef.current as any)[parent]];
     arr[index] = { ...arr[index], [key]: value };
     formRef.current = { ...formRef.current, [parent]: arr };
@@ -1250,6 +1251,12 @@ function App() {
         entry.vat_rate = mem.vat || entry.vat_rate;
         entry.wht_rate = mem.wht || entry.wht_rate;
       }
+      // Auto-exclude well-known non-service lines (Nafeza / Form 4 / Commercial
+      // invoice) from the EGP/USD amounts; still toggleable per row.
+      if (/nafeza|form\s*4|commercial/i.test(v) && !entry.exclude_split) {
+        updateNested("import_entries", i, "exclude_split", true);
+        entry.exclude_split = true;
+      }
       updateNested("import_entries", i, "attached_invoice", "");
     }
     if (k === "vat_rate" || k === "wht_rate" || k === "rate") {
@@ -1560,23 +1567,28 @@ function App() {
   const ImportTab = () => {
     // Split service-provider entries into EGP-billed (no exchange rate) and
     // foreign-currency (a rate is entered) so each portion can be summarised.
+    // Entries marked "exclude" (Nafeza, Commercial invoice, Form 4, …) are left
+    // out of both totals.
     const importSplit = (() => {
-      let egpInclVat = 0;   // EGP services total + VAT
-      let usdNet = 0;       // foreign-currency services net (in USD)
-      let usdEgpNet = 0;    // their EGP equivalent (net)
+      let egpInclVat = 0;    // EGP services total + VAT
+      let usdInclVat = 0;    // foreign-currency services total + VAT (in USD)
+      let usdEgpInclVat = 0; // the same total in EGP
       for (const e of (data.import_entries ?? [])) {
+        if (e.exclude_split) continue;
         const amt = toNum(e.amount);
         const rate = toNum(e.rate);
         const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
         if (rate > 0) {
-          usdNet += amt;
-          usdEgpNet += amt * rate;
+          const vatUsd = amt * vatRate / 100;
+          const vatEgp = Math.round(amt * rate * vatRate / 100 * 100) / 100;
+          usdInclVat += amt + vatUsd;
+          usdEgpInclVat += amt * rate + vatEgp;
         } else {
           egpInclVat += amt + Math.round(amt * vatRate / 100 * 100) / 100;
         }
       }
       const r2 = (n: number) => Math.round(n * 100) / 100;
-      return { egpInclVat: r2(egpInclVat), usdNet: r2(usdNet), usdEgpNet: r2(usdEgpNet) };
+      return { egpInclVat: r2(egpInclVat), usdInclVat: r2(usdInclVat), usdEgpInclVat: r2(usdEgpInclVat) };
     })();
     return (
       <div className="import-tab">
@@ -1636,7 +1648,7 @@ function App() {
               <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT率", "VAT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT率", "WHT")}</div>
               <div style={{paddingTop:14,textAlign:'center'}}>{t("临时工", "Temp")}</div>
-              <div></div> {/* Spacer header */}
+              <div style={{paddingTop:14,textAlign:'center'}} title={t("不计入 EGP/USD 金额", "Exclude from EGP/USD amounts")}>{t("不计入", "Excl.")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT", "VAT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT", "WHT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("净额", "Net")}</div>
@@ -1670,7 +1682,15 @@ function App() {
                   {["0%","1%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
-                <div></div> {/* Spacer cell */}
+                <div style={{display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <input
+                    type="checkbox"
+                    checked={!!e.exclude_split}
+                    onChange={() => updImportEntry(i, "exclude_split", !e.exclude_split)}
+                    title={t("不计入 EGP/USD 金额 (如 Nafeza、商业发票、Form 4)", "Exclude from EGP/USD amounts (e.g. Nafeza, Commercial invoice, Form 4)")}
+                    style={{width:14,height:14,accentColor:'var(--orange)',cursor:'pointer'}}
+                  />
+                </div>
                 <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(vat)}</div>
                 <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(wht)}</div>
                 <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(displayAmt + vat - wht)}</div>
@@ -1695,9 +1715,9 @@ function App() {
             <Computed label={t("临时工社保 (服务金额 × 0.45%)", "Temp Labour (Services × 0.45%)")} value={computed.import_temp_labour} highlight />
             <Computed label={t("EGP 金额 (服务 + VAT)", "EGP Amount (Services + VAT)")} value={importSplit.egpInclVat} highlight />
             <div className="field">
-              <label className="field-label">{t("USD 金额 (服务 + 汇率)", "USD Amount (Services + rate)")}</label>
-              <div className="computed-value highlight" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>{fmtUsd(importSplit.usdNet)}</div>
-              <div className="field-sub" style={{ marginTop: 2 }}>= {fmt(importSplit.usdEgpNet)}</div>
+              <label className="field-label">{t("USD 金额 (服务+VAT+汇率)", "USD Amount (Services + VAT + rate)")}</label>
+              <div className="computed-value highlight" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>{fmtUsd(importSplit.usdInclVat)}</div>
+              <div className="field-sub" style={{ marginTop: 2 }}>= {fmt(importSplit.usdEgpInclVat)}</div>
             </div>
           </div>
         </div>
