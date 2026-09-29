@@ -201,6 +201,18 @@ const extractTaxIdFromName = (name: string): string => {
   return m ? m[1] : "";
 };
 
+// Import service providers are coded A1, A2, B1, C1, … D1, D2. Codes up to D are
+// real service providers; E and later are non-service lines (E1 = Nafeza, then
+// Form 4 / Commercial invoice). Only A–D are counted in the EGP/USD summary.
+const importCodeLetter = (name: string): string => {
+  const m = /^\s*([A-Za-z])\s*[-.]?\s*\d/.exec(name || "");
+  return m ? m[1].toUpperCase() : "";
+};
+const importSplitIncluded = (name: string): boolean => {
+  const c = importCodeLetter(name);
+  return !c || c <= "D"; // no code -> treat as a service provider
+};
+
 // When the same seller tax id is captured in both a truncated and full form
 // (e.g. "533446" and "533446333"), keep only the complete/longest id.
 const dedupeTaxIds = (set: Set<string>): string[] => {
@@ -1251,12 +1263,8 @@ function App() {
         entry.vat_rate = mem.vat || entry.vat_rate;
         entry.wht_rate = mem.wht || entry.wht_rate;
       }
-      // Auto-exclude well-known non-service lines (Nafeza / Form 4 / Commercial
-      // invoice) from the EGP/USD amounts; still toggleable per row.
-      if (/nafeza|form\s*4|commercial/i.test(v) && !entry.exclude_split) {
-        updateNested("import_entries", i, "exclude_split", true);
-        entry.exclude_split = true;
-      }
+      // Auto-exclude well-known non-service lines from the EGP/USD amounts is
+      // driven by the provider code (A–D included, E+ excluded — see importSplit).
       updateNested("import_entries", i, "attached_invoice", "");
     }
     if (k === "vat_rate" || k === "wht_rate" || k === "rate") {
@@ -1574,7 +1582,7 @@ function App() {
       let usdInclVat = 0;    // foreign-currency services total + VAT (in USD)
       let usdEgpInclVat = 0; // the same total in EGP
       for (const e of (data.import_entries ?? [])) {
-        if (e.exclude_split) continue;
+        if (e.exclude_split || !importSplitIncluded(e.service_name)) continue;
         const amt = toNum(e.amount);
         const rate = toNum(e.rate);
         const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
@@ -1648,7 +1656,7 @@ function App() {
               <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT率", "VAT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT率", "WHT")}</div>
               <div style={{paddingTop:14,textAlign:'center'}}>{t("临时工", "Temp")}</div>
-              <div style={{paddingTop:14,textAlign:'center'}} title={t("不计入 EGP/USD 金额", "Exclude from EGP/USD amounts")}>{t("不计入", "Excl.")}</div>
+              <div></div> {/* Spacer header */}
               <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT", "VAT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT", "WHT")}</div>
               <div style={{paddingTop:14,paddingLeft:10}}>{t("净额", "Net")}</div>
@@ -1682,15 +1690,7 @@ function App() {
                   {["0%","1%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
-                <div style={{display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  <input
-                    type="checkbox"
-                    checked={!!e.exclude_split}
-                    onChange={() => updImportEntry(i, "exclude_split", !e.exclude_split)}
-                    title={t("不计入 EGP/USD 金额 (如 Nafeza、商业发票、Form 4)", "Exclude from EGP/USD amounts (e.g. Nafeza, Commercial invoice, Form 4)")}
-                    style={{width:14,height:14,accentColor:'var(--orange)',cursor:'pointer'}}
-                  />
-                </div>
+                <div></div> {/* Spacer cell */}
                 <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(vat)}</div>
                 <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(wht)}</div>
                 <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(displayAmt + vat - wht)}</div>
