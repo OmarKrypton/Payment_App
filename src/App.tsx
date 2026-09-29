@@ -1390,9 +1390,11 @@ function App() {
     if (data.seller_tax_id) docSellerTaxIds.add(String(data.seller_tax_id).trim());
     for (const inv of invs) { const t2 = String(inv.seller_tax_id || "").trim(); if (t2) docSellerTaxIds.add(t2); }
     const hasWhtFreeSeller = [...docSellerTaxIds].some(isWhtFreeTaxId);
-    let check_wht_cert_auto: "pass" | "na" | "" = "";
-    if (docSellerTaxIds.size > 0) check_wht_cert_auto = hasWhtFreeSeller ? "pass" : "na";
+    // If this document actually withholds WHT, it clearly is not treating the
+    // supplier as WHT-free, so the auto-check must not read as "pass".
     const whtApplied = (computed.c_6B || 0) > 0.005 || (parseFloat((data.wht_rate || "0").replace('%', '')) || 0) > 0;
+    let check_wht_cert_auto: "pass" | "na" | "" = "";
+    if (docSellerTaxIds.size > 0) check_wht_cert_auto = (hasWhtFreeSeller && !whtApplied) ? "pass" : "na";
     const whtFreeShown = cl["check_wht_cert"]?.s || check_wht_cert_auto;
     const whtFreeConflict = !isImport && whtFreeShown === "pass" && whtApplied;
 
