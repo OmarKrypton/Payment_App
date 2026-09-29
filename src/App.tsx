@@ -471,18 +471,24 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   }
 
   const result: SupplierInfo[] = [];
-  // Merge truncated tax IDs into their full counterparts. A service name can
-  // embed a shortened seller id (e.g. "686478") that is really a prefix/suffix
-  // of the complete id ("686478444") seen in another document or the pool.
-  // Collapsing them keeps one supplier instead of two phantom entries.
+  // Merge a *truncated* tax id (6–8 digits, e.g. from an old service name) into
+  // its full 9-digit counterpart — but only when exactly one full id matches by
+  // prefix/suffix. Full 9-digit ids are never merged into each other, and
+  // ambiguous ids are left alone, so unrelated suppliers are no longer combined.
   const taxIds = [...acc.keys()];
+  const full9 = taxIds.filter(id => /^\d{9}$/.test(id));
   const mergeMap = new Map<string, string>();
   for (const id of taxIds) {
-    let best = id;
-    for (const other of taxIds) {
-      if (other.length > best.length && (other.startsWith(best) || other.endsWith(best))) best = other;
-    }
-    if (best !== id) mergeMap.set(id, best);
+    if (/^\d{9}$/.test(id) || id.length < 6) continue;
+    const candidates = full9.filter(f => f !== id && (f.startsWith(id) || f.endsWith(id)));
+    if (candidates.length !== 1) continue;
+    const to = candidates[0];
+    // If both ids resolve to a known pool seller name and they differ, they are
+    // different suppliers that merely share a prefix/suffix — don't merge.
+    const fromName = (poolEntryFor(id)?.name || "").trim().toLowerCase();
+    const toName = (poolEntryFor(to)?.name || "").trim().toLowerCase();
+    if (fromName && toName && fromName !== toName) continue;
+    mergeMap.set(id, to);
   }
   for (const [from, to] of mergeMap) {
     const fromAcc = acc.get(from);
@@ -685,6 +691,37 @@ const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boo
     if (!c) return false;
     return c === invNorm || (invNorm.length >= 4 && (c.endsWith(invNorm) || c.startsWith(invNorm)));
   });
+};
+
+// The seller tax id an import entry belongs to (explicit, or embedded in the name).
+const entrySellerOf = (e: any): string =>
+  String(e?.seller_tax_id || extractTaxIdFromName(e?.service_name || "") || "").trim();
+
+// Whether an import entry already represents a given pool invoice. Invoice ids
+// like "61" repeat across suppliers, so when both sides identify a seller they
+// must agree; UUIDs are compared exactly when present.
+const entryMatchesPoolInvoice = (e: any, p: any): boolean => {
+  if (!e || !p) return false;
+  const eu = String(e.attached_uuid || "").trim();
+  const pu = String(p.uuid || "").trim();
+  if (eu && pu) return eu === pu;
+  const sameId = e.attached_invoice === p.invoice_id || serviceNameContainsInvoice(e.service_name || "", p.invoice_id || "");
+  if (!sameId) return false;
+  const es = entrySellerOf(e);
+  const ps = String(p.seller_tax_id || "").trim();
+  return !es || !ps || es === ps;
+};
+
+// Bank-invoice equivalent: match a form invoice line to a pool row.
+const invoiceMatchesPoolRow = (inv: any, p: any): boolean => {
+  if (!inv || !p) return false;
+  const iu = String(inv.attached_uuid || "").trim();
+  const pu = String(p.uuid || "").trim();
+  if (iu && pu) return iu === pu;
+  if (String(inv.invoice_no || "") !== String(p.invoice_id || "")) return false;
+  const is = String(inv.seller_tax_id || "").trim();
+  const ps = String(p.seller_tax_id || "").trim();
+  return !is || !ps || is === ps;
 };
 
 function App() {
@@ -2631,10 +2668,17 @@ function App() {
       let changed = false;
       const updated = entries.map((e: any) => {
         if (!e || e.attached_invoice || !e.service_name) return e;
-        const match = used.find((p: any) => serviceNameContainsInvoice(e.service_name, p.invoice_id));
+        const es = String(e.seller_tax_id || "").trim();
+        // Match by invoice id AND seller tax id (ids repeat across suppliers),
+        // and record the pool row's uuid so the claim stays exact.
+        const match = used.find((p: any) => {
+          if (!serviceNameContainsInvoice(e.service_name, p.invoice_id)) return false;
+          const ps = String(p.seller_tax_id || "").trim();
+          return !es || !ps || es === ps;
+        });
         if (match) {
           changed = true;
-          return { ...e, attached_invoice: match.invoice_id };
+          return { ...e, attached_invoice: match.invoice_id, attached_uuid: match.uuid || "" };
         }
         return e;
       });
@@ -3170,12 +3214,12 @@ function App() {
         seen.add(label);
         let p: any = {};
         try { p = JSON.parse(r.data_json || "{}"); } catch {}
-        const invoices: { no: string; amount: string }[] = [];
+        const invoices: { no: string; amount: string; seller: string; uuid: string }[] = [];
         const sellers = new Set<string>();
         const taxIds = new Set<string>();
         if (p.doc_type === "import") {
           (p.import_entries || []).forEach((e: any) => {
-            if (e.attached_invoice) invoices.push({ no: String(e.attached_invoice), amount: String(e.amount ?? "") });
+            if (e.attached_invoice) invoices.push({ no: String(e.attached_invoice), amount: String(e.amount ?? ""), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
             if (e.company_name) sellers.add(String(e.company_name).trim());
             const sid = e.seller_tax_id || extractTaxIdFromName(e.service_name || "");
             if (sid) taxIds.add(String(sid).trim());
@@ -3184,7 +3228,7 @@ function App() {
           (p.seller_tax_ids || []).forEach((x: string) => x && x.trim() && taxIds.add(x.trim()));
           if (p.seller_tax_id) taxIds.add(String(p.seller_tax_id).trim());
           (p.invoices || []).forEach((inv: any) => {
-            if (inv.invoice_no) invoices.push({ no: String(inv.invoice_no), amount: String(inv.amount ?? "") });
+            if (inv.invoice_no) invoices.push({ no: String(inv.invoice_no), amount: String(inv.amount ?? ""), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
             if (inv.company_name) sellers.add(String(inv.company_name).trim());
             if (inv.seller_tax_id) taxIds.add(String(inv.seller_tax_id).trim());
           });
@@ -3220,15 +3264,31 @@ function App() {
 
   // Invoices referenced by the document being edited that are ALSO referenced
   // by other saved documents and not reconciled through a remainder link.
+  // Invoice ids like "61" repeat across suppliers, so match on the ETA uuid when
+  // present, otherwise on (invoice id + seller tax id) — never the id alone.
   const currentSqlDefault = (formRef.current.doc_serial || "").trim();
-  const currentInvNos = new Set<string>();
-  (formRef.current.invoices || []).forEach((inv: any) => { if (inv.invoice_no) currentInvNos.add(String(inv.invoice_no)); });
-  (formRef.current.import_entries || []).forEach((e: any) => { if (e.attached_invoice) currentInvNos.add(String(e.attached_invoice)); });
+  const currentInvs: { no: string; seller: string; uuid: string }[] = [];
+  (formRef.current.invoices || []).forEach((inv: any) => {
+    if (inv.invoice_no) currentInvs.push({ no: String(inv.invoice_no), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
+  });
+  (formRef.current.import_entries || []).forEach((e: any) => {
+    if (e.attached_invoice) currentInvs.push({ no: String(e.attached_invoice), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
+  });
+  const sameInvoiceRef = (a: { no: string; seller: string; uuid: string }, b: any): boolean => {
+    const bu = String(b?.uuid || "").trim();
+    const bs = String(b?.seller || "").trim();
+    if (a.uuid && bu) return a.uuid === bu;
+    if (a.no !== String(b?.no || "")) return false;
+    if (a.seller && bs) return a.seller === bs;
+    // Only treat as the same when neither side identifies a seller; if one does,
+    // a matching id alone is too weak to flag (different suppliers reuse ids).
+    return !a.seller && !bs;
+  };
   const doublePayWarnings: { invoice: string; serials: string[] }[] = [];
   if (!formRef.current.remainder_of) {
-    for (const invNo of currentInvNos) {
-      const others = savedDocsIndex.filter((d: any) => d.label !== currentSqlDefault && d.invoices.some((i: any) => i.no === invNo));
-      if (others.length > 0) doublePayWarnings.push({ invoice: invNo, serials: others.map(o => o.label) });
+    for (const cur of currentInvs) {
+      const others = savedDocsIndex.filter((d: any) => d.label !== currentSqlDefault && d.invoices.some((i: any) => sameInvoiceRef(cur, i)));
+      if (others.length > 0) doublePayWarnings.push({ invoice: cur.no, serials: others.map(o => o.label) });
     }
   }
 
@@ -3350,16 +3410,18 @@ function App() {
     });
     // Match an existing typed service entry (by attached invoice or invoice id in
     // the service name). If found, just attach the pill instead of adding a row.
-    const idx = current.findIndex((e: any) =>
-      e.attached_invoice === p.invoice_id || serviceNameContainsInvoice(e.service_name, p.invoice_id)
-    );
+    const idx = current.findIndex((e: any) => entryMatchesPoolInvoice(e, p));
     let nextEntries: any[];
     if (idx >= 0) {
-      if (current[idx].attached_invoice === p.invoice_id) {
+      const same = current[idx];
+      const alreadySame = (String(same.attached_uuid || "").trim() && String(p.uuid || "").trim())
+        ? String(same.attached_uuid).trim() === String(p.uuid).trim()
+        : same.attached_invoice === p.invoice_id;
+      if (alreadySame) {
         showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
         return;
       }
-      current[idx] = entryImp(current[idx]);
+      current[idx] = entryImp(same);
       nextEntries = current;
     } else {
       nextEntries = [...current, poolToImportEntry(p)];
@@ -3385,16 +3447,18 @@ function App() {
     const toClaim: any[] = [];
     const usedClaimed: any[] = [];
     for (const p of usable) {
-      const idx = entries.findIndex((e: any) =>
-        e.attached_invoice === p.invoice_id || serviceNameContainsInvoice(e.service_name, p.invoice_id)
-      );
+      const idx = entries.findIndex((e: any) => entryMatchesPoolInvoice(e, p));
       if (idx >= 0) {
-        if (entries[idx].attached_invoice === p.invoice_id) { usedClaimed.push(p); continue; }
+        const same = entries[idx];
+        const alreadySame = (String(same.attached_uuid || "").trim() && String(p.uuid || "").trim())
+          ? String(same.attached_uuid).trim() === String(p.uuid).trim()
+          : same.attached_invoice === p.invoice_id;
+        if (alreadySame) { usedClaimed.push(p); continue; }
         entries[idx] = {
-          ...entries[idx],
+          ...same,
           attached_invoice: p.invoice_id,
           attached_uuid: p.uuid || "",
-          seller_tax_id: entries[idx].seller_tax_id || p.seller_tax_id || "",
+          seller_tax_id: same.seller_tax_id || p.seller_tax_id || "",
         };
         toClaim.push(p);
       } else {
@@ -3443,7 +3507,7 @@ function App() {
       return;
     }
     const currentInvoices = [...(formRef.current.invoices ?? [])];
-    if (currentInvoices.some(inv => inv.invoice_no === invoiceId)) {
+    if (currentInvoices.some(inv => invoiceMatchesPoolRow(inv, p))) {
       showAlert(t("该发票已在此文档中", "This invoice is already in this document"));
       return;
     }
@@ -3490,8 +3554,12 @@ function App() {
     if (rowIds.length === 0) return;
     const currentInvoices = [...(formRef.current.invoices ?? [])];
     const items = rowIds.map(id => poolList.find((x: any) => x.id === id)).filter(Boolean);
-    const already = items.filter(p => currentInvoices.some(inv => inv.invoice_no === p!.invoice_id));
-    const fresh = items.filter(p => !already.some(a => a!.invoice_id === p!.invoice_id) && isInvoiceUsable(p!.id));
+    const samePoolItem = (a: any, b: any) =>
+      (String(a.uuid || "").trim() && String(b.uuid || "").trim())
+        ? String(a.uuid).trim() === String(b.uuid).trim()
+        : (a.invoice_id === b.invoice_id && String(a.seller_tax_id || "").trim() === String(b.seller_tax_id || "").trim());
+    const already = items.filter(p => currentInvoices.some(inv => invoiceMatchesPoolRow(inv, p!)));
+    const fresh = items.filter(p => !already.some(a => samePoolItem(a!, p!)) && isInvoiceUsable(p!.id));
     const blockedCount = items.length - already.length - fresh.length;
     if (blockedCount > 0) {
       showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
@@ -4757,7 +4825,7 @@ function App() {
                   return <div className="history-empty">{savedDocsIndex.length === 0 ? t("无已保存文档", "No saved documents") : t("未找到快照", "No snapshots found")}</div>;
                 }
                 return filtered.map((d: any, i: number) => {
-                  const related = currentInvNos.size > 0 && d.invoices.some((di: any) => currentInvNos.has(di.no));
+                  const related = currentInvs.length > 0 && d.invoices.some((di: any) => currentInvs.some((cur: any) => sameInvoiceRef(cur, di)));
                   const sellerName = d.sellers && d.sellers.length > 0
                     ? d.sellers.join(" · ")
                     : (d.taxIds && d.taxIds.length > 0 ? (poolList.find((p: any) => p.seller_tax_id === d.taxIds[0])?.seller_name || "") : "");
