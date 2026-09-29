@@ -195,7 +195,7 @@ const toNum = (s: string): number => parseFloat(String(s).replace(/,/g, "")) || 
 // When the structured seller_tax_id field is missing, fall back to this.
 const extractTaxIdFromName = (name: string): string => {
   if (!name) return "";
-  const m = /tax\s*id\s*[:：]\s*(\d{6,})/i.exec(name);
+  const m = /tax\s*id\s*[:：]?\s*(\d{6,})/i.exec(name);
   return m ? m[1] : "";
 };
 
@@ -333,9 +333,22 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     if (!e.name && p.seller_name) e.name = p.seller_name;
   }
   const hasInvoices = (taxId: string) => {
-    const e = poolByTax.get(taxId);
+    const e = poolEntryFor(taxId);
     return !!(e && e.invoices.length);
   };
+  // A tax id may be stored truncated in the pool (a prefix/suffix of the full
+  // id). Resolve a full id to its pool entry by exact or partial match so the
+  // supplier still picks up its name and invoices.
+  function poolEntryFor(taxId: string): { name: string; invoices: any[] } | undefined {
+    const t = (taxId || "").trim();
+    if (!t) return undefined;
+    const exact = poolByTax.get(t);
+    if (exact) return exact;
+    for (const [k, v] of poolByTax) {
+      if (k && (t.startsWith(k) || t.endsWith(k) || k.startsWith(t) || k.endsWith(t))) return v;
+    }
+    return undefined;
+  }
 
   for (const h of history) {
     let p: any = null;
@@ -351,9 +364,13 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     };
     if (isImport) {
       (p.import_entries || []).forEach((e: any) => {
-        const taxId = (e.seller_tax_id || extractTaxIdFromName(e.service_name || "") || "").trim();
+        // Prefer the longest id: the service name often carries the full tax id
+        // while the stored field may be a truncated prefix captured mid-typing.
+        const fromName = extractTaxIdFromName(e.service_name || "");
+        const fromField = String(e.seller_tax_id || "").trim();
+        const taxId = (fromName.length > fromField.length ? fromName : fromField).trim();
         if (!taxId) return;
-        upsert(taxId, docRef, "", poolByTax.get(taxId)?.name || "");
+        upsert(taxId, docRef, "", poolEntryFor(taxId)?.name || "");
         const a = acc.get(taxId)!;
         if (e.free_wht) a.whtCert = true;
         if (hasInvoices(taxId)) {
@@ -381,7 +398,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       // form (e.g. "686478" and "686478444"); keep only the complete IDs so the
       // truncated one does not spawn a phantom supplier.
       for (const taxId of dedupeTaxIds(ids)) {
-        upsert(taxId, docRef, companyByTax.get(taxId) || "", poolByTax.get(taxId)?.name || "");
+        upsert(taxId, docRef, companyByTax.get(taxId) || "", poolEntryFor(taxId)?.name || "");
         const a = acc.get(taxId)!;
         if ((p.checklist && p.checklist.check_wht_cert?.s === "pass") || p.check_wht_cert) a.whtCert = true;
         if (hasInvoices(taxId)) {
@@ -396,7 +413,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
 
   // VAT per item type straight from the supplier's invoices in the pool.
   for (const [taxId, a] of acc) {
-    const pe = poolByTax.get(taxId);
+    const pe = poolEntryFor(taxId);
     if (!pe || !pe.invoices.length) continue;
     if (!a.name && pe.name) a.name = pe.name;
     if (!a.poolName && pe.name) a.poolName = pe.name;
@@ -1211,22 +1228,26 @@ function App() {
     updateNested("import_entries", i, k, v);
     const entry = { ...(formRef.current.import_entries ?? [])[i], [k]: v };
     if (k === "service_name") {
+      // Derive the seller tax id from the typed service name (or a pool match).
+      // Update whenever we find an id: an earlier keystroke may have captured a
+      // truncated id, so we must keep following the finished value.
+      const fromName = extractTaxIdFromName(v);
+      const fromPool = sellerTaxForService(v);
+      const candidate = fromName.length >= fromPool.length ? (fromName || fromPool) : fromPool;
+      if (candidate && candidate !== entry.seller_tax_id) {
+        updateNested("import_entries", i, "seller_tax_id", candidate);
+        entry.seller_tax_id = candidate;
+      }
       // When a service names an invoice from the pool, prefill VAT/WHT/rate from
       // the memory of the matching seller (last used).
-      const taxId = sellerTaxForService(v) || extractTaxIdFromName(v);
-      if (taxId) {
-        if (!entry.seller_tax_id) {
-          updateNested("import_entries", i, "seller_tax_id", taxId);
-          entry.seller_tax_id = taxId;
-        }
-        if (sellerRates[taxId]) {
-          const mem = sellerRates[taxId];
-          updateNested("import_entries", i, "vat_rate", mem.vat || entry.vat_rate);
-          updateNested("import_entries", i, "wht_rate", mem.wht || entry.wht_rate);
-          if (mem.rate) updateNested("import_entries", i, "rate", mem.rate);
-          entry.vat_rate = mem.vat || entry.vat_rate;
-          entry.wht_rate = mem.wht || entry.wht_rate;
-        }
+      const taxId = entry.seller_tax_id || candidate;
+      if (taxId && sellerRates[taxId]) {
+        const mem = sellerRates[taxId];
+        updateNested("import_entries", i, "vat_rate", mem.vat || entry.vat_rate);
+        updateNested("import_entries", i, "wht_rate", mem.wht || entry.wht_rate);
+        if (mem.rate) updateNested("import_entries", i, "rate", mem.rate);
+        entry.vat_rate = mem.vat || entry.vat_rate;
+        entry.wht_rate = mem.wht || entry.wht_rate;
       }
       updateNested("import_entries", i, "attached_invoice", "");
     }
