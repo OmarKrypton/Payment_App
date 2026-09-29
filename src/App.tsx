@@ -1282,43 +1282,56 @@ function App() {
   const setCheckNote = (key: string, n: string) =>
     updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), n } });
 
-    const poolByInv = new Map<string, any>();
-    const poolByTax = new Map<string, any>();
-    for (const p of poolList) {
-      const ik = String(p.invoice_id || "").trim();
-      if (ik && !poolByInv.has(ik)) poolByInv.set(ik, p);
-      const tk = String(p.seller_tax_id || "").trim();
-      if (tk && !poolByTax.has(tk)) poolByTax.set(tk, p);
-    }
-    const idxExists = (label: string) => (savedDocsIndex || []).some((d: any) => d.label === label);
-
     const invs = data.invoices || [];
+
+    // "Invoices Match Amount" (auto): the invoice totals must line up with the
+    // values entered on the settlement document:
+    //   net          vs Current settlement (1B)
+    //   VAT          vs Current VAT amount (1E)
+    //   net + VAT    vs Settlement incl. VAT (1G)
+    //   invoice VAT% vs the selected VAT rate (single-rate mode only)
     let check_invoices_auto: "pass" | "fail" | "" = "";
     if (invs.length) {
-      let bad = false;
-      for (const inv of invs) {
-        if (!String(inv.invoice_no || "").trim() || (toNum(inv.amount) || 0) <= 0) { bad = true; break; }
-        const m = poolByInv.get(String(inv.invoice_no).trim());
-        if (m) {
-          const pa = toNum(m.n ?? m.net_amount);
-          if (pa > 0 && Math.abs(pa - (toNum(inv.amount) || 0)) > 0.01) { bad = true; break; }
-        }
-      }
-      check_invoices_auto = bad ? "fail" : "pass";
-    }
-    let check_company_name_auto: "pass" | "fail" | "" = "";
-    if (invs.length) {
-      let bad = false;
-      for (const inv of invs) {
-        const tid = String(inv.seller_tax_id || "").trim();
-        const cname = String(inv.company_name || "").trim();
-        if (!tid || !cname) { bad = true; break; }
-        const m = poolByTax.get(tid);
-        if (m && String(m.seller_name || "").trim() && String(m.seller_name).trim().toLowerCase() !== cname.toLowerCase()) { bad = true; break; }
-      }
-      check_company_name_auto = bad ? "fail" : "pass";
+      let invNet = 0, invVat = 0;
+      for (const inv of invs) { invNet += toNum(inv.amount); invVat += toNum(inv.vat || "0"); }
+      const invTotal = invNet + invVat;
+      const invVatRate = invNet > 0 ? (invVat / invNet) * 100 : 0;
+      const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
+      const tol = 0.5;
+      const okNet = Math.abs(invNet - computed.c_1B) <= tol;
+      // A remainder document carries no VAT of its own (it lives on the parent).
+      const okVat = isRemainder || Math.abs(invVat - computed.c_1E) <= tol;
+      const okTotal = isRemainder || Math.abs(invTotal - computed.c_1G) <= tol;
+      const okRate = isRemainder || data.vat_manual || invNet <= 0 || Math.abs(invVatRate - docVatRate) <= tol;
+      check_invoices_auto = (okNet && okVat && okTotal && okRate) ? "pass" : "fail";
     }
 
+    // "WHT-Free Company Provided WHT Certificate" (auto): driven by the
+    // Suppliers tab WHT-free status — the shared certificate registry, or a
+    // saved document that recorded the supplier as WHT-free.
+    const isWhtFreeTaxId = (taxId: string): boolean => {
+      const tx = (taxId || "").trim();
+      if (!tx) return false;
+      const c = whtCerts[tx];
+      if (c) {
+        if (!c.valid_until) return true;
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        return new Date(`${c.valid_until}T23:59:59`).getTime() >= today.getTime();
+      }
+      return (savedDocsIndex || []).some((d: any) => d.whtFree && (d.taxIds || []).includes(tx));
+    };
+    const docSellerTaxIds = new Set<string>();
+    (data.seller_tax_ids || []).forEach((x: string) => { if (x && x.trim()) docSellerTaxIds.add(x.trim()); });
+    if (data.seller_tax_id) docSellerTaxIds.add(String(data.seller_tax_id).trim());
+    for (const inv of invs) { const t2 = String(inv.seller_tax_id || "").trim(); if (t2) docSellerTaxIds.add(t2); }
+    const hasWhtFreeSeller = [...docSellerTaxIds].some(isWhtFreeTaxId);
+    let check_wht_cert_auto: "pass" | "na" | "" = "";
+    if (docSellerTaxIds.size > 0) check_wht_cert_auto = hasWhtFreeSeller ? "pass" : "na";
+    const whtApplied = (computed.c_6B || 0) > 0.005 || (parseFloat((data.wht_rate || "0").replace('%', '')) || 0) > 0;
+    const whtFreeShown = cl["check_wht_cert"]?.s || check_wht_cert_auto;
+    const whtFreeConflict = !isImport && whtFreeShown === "pass" && whtApplied;
+
+    const idxExists = (label: string) => (savedDocsIndex || []).some((d: any) => d.label === label);
     let rem_parent_auto: "pass" | "fail" | "" = "";
     if (isRemainder) rem_parent_auto = idxExists(data.remainder_of) ? "pass" : "fail";
 
@@ -1351,8 +1364,8 @@ function App() {
       ] : [
         { key: "check_cover" },
         { key: "check_invoices", auto: check_invoices_auto },
-        { key: "check_company_name", auto: check_company_name_auto },
-        { key: "check_wht_cert" },
+        { key: "check_company_name" },
+        { key: "check_wht_cert", auto: check_wht_cert_auto },
         ...(isRemainder ? [
           { key: "rem_parent", auto: rem_parent_auto },
           { key: "rem_reconcile", hint: remHint, remainder: true },
@@ -1437,6 +1450,11 @@ function App() {
             </span>
           )}
         </h3>
+        {whtFreeConflict && (
+          <div className="field-warning" style={{ color: 'var(--orange)', marginBottom: 8 }}>
+            {t("警告: 该供应商为 WHT 免税，但本文档仍预扣了 WHT，请核对。", "Warning: this supplier is WHT-free, but this document still withholds WHT — please review.")}
+          </div>
+        )}
         {items.map((it: any) => {
           const shown = shownOf(it);
           const isAuto = !!it.auto && !cl[it.key]?.s;
@@ -1650,7 +1668,11 @@ function App() {
     const filtered = supplierData
       .filter((s) => {
         if (!q) return true;
-        return s.taxId.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.poolName.toLowerCase().includes(q);
+        if (s.taxId.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.poolName.toLowerCase().includes(q)) return true;
+        // Also match by VAT item type (raw kind or its localized label).
+        return s.vat.some(row => row.allKinds.some(({ kind }) =>
+          kind.toLowerCase().includes(q) || vatKindLabel(kind, t).toLowerCase().includes(q)
+        ));
       })
       .sort((a, b) => certLevelPriority(b) - certLevelPriority(a));
 
@@ -3056,7 +3078,7 @@ function App() {
             if (inv.seller_tax_id) taxIds.add(String(inv.seller_tax_id).trim());
           });
         }
-        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "", final_decision: p.final_decision || "", created_at: r.created_at || "" });
+        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "", final_decision: p.final_decision || "", created_at: r.created_at || "", whtFree: p.doc_type === "import" ? ((p.import_entries || []).some((e: any) => e.free_wht) || p.checklist?.check_wht_cert?.s === "pass") : (p.checklist?.check_wht_cert?.s === "pass" || !!p.check_wht_cert) });
       }
       setSavedDocsIndex(merged);
     } catch {}
