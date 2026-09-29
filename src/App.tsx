@@ -380,8 +380,11 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     if (!t) return undefined;
     const exact = poolByTax.get(t);
     if (exact) return exact;
+    // Only fall back to a partial match for reasonably long ids, so a short id
+    // can't accidentally resolve to an unrelated supplier's pool entry.
+    if (t.length < 6) return undefined;
     for (const [k, v] of poolByTax) {
-      if (k && (t.startsWith(k) || t.endsWith(k) || k.startsWith(t) || k.endsWith(t))) return v;
+      if (k.length >= 6 && (t.startsWith(k) || t.endsWith(k) || k.startsWith(t) || k.endsWith(t))) return v;
     }
     return undefined;
   }
@@ -471,48 +474,11 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   }
 
   const result: SupplierInfo[] = [];
-  // Merge a *truncated* tax id (6–8 digits, e.g. from an old service name) into
-  // its full 9-digit counterpart — but only when exactly one full id matches by
-  // prefix/suffix. Full 9-digit ids are never merged into each other, and
-  // ambiguous ids are left alone, so unrelated suppliers are no longer combined.
-  const taxIds = [...acc.keys()];
-  const full9 = taxIds.filter(id => /^\d{9}$/.test(id));
-  const mergeMap = new Map<string, string>();
-  for (const id of taxIds) {
-    if (/^\d{9}$/.test(id) || id.length < 6) continue;
-    const candidates = full9.filter(f => f !== id && (f.startsWith(id) || f.endsWith(id)));
-    if (candidates.length !== 1) continue;
-    const to = candidates[0];
-    // If both ids resolve to a known pool seller name and they differ, they are
-    // different suppliers that merely share a prefix/suffix — don't merge.
-    const fromName = (poolEntryFor(id)?.name || "").trim().toLowerCase();
-    const toName = (poolEntryFor(to)?.name || "").trim().toLowerCase();
-    if (fromName && toName && fromName !== toName) continue;
-    mergeMap.set(id, to);
-  }
-  for (const [from, to] of mergeMap) {
-    const fromAcc = acc.get(from);
-    const toAcc = acc.get(to);
-    if (!fromAcc || !toAcc) continue;
-    for (const d of fromAcc.docs) {
-      let seen = seenDocs.get(to);
-      if (!seen) { seen = new Set(); seenDocs.set(to, seen); }
-      if (!seen.has(d.id)) { seen.add(d.id); toAcc.docs.push(d); }
-    }
-    for (const [rate, kinds] of Object.entries(fromAcc.vat)) {
-      if (!toAcc.vat[rate]) toAcc.vat[rate] = new Map();
-      for (const [kind, count] of kinds) toAcc.vat[rate].set(kind, (toAcc.vat[rate].get(kind) || 0) + count);
-    }
-    if (fromAcc.whtCert) toAcc.whtCert = true;
-    if (fromAcc.whtApplied) toAcc.whtApplied = true;
-    for (const [rate, count] of fromAcc.whtRates) {
-      toAcc.whtRates.set(rate, (toAcc.whtRates.get(rate) || 0) + count);
-    }
-    toAcc.whtDocs += fromAcc.whtDocs;
-    if (!toAcc.name && fromAcc.name) toAcc.name = fromAcc.name;
-    if (!toAcc.poolName && fromAcc.poolName) toAcc.poolName = fromAcc.poolName;
-    acc.delete(from);
-  }
+  // NOTE: no cross-document tax-id merging. A truncated id (e.g. "61776869")
+  // can be a prefix/suffix of a *different* supplier's full id (e.g.
+  // "761776869"), so merging by prefix/suffix wrongly pulled unrelated documents
+  // into a supplier. Truncated ids are now kept as their own supplier. Same
+  // document duplicates are still collapsed by dedupeTaxIds above.
   for (const [taxId, a] of acc) {
     // If WHT was actually withheld on any document, the supplier is not
     // WHT-free — regardless of a stale certificate/checklist tick.
