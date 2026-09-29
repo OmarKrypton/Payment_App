@@ -50,6 +50,12 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         .set_background_color(Color::RGB(0xE2EFDA))
         .set_bold()
         .set_border(FormatBorder::Thin);
+    let usd_fmt = Format::new()
+        .set_font_size(10)
+        .set_num_format("\"$\"#,##0.00")
+        .set_background_color(Color::RGB(0xE2EFDA))
+        .set_bold()
+        .set_border(FormatBorder::Thin);
     let info_fmt = Format::new().set_font_size(10).set_italic();
     let section2_fmt = Format::new()
         .set_bold()
@@ -482,7 +488,6 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet3.set_column_width(8, 16).map_err(|e| e.to_string())?;
         sheet3.set_column_width(9, 16).map_err(|e| e.to_string())?;
         sheet3.set_column_width(10, 14).map_err(|e| e.to_string())?;
-        sheet3.set_column_width(11, 14).map_err(|e| e.to_string())?;
 
         let mut r3 = 0u32;
 
@@ -539,7 +544,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             .map_err(|e| e.to_string())?;
         r3 += 1;
         let headers_import = ["Service", "Amount", "Rate", "Free WHT", "VAT Rate", "WHT Rate", "Temp Lab",
-                              "VAT", "WHT", "Net (+VAT-WHT)", "Total (+VAT)", "In EGP/USD"];
+                              "VAT", "WHT", "Net (+VAT-WHT)", "Total (+VAT)"];
         for (ci, h) in headers_import.iter().enumerate() {
             sheet3.write_with_format(r3, ci as u16, *h, &bold_fmt)
                 .map_err(|e| e.to_string())?;
@@ -593,8 +598,6 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 10, total, &calc_fmt)
                 .map_err(|e| e.to_string())?;
-            sheet3.write_with_format(r3, 11, if in_split { "Yes" } else { "No" }, &normal_fmt)
-                .map_err(|e| e.to_string())?;
             r3 += 1;
         }
         r3 += 1;
@@ -604,22 +607,25 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             .map_err(|e| e.to_string())?;
         r3 += 1;
         let r2 = |n: f64| (n * 100.0).round() / 100.0;
-        let summary_items: Vec<(&str, f64)> = vec![
-            ("Total VAT", computed.import_total_vat),
-            ("Total WHT", computed.import_total_wht),
-            ("Grand Total (Amount+VAT)", computed.import_grand_total),
-            ("Grand Total (Amount+VAT) - Temp Labour", computed.import_grand_total - computed.import_temp_labour),
-            ("Grand Net (Total-WHT)", computed.import_grand_net),
-            ("Temp Labour (Services × 0.45%)", computed.import_temp_labour),
-            ("EGP Amount (Services + VAT)", r2(egp_incl_vat)),
-            ("USD Amount (Services + VAT, USD)", r2(usd_incl_vat)),
-            ("USD Amount in EGP (Services + VAT)", r2(usd_egp_incl_vat)),
+        // (label, value, bold, usd-sign) — EGP/USD split grouped right after
+        // Total VAT / Total WHT, with the USD figure next to its EGP equivalent.
+        let summary_items: Vec<(&str, f64, bool, bool)> = vec![
+            ("Total VAT", computed.import_total_vat, false, false),
+            ("Total WHT", computed.import_total_wht, false, false),
+            ("EGP Amount (Services + VAT)", r2(egp_incl_vat), true, false),
+            ("USD Amount (Services + VAT)", r2(usd_incl_vat), true, true),
+            ("USD Amount in EGP (Services + VAT)", r2(usd_egp_incl_vat), true, false),
+            ("Grand Total (Amount+VAT)", computed.import_grand_total, true, false),
+            ("Grand Total (Amount+VAT) - Temp Labour", computed.import_grand_total - computed.import_temp_labour, true, false),
+            ("Grand Net (Total-WHT)", computed.import_grand_net, true, false),
+            ("Temp Labour (Services × 0.45%)", computed.import_temp_labour, false, false),
         ];
-        for (label, val) in &summary_items {
-            let is_grand = label.starts_with("Grand ") || label.starts_with("EGP Amount") || label.starts_with("USD Amount");
-            sheet3.write_with_format(r3, 0, *label, if is_grand { &bold_fmt } else { &normal_fmt })
+        for (label, val, is_bold, is_usd) in &summary_items {
+            let lfmt: &Format = if *is_bold { &bold_fmt } else { &normal_fmt };
+            let vfmt: &Format = if *is_usd { &usd_fmt } else if *is_bold { &calc_fmt } else { &val_fmt };
+            sheet3.write_with_format(r3, 0, *label, lfmt)
                 .map_err(|e| e.to_string())?;
-            sheet3.write_with_format(r3, 1, *val, if is_grand { &calc_fmt } else { &val_fmt })
+            sheet3.write_with_format(r3, 1, *val, vfmt)
                 .map_err(|e| e.to_string())?;
             r3 += 1;
         }
