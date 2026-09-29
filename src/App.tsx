@@ -1784,8 +1784,8 @@ function App() {
     };
 
     const totalDocs = supplierData.reduce((n, s) => n + s.docCount, 0);
-    const whtFreeCount = supplierData.filter((s) => s.whtCert).length;
-    const withholdingCount = supplierData.filter((s) => !s.whtCert && s.whtRate).length;
+    const whtFreeCount = supplierData.filter((s) => supplierIsWhtFree(s)).length;
+    const withholdingCount = supplierData.filter((s) => !supplierIsWhtFree(s) && s.whtRate).length;
     const certsToRenew = supplierData.filter((s) => {
       if (!s.whtCert && !whtCerts[s.taxId]) return false;
       const lvl = certStatus(s.taxId).level;
@@ -1894,12 +1894,16 @@ function App() {
 
                   <div className="supplier-section">
                     <div className="supplier-section-title">{t("WHT 状态", "WHT status")}</div>
-                    {s.whtCert ? (
+                    {supplierIsWhtFree(s) ? (
                       <div className="supplier-wht free">
                         <span className="supplier-wht-dot" />
                         <div>
                           <strong>{t("已获 WHT 免税证明", "WHT-free certificate")}</strong>
-                          <span className="supplier-wht-sub">{t("本供应商所有文档按 0% 预扣处理", "all documents are withheld at 0%")}</span>
+                          <span className="supplier-wht-sub">
+                            {whtCerts[s.taxId]?.valid_until
+                              ? `${t("证明有效期至", "certificate valid until")} ${whtCerts[s.taxId].valid_until}`
+                              : t("本供应商按 0% 预扣处理", "treated as withheld at 0%")}
+                          </span>
                         </div>
                       </div>
                     ) : s.whtRate ? (
@@ -3109,6 +3113,15 @@ function App() {
     if (days < 0) return { level: "expired", validUntil: c.valid_until };
     if (days <= 30) return { level: "soon", validUntil: c.valid_until };
     return { level: "valid", validUntil: c.valid_until };
+  };
+
+  // Effective WHT-free status. A certificate recorded in the registry is
+  // authoritative: if it is on file (and not expired) the supplier is WHT-free —
+  // even if WHT was withheld in past documents. Only when there is no registry
+  // entry do we fall back to the document-derived flag.
+  const supplierIsWhtFree = (s: { taxId: string; whtCert: boolean }): boolean => {
+    if (whtCerts[s.taxId]) return certStatus(s.taxId).level !== "expired";
+    return s.whtCert;
   };
 
   const openCertEditor = (taxId: string, name: string) => {
