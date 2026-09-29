@@ -1,4 +1,4 @@
-use crate::models::{CalcResult, FormData};
+use crate::models::{CalcResult, FormData, ImportEntry};
 use rust_xlsxwriter::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -482,6 +482,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet3.set_column_width(8, 16).map_err(|e| e.to_string())?;
         sheet3.set_column_width(9, 16).map_err(|e| e.to_string())?;
         sheet3.set_column_width(10, 14).map_err(|e| e.to_string())?;
+        sheet3.set_column_width(11, 14).map_err(|e| e.to_string())?;
 
         let mut r3 = 0u32;
 
@@ -538,16 +539,21 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             .map_err(|e| e.to_string())?;
         r3 += 1;
         let headers_import = ["Service", "Amount", "Rate", "Free WHT", "VAT Rate", "WHT Rate", "Temp Lab",
-                              "VAT", "WHT", "Net (+VAT-WHT)", "Total (+VAT)"];
+                              "VAT", "WHT", "Net (+VAT-WHT)", "Total (+VAT)", "In EGP/USD"];
         for (ci, h) in headers_import.iter().enumerate() {
             sheet3.write_with_format(r3, ci as u16, *h, &bold_fmt)
                 .map_err(|e| e.to_string())?;
         }
         r3 += 1;
 
+        // EGP/USD split: only lines that count as service providers.
+        let mut egp_incl_vat = 0.0f64;
+        let mut usd_incl_vat = 0.0f64;
+        let mut usd_egp_incl_vat = 0.0f64;
         for entry in &data.import_entries {
             let amt: f64 = parse_amt(&entry.amount);
-            let rate: f64 = parse_exchange_rate(&entry.rate);
+            let rate_raw: f64 = parse_amt(&entry.rate);
+            let rate: f64 = if rate_raw == 0.0 { 1.0 } else { rate_raw };
             let egp_amt = amt * rate;
             let vat_rate: f64 = parse_rate(&entry.vat_rate);
             let vat = (egp_amt * vat_rate / 100.0 * 100.0).round() / 100.0;
@@ -555,6 +561,16 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             let wht = if entry.free_wht { 0.0 } else { (egp_amt * wht_rate / 100.0 * 100.0).round() / 100.0 };
             let net = ((egp_amt + vat - wht) * 100.0).round() / 100.0;
             let total = egp_amt + vat;
+            let in_split = import_split_included(entry);
+            if in_split {
+                if rate_raw != 0.0 {
+                    let vat_usd = amt * vat_rate / 100.0;
+                    usd_incl_vat += amt + vat_usd;
+                    usd_egp_incl_vat += egp_amt + vat;
+                } else {
+                    egp_incl_vat += amt + vat;
+                }
+            }
             sheet3.write_with_format(r3, 0, &entry.service_name, &normal_fmt)
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 1, amt, &val_fmt)
@@ -577,6 +593,8 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 10, total, &calc_fmt)
                 .map_err(|e| e.to_string())?;
+            sheet3.write_with_format(r3, 11, if in_split { "Yes" } else { "No" }, &normal_fmt)
+                .map_err(|e| e.to_string())?;
             r3 += 1;
         }
         r3 += 1;
@@ -585,6 +603,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         sheet3.write_with_format(r3, 0, "Summary", &section_fmt)
             .map_err(|e| e.to_string())?;
         r3 += 1;
+        let r2 = |n: f64| (n * 100.0).round() / 100.0;
         let summary_items: Vec<(&str, f64)> = vec![
             ("Total VAT", computed.import_total_vat),
             ("Total WHT", computed.import_total_wht),
@@ -592,9 +611,12 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             ("Grand Total (Amount+VAT) - Temp Labour", computed.import_grand_total - computed.import_temp_labour),
             ("Grand Net (Total-WHT)", computed.import_grand_net),
             ("Temp Labour (Services × 0.45%)", computed.import_temp_labour),
+            ("EGP Amount (Services + VAT)", r2(egp_incl_vat)),
+            ("USD Amount (Services + VAT, USD)", r2(usd_incl_vat)),
+            ("USD Amount in EGP (Services + VAT)", r2(usd_egp_incl_vat)),
         ];
         for (label, val) in &summary_items {
-            let is_grand = label.starts_with("Grand ");
+            let is_grand = label.starts_with("Grand ") || label.starts_with("EGP Amount") || label.starts_with("USD Amount");
             sheet3.write_with_format(r3, 0, *label, if is_grand { &bold_fmt } else { &normal_fmt })
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 1, *val, if is_grand { &calc_fmt } else { &val_fmt })
@@ -618,6 +640,72 @@ fn parse_rate(s: &str) -> f64 {
 fn parse_exchange_rate(s: &str) -> f64 {
     let v = s.parse::<f64>().unwrap_or(0.0);
     if v == 0.0 { 1.0 } else { v }
+}
+
+// ── Import EGP/USD split helpers (mirror the app) ──────────────────────────
+// True when the string contains a run of at least nine consecutive digits.
+fn has_nine_digit_run(s: &str) -> bool {
+    let mut count = 0;
+    for b in s.bytes() {
+        if b.is_ascii_digit() {
+            count += 1;
+            if count >= 9 { return true; }
+        } else {
+            count = 0;
+        }
+    }
+    false
+}
+
+// "TAX ID: 123456789" — nine digits somewhere after the words "tax id".
+fn has_nine_digit_after_tax_id(name: &str) -> bool {
+    let bytes = name.to_lowercase().into_bytes();
+    let mut i = 0usize;
+    while i + 3 <= bytes.len() {
+        if &bytes[i..i + 3] == b"tax" {
+            let mut j = i + 3;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() { j += 1; }
+            if j + 2 <= bytes.len() && &bytes[j..j + 2] == b"id" {
+                let mut k = j + 2;
+                let mut count = 0;
+                while k < bytes.len() {
+                    if bytes[k].is_ascii_digit() {
+                        count += 1;
+                        if count >= 9 { return true; }
+                    } else {
+                        count = 0;
+                    }
+                    k += 1;
+                }
+                return false;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+// Leading provider code, e.g. "A1" / "A 1" / "A-1" -> 'A'.
+fn import_code_letter(name: &str) -> Option<char> {
+    let bytes = name.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+    if i >= bytes.len() || !bytes[i].is_ascii_alphabetic() { return None; }
+    let letter = (bytes[i] as char).to_ascii_uppercase();
+    let mut j = i + 1;
+    while j < bytes.len() && (bytes[j].is_ascii_whitespace() || bytes[j] == b'-' || bytes[j] == b'.') { j += 1; }
+    if j < bytes.len() && bytes[j].is_ascii_digit() { Some(letter) } else { None }
+}
+
+// A line joins the EGP/USD split when it carries a 9-digit tax id (code
+// optional) or uses a provider code up to D. Others (Nafeza, Form 4,
+// Commercial invoice) are excluded.
+fn import_split_included(e: &ImportEntry) -> bool {
+    if e.exclude_split { return false; }
+    if has_nine_digit_run(&e.seller_tax_id) || has_nine_digit_after_tax_id(&e.service_name) {
+        return true;
+    }
+    matches!(import_code_letter(&e.service_name), Some(c) if c <= 'D')
 }
 
 pub fn export_invoice_summary(
