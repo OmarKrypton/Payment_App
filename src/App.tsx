@@ -403,11 +403,12 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     };
     if (isImport) {
       (p.import_entries || []).forEach((e: any) => {
-        // Prefer the longest id: the service name often carries the full tax id
-        // while the stored field may be a truncated prefix captured mid-typing.
+        // The seller tax id is derived from the service name (what the user sees
+        // and types). The stored entry.seller_tax_id is hidden and can be stale or
+        // captured from the wrong pool invoice, so it is only a fallback.
         const fromName = extractTaxIdFromName(e.service_name || "");
         const fromField = String(e.seller_tax_id || "").trim();
-        const taxId = (fromName.length > fromField.length ? fromName : fromField).trim();
+        const taxId = (fromName || fromField).trim();
         if (!taxId) return;
         upsert(taxId, docRef, "", poolEntryFor(taxId)?.name || "");
         const a = acc.get(taxId)!;
@@ -661,7 +662,7 @@ const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boo
 
 // The seller tax id an import entry belongs to (explicit, or embedded in the name).
 const entrySellerOf = (e: any): string =>
-  String(e?.seller_tax_id || extractTaxIdFromName(e?.service_name || "") || "").trim();
+  String(extractTaxIdFromName(e?.service_name || "") || e?.seller_tax_id || "").trim();
 
 // Whether an import entry already represents a given pool invoice. Invoice ids
 // like "61" repeat across suppliers, so when both sides identify a seller they
@@ -1278,7 +1279,7 @@ function App() {
       // truncated id, so we must keep following the finished value.
       const fromName = extractTaxIdFromName(v);
       const fromPool = sellerTaxForService(v);
-      const candidate = fromName.length >= fromPool.length ? (fromName || fromPool) : fromPool;
+      const candidate = fromName || fromPool;
       if (candidate && candidate !== entry.seller_tax_id) {
         updateNested("import_entries", i, "seller_tax_id", candidate);
         entry.seller_tax_id = candidate;
@@ -3187,7 +3188,7 @@ function App() {
           (p.import_entries || []).forEach((e: any) => {
             if (e.attached_invoice) invoices.push({ no: String(e.attached_invoice), amount: String(e.amount ?? ""), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
             if (e.company_name) sellers.add(String(e.company_name).trim());
-            const sid = e.seller_tax_id || extractTaxIdFromName(e.service_name || "");
+            const sid = extractTaxIdFromName(e.service_name || "") || e.seller_tax_id;
             if (sid) taxIds.add(String(sid).trim());
           });
         } else {
@@ -3752,7 +3753,7 @@ function App() {
         if (isImport) {
           (parsed.import_entries || []).forEach((e: any) => {
             if (e.attached_invoice) invSet.add(e.attached_invoice);
-            const tax = e.seller_tax_id || extractTaxIdFromName(e.service_name);
+            const tax = extractTaxIdFromName(e.service_name) || e.seller_tax_id;
             if (tax) taxSet.add(tax);
           });
         } else {
@@ -4224,7 +4225,7 @@ function App() {
                     if (isImport) {
                       (p.import_entries || []).forEach((e: any) => {
                         if (e.attached_invoice) invSet.add(e.attached_invoice);
-                        const tax = e.seller_tax_id || extractTaxIdFromName(e.service_name);
+                        const tax = extractTaxIdFromName(e.service_name) || e.seller_tax_id;
                         if (tax) taxSet.add(tax);
                       });
                     } else {
