@@ -686,7 +686,7 @@ function App() {
   const manualSuppliersRef = useRef<Record<string, string>>((() => {
     try { return JSON.parse(localStorage.getItem("supplier_meta") || "{}"); } catch { return {}; }
   })());
-  const [supplierEditor, setSupplierEditor] = useState<{ taxId: string; name: string } | null>(null);
+  const [supplierEditor, setSupplierEditor] = useState<{ taxId: string; name: string; lockTaxId?: boolean } | null>(null);
   // WHT-free certificate validity per supplier TAX ID. Synced via Supabase when
   // signed in; a local cache keeps the last known dates available offline.
   const [whtCerts, setWhtCerts] = useState<Record<string, { valid_until: string; supplier_name?: string }>>(() => {
@@ -1642,6 +1642,7 @@ function App() {
   const SuppliersTab = () => {
     const q = supplierSearch.trim().toLowerCase();
     const certLevelPriority = (s: SupplierInfo): number => {
+      if (!s.name && !s.poolName) return 3; // unnamed suppliers need attention first
       if (!s.whtCert && !whtCerts[s.taxId]) return 0;
       const lvl = certStatus(s.taxId).level;
       return lvl === "expired" || lvl === "missing" ? 2 : lvl === "soon" ? 1 : 0;
@@ -1670,6 +1671,7 @@ function App() {
       const lvl = certStatus(s.taxId).level;
       return lvl === "expired" || lvl === "missing";
     }).length;
+    const unknownCount = supplierData.filter(s => !s.name && !s.poolName).length;
 
     return (
       <div className="suppliers-tab">
@@ -1686,6 +1688,7 @@ function App() {
               {whtFreeCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span></>}
               {withholdingCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span></>}
               {certsToRenew > 0 && <><span className="dot-sep">·</span><span className="supplier-stat bad">{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</span></>}
+              {unknownCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{unknownCount} {t("未命名", "unnamed")}</span></>}
             </div>
           </div>
           <div className="suppliers-header-tools">
@@ -1725,6 +1728,13 @@ function App() {
                     <strong>{s.name || s.poolName || t("未知供应商", "Unknown supplier")}</strong>
                     <span className="supplier-taxid">{s.taxId}</span>
                   </div>
+                  {!s.name && !s.poolName && (
+                    <button
+                      className="btn-load"
+                      style={{ padding: '4px 10px', fontSize: 11, flexShrink: 0 }}
+                      onClick={() => setSupplierEditor({ taxId: s.taxId, name: "", lockTaxId: true })}
+                    >{t("命名", "Name")}</button>
+                  )}
                   {s.docCount === 0 && (
                     <button
                       className="supplier-remove"
@@ -1836,7 +1846,7 @@ function App() {
           <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setSupplierEditor(null)}>
             <div className="modal" style={{width:420}} onClick={e => e.stopPropagation()}>
               <div className="modal-header">
-                <h3>{t("添加供应商", "Add Supplier")}</h3>
+                <h3>{supplierEditor.lockTaxId ? t("命名供应商", "Name Supplier") : t("添加供应商", "Add Supplier")}</h3>
                 <button className="modal-close" onClick={() => setSupplierEditor(null)}>✕</button>
               </div>
               <div className="field">
@@ -1844,6 +1854,7 @@ function App() {
                 <input
                   className="field-input"
                   value={supplierEditor.taxId}
+                  disabled={supplierEditor.lockTaxId}
                   onChange={e => setSupplierEditor({ ...supplierEditor, taxId: e.target.value })}
                 />
               </div>
@@ -2854,10 +2865,11 @@ function App() {
         pool = await invoke<any[]>("list_invoice_pool_detail");
       } catch {}
       const base = buildSuppliers(rows, pool);
-      // Surface manually-added suppliers (a saved name with no documents or pool
-      // rows of its own). Existing suppliers are never renamed.
+      // Manually-added suppliers (a saved name with no documents or pool rows
+      // of its own) are appended; a saved name also fills in a supplier that is
+      // otherwise unknown (has invoices by TAX ID but no name anywhere).
       const meta = manualSuppliersRef.current;
-      const merged = [...base];
+      const merged = base.map(s => (!s.name && !s.poolName && meta[s.taxId]) ? { ...s, name: meta[s.taxId] } : s);
       for (const [taxId, supplierName] of Object.entries(meta)) {
         if (!merged.some(s => s.taxId === taxId)) {
           merged.push({
@@ -2914,7 +2926,10 @@ function App() {
       showAlert(t("请填写税号和名称", "Please enter both TAX ID and name"));
       return;
     }
-    if (supplierData.some(s => s.taxId === taxId)) {
+    // Allow naming a supplier that is currently unknown (has invoices but no
+    // name anywhere); only block when a named supplier already exists.
+    const existing = supplierData.find(s => s.taxId === taxId);
+    if (existing && (existing.name || existing.poolName)) {
       showAlert(t("该税号的供应商已存在", "A supplier with this TAX ID already exists"));
       return;
     }
