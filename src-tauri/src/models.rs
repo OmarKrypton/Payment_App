@@ -235,6 +235,10 @@ pub struct ImportEntry {
     pub exclude_split: bool,
     #[serde(default)]
     pub attached_invoice: String,
+    #[serde(default)]
+    pub seller_tax_id: String,
+    #[serde(default)]
+    pub attached_uuid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
