@@ -171,6 +171,7 @@ const EMPTY_CALC: CalcResult = {
 
 const fmt = (v: number) => `EGP ${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtShort = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtUsd = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Formats a number string with thousand separators as the user types.
 // Accepts plain "1000", comma-separated "1,000", and decimal "1,000.50".
@@ -1557,6 +1558,26 @@ function App() {
   );
 
   const ImportTab = () => {
+    // Split service-provider entries into EGP-billed (no exchange rate) and
+    // foreign-currency (a rate is entered) so each portion can be summarised.
+    const importSplit = (() => {
+      let egpInclVat = 0;   // EGP services total + VAT
+      let usdNet = 0;       // foreign-currency services net (in USD)
+      let usdEgpNet = 0;    // their EGP equivalent (net)
+      for (const e of (data.import_entries ?? [])) {
+        const amt = toNum(e.amount);
+        const rate = toNum(e.rate);
+        const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
+        if (rate > 0) {
+          usdNet += amt;
+          usdEgpNet += amt * rate;
+        } else {
+          egpInclVat += amt + Math.round(amt * vatRate / 100 * 100) / 100;
+        }
+      }
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      return { egpInclVat: r2(egpInclVat), usdNet: r2(usdNet), usdEgpNet: r2(usdEgpNet) };
+    })();
     return (
       <div className="import-tab">
         <div className="card">
@@ -1672,6 +1693,12 @@ function App() {
             <Computed label={t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")} value={computed.import_grand_total} highlight />
             <Computed label={t("净额 (总额-WHT)", "Grand Net (Total-WHT)")} value={computed.import_grand_net} highlight />
             <Computed label={t("临时工社保 (服务金额 × 0.45%)", "Temp Labour (Services × 0.45%)")} value={computed.import_temp_labour} highlight />
+            <Computed label={t("EGP 金额 (服务 + VAT)", "EGP Amount (Services + VAT)")} value={importSplit.egpInclVat} highlight />
+            <div className="field">
+              <label className="field-label">{t("USD 金额 (服务 + 汇率)", "USD Amount (Services + rate)")}</label>
+              <div className="computed-value highlight" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>{fmtUsd(importSplit.usdNet)}</div>
+              <div className="field-sub" style={{ marginTop: 2 }}>= {fmt(importSplit.usdEgpNet)}</div>
+            </div>
           </div>
         </div>
       </div>
