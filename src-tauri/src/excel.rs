@@ -607,27 +607,48 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             .map_err(|e| e.to_string())?;
         r3 += 1;
         let r2 = |n: f64| (n * 100.0).round() / 100.0;
-        // (label, value, bold, usd-sign) — EGP/USD split grouped right after
-        // Total VAT / Total WHT, with the USD figure next to its EGP equivalent.
-        let summary_items: Vec<(&str, f64, bool, bool)> = vec![
-            ("Total VAT", computed.import_total_vat, false, false),
-            ("Total WHT", computed.import_total_wht, false, false),
-            ("EGP Amount (Services + VAT)", r2(egp_incl_vat), true, false),
-            ("USD Amount (Services + VAT)", r2(usd_incl_vat), true, true),
-            ("USD Amount in EGP (Services + VAT)", r2(usd_egp_incl_vat), true, false),
-            ("Grand Total (Amount+VAT)", computed.import_grand_total, true, false),
-            ("Grand Total (Amount+VAT) - Temp Labour", computed.import_grand_total - computed.import_temp_labour, true, false),
-            ("Grand Net (Total-WHT)", computed.import_grand_net, true, false),
-            ("Temp Labour (Services × 0.45%)", computed.import_temp_labour, false, false),
+        let summary_items: Vec<(&str, f64, bool)> = vec![
+            ("Total VAT", computed.import_total_vat, false),
+            ("Total WHT", computed.import_total_wht, false),
+            ("Grand Total (Amount+VAT)", computed.import_grand_total, true),
+            ("Grand Total (Amount+VAT) - Temp Labour", computed.import_grand_total - computed.import_temp_labour, true),
+            ("Grand Net (Total-WHT)", computed.import_grand_net, true),
+            ("Temp Labour (Services × 0.45%)", computed.import_temp_labour, false),
         ];
-        for (label, val, is_bold, is_usd) in &summary_items {
+        // Remember where the "Grand Total - Temp Labour" row is so the EGP/USD
+        // panel can line up with it.
+        let mut split_row: Option<u32> = None;
+        for (label, val, is_bold) in &summary_items {
+            if *label == "Grand Total (Amount+VAT) - Temp Labour" {
+                split_row = Some(r3);
+            }
             let lfmt: &Format = if *is_bold { &bold_fmt } else { &normal_fmt };
-            let vfmt: &Format = if *is_usd { &usd_fmt } else if *is_bold { &calc_fmt } else { &val_fmt };
+            let vfmt: &Format = if *is_bold { &calc_fmt } else { &val_fmt };
             sheet3.write_with_format(r3, 0, *label, lfmt)
                 .map_err(|e| e.to_string())?;
             sheet3.write_with_format(r3, 1, *val, vfmt)
                 .map_err(|e| e.to_string())?;
             r3 += 1;
+        }
+
+        // EGP/USD split panel in columns I:J, starting on the "Grand Total -
+        // Temp Labour" row. The label is merged across I:J for readability (only
+        // these three rows are merged, so the table's WHT (I) / Net (J) columns
+        // are untouched) and the value sits in column K.
+        if let Some(top) = split_row {
+            let split: [(&str, f64, bool); 3] = [
+                ("EGP Amount (Services + VAT)", r2(egp_incl_vat), false),
+                ("USD Amount (Services + VAT)", r2(usd_incl_vat), true),
+                ("USD Amount in EGP (Services + VAT)", r2(usd_egp_incl_vat), false),
+            ];
+            for (i, (label, val, is_usd)) in split.iter().enumerate() {
+                let row = top + i as u32;
+                sheet3.merge_range(row, 8, row, 9, *label, &bold_fmt)
+                    .map_err(|e| e.to_string())?;
+                let vfmt: &Format = if *is_usd { &usd_fmt } else { &val_fmt };
+                sheet3.write_with_format(row, 10, *val, vfmt)
+                    .map_err(|e| e.to_string())?;
+            }
         }
     }
 
