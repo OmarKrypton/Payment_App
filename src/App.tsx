@@ -193,24 +193,30 @@ function formatNumberInput(raw: string, maxDecimals = 2): string {
 // Parse a value (which may contain thousand-separator commas) as a number.
 const toNum = (s: string): number => parseFloat(String(s).replace(/,/g, "")) || 0;
 
-// Import service names sometimes embed the seller tax id as "TAX ID: XXXXXXXXX".
-// When the structured seller_tax_id field is missing, fall back to this.
+// Import service names embed the seller tax id as "TAX ID: XXXXXXXXX". The tax
+// id is always 9 digits; take exactly those nine and ignore any other numbers.
 const extractTaxIdFromName = (name: string): string => {
   if (!name) return "";
-  const m = /tax\s*id\s*[:：]?\s*(\d{6,})/i.exec(name);
+  const m = /tax\s*id\s*[:：]?\s*(\d{9})/i.exec(name);
   return m ? m[1] : "";
 };
 
-// Import service providers are coded A1, A2, B1, C1, … D1, D2. Codes up to D are
-// real service providers; E and later are non-service lines (E1 = Nafeza, then
-// Form 4 / Commercial invoice). Only A–D are counted in the EGP/USD summary.
+// Import service providers are coded A1, A2, B1, C1, … D1, D2. A line counts as
+// a service provider (and so is included in the EGP/USD summary) when it carries
+// a 9-digit tax id — with or without the code — or uses a code up to D. Lines
+// with an E+ code or no tax id at all (Nafeza, Form 4, Commercial invoice) are
+// excluded.
 const importCodeLetter = (name: string): string => {
   const m = /^\s*([A-Za-z])\s*[-.]?\s*\d/.exec(name || "");
   return m ? m[1].toUpperCase() : "";
 };
-const importSplitIncluded = (name: string): boolean => {
+const importEntryHasTaxId = (e: any): boolean =>
+  /\d{9}/.test(String(e?.seller_tax_id || "")) ||
+  /tax\s*id\s*[:：]?\s*\d{9}/i.test(String(e?.service_name || ""));
+const importSplitIncluded = (name: string, hasTaxId: boolean): boolean => {
+  if (hasTaxId) return true;
   const c = importCodeLetter(name);
-  return !c || c <= "D"; // no code -> treat as a service provider
+  return !!c && c <= "D";
 };
 
 // When the same seller tax id is captured in both a truncated and full form
@@ -1582,7 +1588,7 @@ function App() {
       let usdInclVat = 0;    // foreign-currency services total + VAT (in USD)
       let usdEgpInclVat = 0; // the same total in EGP
       for (const e of (data.import_entries ?? [])) {
-        if (e.exclude_split || !importSplitIncluded(e.service_name)) continue;
+        if (e.exclude_split || !importSplitIncluded(e.service_name, importEntryHasTaxId(e))) continue;
         const amt = toNum(e.amount);
         const rate = toNum(e.rate);
         const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
