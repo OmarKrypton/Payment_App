@@ -297,6 +297,21 @@ const vatKindLabel = (kind: string, tr: (zh: string, en: string) => string): str
   }
 };
 
+// Did a bank document actually withhold WHT for its supplier? (single rate,
+// multi-rate rows, or a manual amount.) Used so a stale "WHT-free" checklist
+// tick can never mark a supplier free while WHT is being deducted.
+const docAppliedWht = (p: any): boolean => {
+  if (!p || typeof p !== "object") return false;
+  const rate = parseFloat(String(p.wht_rate || "0").replace('%', '')) || 0;
+  if (rate > 0) return true;
+  if (p.wht_manual && Array.isArray(p.wht_rows) &&
+      p.wht_rows.some((r: any) => (parseFloat(String(r.rate || "0").replace('%', '')) || 0) > 0)) return true;
+  if (p.wht_manual_amount && (parseFloat(String(p.val_6B || "0").replace(/,/g, '')) || 0) !== 0) return true;
+  return false;
+};
+const importEntryAppliedWht = (e: any): boolean =>
+  !e?.free_wht && (parseFloat(String(e?.wht_rate || "0").replace('%', '')) || 0) > 0;
+
 const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   type Acc = {
     name: string;
@@ -304,6 +319,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     docs: SupplierDocRef[];
     vat: Record<string, Map<string, number>>; // rate -> kind -> count
     whtCert: boolean;
+    whtApplied: boolean;                      // WHT actually withheld in some document
     whtRates: Map<string, number>;            // withheld rate -> # entries
     whtDocs: number;
   };
@@ -314,7 +330,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     taxId = taxId.trim();
     let a = acc.get(taxId);
     if (!a) {
-      a = { name: companyName || poolName, poolName, docs: [], vat: {}, whtCert: false, whtRates: new Map(), whtDocs: 0 };
+      a = { name: companyName || poolName, poolName, docs: [], vat: {}, whtCert: false, whtApplied: false, whtRates: new Map(), whtDocs: 0 };
       acc.set(taxId, a);
     } else {
       if (companyName && !a.name) a.name = companyName;
@@ -393,6 +409,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
         upsert(taxId, docRef, "", poolEntryFor(taxId)?.name || "");
         const a = acc.get(taxId)!;
         if (e.free_wht) a.whtCert = true;
+        if (importEntryAppliedWht(e)) a.whtApplied = true;
         if (hasInvoices(taxId)) {
           // VAT comes from the actual invoices below; WHT is still withheld by us.
           bumpWht(a, e.wht_rate || "0%");
@@ -421,6 +438,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
         upsert(taxId, docRef, companyByTax.get(taxId) || "", poolEntryFor(taxId)?.name || "");
         const a = acc.get(taxId)!;
         if ((p.checklist && p.checklist.check_wht_cert?.s === "pass") || p.check_wht_cert) a.whtCert = true;
+        if (docAppliedWht(p)) a.whtApplied = true;
         if (hasInvoices(taxId)) {
           bumpWht(a, p.wht_rate || "0%");
         } else {
@@ -480,6 +498,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       for (const [kind, count] of kinds) toAcc.vat[rate].set(kind, (toAcc.vat[rate].get(kind) || 0) + count);
     }
     if (fromAcc.whtCert) toAcc.whtCert = true;
+    if (fromAcc.whtApplied) toAcc.whtApplied = true;
     for (const [rate, count] of fromAcc.whtRates) {
       toAcc.whtRates.set(rate, (toAcc.whtRates.get(rate) || 0) + count);
     }
@@ -489,6 +508,9 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     acc.delete(from);
   }
   for (const [taxId, a] of acc) {
+    // If WHT was actually withheld on any document, the supplier is not
+    // WHT-free — regardless of a stale certificate/checklist tick.
+    if (a.whtApplied) a.whtCert = false;
     const vat: SupplierVatRow[] = Object.entries(a.vat)
       .map(([rate, kinds]) => {
         const sorted = [...kinds.entries()].sort((x, y) => y[1] - x[1]);
@@ -3152,7 +3174,12 @@ function App() {
             if (inv.seller_tax_id) taxIds.add(String(inv.seller_tax_id).trim());
           });
         }
-        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "", final_decision: p.final_decision || "", created_at: r.created_at || "", whtFree: p.doc_type === "import" ? ((p.import_entries || []).some((e: any) => e.free_wht) || p.checklist?.check_wht_cert?.s === "pass") : (p.checklist?.check_wht_cert?.s === "pass" || !!p.check_wht_cert) });
+        const bankWhtApplied = p.doc_type !== "import" && docAppliedWht(p);
+        const importWhtApplied = p.doc_type === "import" && (p.import_entries || []).some(importEntryAppliedWht);
+        const whtFree = p.doc_type === "import"
+          ? ((p.import_entries || []).some((e: any) => e.free_wht) || p.checklist?.check_wht_cert?.s === "pass") && !importWhtApplied
+          : (p.checklist?.check_wht_cert?.s === "pass" || !!p.check_wht_cert) && !bankWhtApplied;
+        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "", final_decision: p.final_decision || "", created_at: r.created_at || "", whtFree });
       }
       setSavedDocsIndex(merged);
     } catch {}
