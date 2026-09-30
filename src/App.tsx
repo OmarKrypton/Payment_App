@@ -248,6 +248,7 @@ interface SupplierDocRef {
   doc_type: string;
   created_at: string;
   final_decision: string;
+  matchedVia?: string;
 }
 interface SupplierInfo {
   taxId: string;
@@ -325,7 +326,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   };
   const acc = new Map<string, Acc>();
   const seenDocs = new Map<string, Set<number>>();
-  const upsert = (taxId: string, docRef: SupplierDocRef, companyName: string, poolName: string) => {
+  const upsert = (taxId: string, docRef: SupplierDocRef, companyName: string, poolName: string, matchedVia?: string) => {
     if (!taxId) return;
     taxId = taxId.trim();
     let a = acc.get(taxId);
@@ -340,7 +341,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     if (!seen) { seen = new Set(); seenDocs.set(taxId, seen); }
     if (!seen.has(docRef.id)) {
       seen.add(docRef.id);
-      a.docs.push(docRef);
+      a.docs.push({ ...docRef, matchedVia });
     }
   };
   const bumpVat = (a: Acc, rate: string, kind: string) => {
@@ -405,12 +406,14 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       (p.import_entries || []).forEach((e: any) => {
         // The seller tax id is derived from the service name (what the user sees
         // and types). The stored entry.seller_tax_id is hidden and can be stale or
-        // captured from the wrong pool invoice, so it is only a fallback.
+        // captured from the wrong pool invoice, so it is only trusted for entries
+        // actually attached to a pool invoice.
         const fromName = extractTaxIdFromName(e.service_name || "");
-        const fromField = String(e.seller_tax_id || "").trim();
+        const attached = !!(e.attached_invoice || e.attached_uuid);
+        const fromField = attached ? String(e.seller_tax_id || "").trim() : "";
         const taxId = (fromName || fromField).trim();
         if (!taxId) return;
-        upsert(taxId, docRef, "", poolEntryFor(taxId)?.name || "");
+        upsert(taxId, docRef, "", poolEntryFor(taxId)?.name || "", e.service_name || "");
         const a = acc.get(taxId)!;
         if (e.free_wht) a.whtCert = true;
         if (importEntryAppliedWht(e)) a.whtApplied = true;
@@ -439,7 +442,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       // form (e.g. "686478" and "686478444"); keep only the complete IDs so the
       // truncated one does not spawn a phantom supplier.
       for (const taxId of dedupeTaxIds(ids)) {
-        upsert(taxId, docRef, companyByTax.get(taxId) || "", poolEntryFor(taxId)?.name || "");
+        upsert(taxId, docRef, companyByTax.get(taxId) || "", poolEntryFor(taxId)?.name || "", companyByTax.get(taxId) || "");
         const a = acc.get(taxId)!;
         if ((p.checklist && p.checklist.check_wht_cert?.s === "pass") || p.check_wht_cert) a.whtCert = true;
         if (docAppliedWht(p)) a.whtApplied = true;
@@ -1957,7 +1960,7 @@ function App() {
                         <div key={`${d.id}-${i}`} className="supplier-doc-row">
                           <span className="decision-dot" style={{ background: deco(d.final_decision) || 'var(--border)', flexShrink: 0 }} title={d.final_decision} />
                           <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
-                          <span className="supplier-doc-label">{d.label}</span>
+                          <span className="supplier-doc-label" title={d.matchedVia ? `${t("匹配来源", "Matched via")}: ${d.matchedVia}` : d.label}>{d.label}</span>
                           <span className="supplier-doc-date">{d.created_at}</span>
                           <button className="btn-load" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
                         </div>
