@@ -203,20 +203,27 @@ const extractTaxIdFromName = (name: string): string => {
 
 // Import service providers are coded A1, A2, B1, C1, … D1, D2. A line counts as
 // a service provider (and so is included in the EGP/USD summary) when it carries
-// a 9-digit tax id — with or without the code — or uses a code up to D. Lines
-// with an E+ code or no tax id at all (Nafeza, Form 4, Commercial invoice) are
-// excluded.
+// a 9-digit tax id — with or without the code — or uses a code up to D.
 const importCodeLetter = (name: string): string => {
   const m = /^\s*([A-Za-z])\s*[-.]?\s*\d/.exec(name || "");
   return m ? m[1].toUpperCase() : "";
 };
-const importEntryHasTaxId = (e: any): boolean =>
-  /\d{9}/.test(String(e?.seller_tax_id || "")) ||
-  /tax\s*id\s*[:：]?\s*\d{9}/i.test(String(e?.service_name || ""));
+// Lines that are never part of the EGP/USD service split, whatever their code or
+// tax id (Nafeza, Form 4/6 and the commercial invoice).
+const importSplitExcludedName = (name: string): boolean =>
+  /nafeza|commercial|form\s*[46]/i.test(name || "");
+const importEntryHasTaxId = (e: any): boolean => {
+  if (/tax\s*id\s*[:：]?\s*\d{9}/i.test(String(e?.service_name || ""))) return true;
+  // Only trust the hidden stored field when the entry is actually attached to a
+  // pool invoice; otherwise it may have been captured from the wrong pool match.
+  const attached = !!(e?.attached_invoice || e?.attached_uuid);
+  return attached && /\d{9}/.test(String(e?.seller_tax_id || ""));
+};
 const importSplitIncluded = (name: string, hasTaxId: boolean): boolean => {
-  if (hasTaxId) return true;
   const c = importCodeLetter(name);
-  return !!c && c <= "D";
+  if (c && c <= "D") return true;            // explicitly coded as a service provider
+  if (importSplitExcludedName(name)) return false; // Nafeza / Commercial / Form 4/6
+  return hasTaxId;                            // otherwise only if it carries a tax id
 };
 
 // When the same seller tax id is captured in both a truncated and full form
