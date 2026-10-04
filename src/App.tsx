@@ -4129,7 +4129,9 @@ function App() {
         {/* Current document */}
         <div className="sidebar-doc">
           <div className="doc-top">
-            <FastInput className="doc-serial-input" value={data.doc_serial} onChange={setDocSerial} placeholder={draftLabel(data.draft_no ?? draftNo)} />
+            <span className="doc-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>
+              {data.doc_serial || draftLabel(data.draft_no ?? draftNo)}
+            </span>
             <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>
               {data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}
             </span>
