@@ -234,6 +234,16 @@ const isSyntheticPoolUuid = (u: unknown): boolean => {
   return s === "" || s.startsWith("legacy-") || s.startsWith("GEN:");
 };
 
+// Bank-tab jump-nav: cards that sit side by side in one row share a highlight,
+// so clicking either chip lights up the active row.
+const BANK_ROW_OF: Record<string, string> = {
+  "sec-payable": "sec-advance",
+  "sec-temp": "sec-retention",
+  "sec-others": "sec-wht",
+  "sec-net": "sec-paid",
+};
+const bankRowId = (id: string): string => BANK_ROW_OF[id] || id;
+
 // When the same seller tax id is captured in both a truncated and full form
 // (e.g. "533446" and "533446333"), keep only the complete/longest id.
 const dedupeTaxIds = (set: Set<string>): string[] => {
@@ -1070,9 +1080,17 @@ function App() {
     if (!anchors.length) return;
     const onScroll = () => {
       const rootTop = root.getBoundingClientRect().top;
+      // Pick the section closest to (but above) the dock. On ties — two cards
+      // share a row and have the same top — keep the first so the highlight
+      // lands on the left card, which is the one that has a chip.
       let activeId = anchors[0].id;
+      let bestRel = -Infinity;
       for (const a of anchors) {
-        if (a.getBoundingClientRect().top - rootTop <= 96) activeId = a.id;
+        const rel = a.getBoundingClientRect().top - rootTop;
+        if (rel <= 96 && rel > bestRel) { bestRel = rel; activeId = a.id; }
+      }
+      if (root.scrollTop + root.clientHeight >= root.scrollHeight - 4) {
+        activeId = anchors[anchors.length - 1].id;
       }
       setBankSection(prev => (prev === activeId ? prev : activeId));
     };
@@ -4329,16 +4347,18 @@ function App() {
                 ["sec-info", t("文件", "Document")],
                 ["sec-supplier", t("供应商", "Supplier")],
                 ["sec-advance", t("预付款", "Advance")],
+                ["sec-payable", t("应付", "Payable")],
                 ["sec-retention", t("保留金", "Retention")],
                 ["sec-temp", t("临时工", "Temp Labour")],
                 ["sec-wht", t("预提税", "WHT")],
                 ["sec-others", t("其他", "Others")],
                 ["sec-paid", t("已付", "Paid")],
                 ["sec-net", t("净应付", "Net")],
+                ["sec-paidtotals", t("实付合计", "Paid Totals")],
                 ["sec-invoices", t("发票", "Invoices")],
                 ["sec-checklist", t("清单", "Checklist")],
               ] as [string, string][]).map(([id, label]) => (
-                <button key={id} className={bankSection === id ? "on" : ""} onClick={() => {
+                <button key={id} className={bankRowId(bankSection) === bankRowId(id) ? "on" : ""} onClick={() => {
                   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
                 }}>{label}</button>
               ))}
