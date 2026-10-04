@@ -6,7 +6,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote } from "./supabase";
-import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice } from "./icons";
+import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
 interface OcrFieldInfo {
@@ -764,6 +764,16 @@ function App() {
   const t = useCallback((zh: string, en: string) => lang === "zh" ? zh : en, [lang]);
   const formRef = useRef<FormData>(DEFAULT_FORM);
   const [draftNo, setDraftNo] = useState<number | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("sidebar_collapsed") === "1"; } catch { return false; }
+  });
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(v => {
+      const next = !v;
+      try { localStorage.setItem("sidebar_collapsed", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  }, []);
   const [computed, setComputed] = useState<CalcResult>(EMPTY_CALC);
   const overlayRef = useRef<HTMLDivElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
@@ -4031,7 +4041,7 @@ function App() {
           </div>
         </div>
       )}
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`}>
         <div className="sidebar-header">
           <div className="brand">
             <div className="brand-icon">
@@ -4041,6 +4051,13 @@ function App() {
               <h2>Vouchify</h2>
               <p>{t("付款凭证", "Payment Voucher")}</p>
             </div>
+            <button
+              className="sidebar-toggle"
+              title={sidebarCollapsed ? t("展开侧栏", "Expand sidebar") : t("收起侧栏", "Collapse sidebar")}
+              onClick={toggleSidebar}
+            >
+              <IconChevronRight size={16} style={{ transform: sidebarCollapsed ? "rotate(0deg)" : "rotate(180deg)", transition: "transform 0.2s" }} />
+            </button>
           </div>
         </div>
         {/* Current document */}
@@ -4080,6 +4097,10 @@ function App() {
                 <span className="stat-n orange">{fmt(computed.import_total_vat)}</span>
                 <span className="stat-l">{t("VAT 合计", "Total VAT")}</span>
               </div>
+              <div className="stat-chip wide">
+                <span className="stat-n white">{fmt(computed.import_total_wht)}</span>
+                <span className="stat-l">{t("WHT 合计", "Total WHT")}</span>
+              </div>
             </>
           ) : (
             <>
@@ -4091,6 +4112,10 @@ function App() {
                 <span className={`stat-n orange${computed.total_deductions < 0 ? " neg" : ""}`}>{fmt(computed.total_deductions)}</span>
                 <span className="stat-l">{t("扣款合计", "Deductions")}</span>
               </div>
+              <div className="stat-chip wide">
+                <span className={`stat-n white${computed.c_10A < 0 ? " neg" : ""}`}>{fmt(computed.c_10A)}</span>
+                <span className="stat-l">{t("本期实付", "Current Paid")}</span>
+              </div>
             </>
           )}
         </div>
@@ -4099,99 +4124,84 @@ function App() {
         <div className="sidebar-section-label">{t("文档", "Document")}</div>
         <div className="sidebar-seg">
           <button className={tab === "bank" ? "on" : ""} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
-            {t("银行", "Bank")}
+            <IconBank size={15} /> <span className="seg-label">{t("银行", "Bank")}</span>
           </button>
           <button className={tab === "import" ? "on" : ""} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
-            {t("进口", "Import")}
+            <IconTruck size={15} /> <span className="seg-label">{t("进口", "Import")}</span>
           </button>
         </div>
 
         {/* Views */}
         <div className="sidebar-section-label">{t("视图", "Views")}</div>
         <button className={`navitem${tab === "suppliers" ? " active" : ""}`} onClick={() => setTab("suppliers")}>
-          <IconReport size={15} color="currentColor" />
+          <IconUsers size={15} />
           <span className="navlabel">{t("供应商", "Suppliers")}</span>
           {supplierData.length > 0 && <span className="navbadge">{supplierData.length}</span>}
         </button>
         <button className="navitem" onClick={openPool}>
-          <IconInvoice size={15} color="currentColor" />
+          <IconLayers size={15} />
           <span className="navlabel">{t("发票池", "Invoice Pool")}</span>
           {availablePoolCount > 0 && <span className="navbadge violet">{availablePoolCount}</span>}
         </button>
         <button className="eta-link" onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
-          <IconExport size={13} color="currentColor" /> {t("打开 ETA 门户", "Open ETA portal")}
+          <IconExternal size={13} /> <span className="eta-text">{t("打开 ETA 门户", "Open ETA portal")}</span>
         </button>
-        <div className="sidebar-sync" style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.08)'}}>
+        <div className="sidebar-account">
           {authUser ? (
-            <div>
-              <div style={{display:'flex',alignItems:'center',gap:10}}>
-                <div style={{width:32,height:32,borderRadius:'50%',background:'var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'#fff'}}>
-                  {authUser.charAt(0).toUpperCase()}
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:'flex',alignItems:'center',gap:5}}>
-                    <span style={{width:7,height:7,borderRadius:'50%',background:synced?'var(--green)':'var(--red)',display:'inline-block',boxShadow:synced?'0 0 4px var(--green)':'none'}} />
-                    <span style={{fontSize:12,fontWeight:600,color:'rgba(255,255,255,0.92)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:130}}>{(authUser || "").split("@")[0]}</span>
-                  </div>
-                  <span style={{fontSize:10,color:synced?'var(--green)':'var(--red)',opacity:0.8}}>{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</span>
-                </div>
-                <button style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'1px solid rgba(255,255,255,0.15)',background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.7)',cursor:'pointer',transition:'all 0.15s'}} onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); }}
-                  onMouseEnter={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.1)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.9)'}}
-                  onMouseLeave={e => {(e.target as HTMLElement).style.background='rgba(255,255,255,0.05)';(e.target as HTMLElement).style.color='rgba(255,255,255,0.7)'}}
-                >
-                  {t("登出", "Logout")}
-                </button>
+            <>
+              <div className="acct-avatar" title={authUser}>{authUser.charAt(0).toUpperCase()}</div>
+              <div className="acct-info">
+                <div className="acct-name">{(authUser || "").split("@")[0]}</div>
+                <div className="acct-status"><span className={`doc-dot${synced ? "" : " red"}`} />{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</div>
               </div>
-              {!showChangePw && (
-                <button style={{fontSize:10,padding:'3px 0',border:'none',background:'transparent',color:'rgba(255,255,255,0.35)',cursor:'pointer',marginTop:6,width:'100%',textAlign:'center'}} onClick={() => setShowChangePw(true)}>
-                  {t("修改密码", "Change password")}
-                </button>
-              )}
-              {showChangePw && (
-                <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:8}}>
-                  <input style={{fontSize:11,padding:'6px 10px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.06)',color:'rgba(255,255,255,0.85)',width:'100%',outline:'none'}}
-                    type="password"
-                    placeholder={t("新密码", "New password")}
-                    value={newPassword}
-                    onChange={e => setNewPassword(e.target.value)} />
-                  <div style={{display:'flex',gap:6}}>
-                    <button style={{fontSize:11,padding:'5px 0',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,flex:1}} onClick={async () => {
-                      try { await changePassword(newPassword); setNewPassword(""); setShowChangePw(false); showAlert(t("密码已修改", "Password changed")); } catch (e: any) { showAlert(`${t("修改失败", "Change failed")}: ${e.message || e}`); }
-                    }}>{t("确认", "Confirm")}</button>
-                    <button style={{fontSize:11,padding:'5px 0',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'transparent',color:'rgba(255,255,255,0.5)',cursor:'pointer',flex:1}} onClick={() => { setShowChangePw(false); setNewPassword(""); }}>
-                      {t("取消", "Cancel")}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+              <button className="acct-btn" onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); }}>
+                {t("登出", "Logout")}
+              </button>
+              <button className="acct-gear" title={t("修改密码", "Change password")} onClick={() => setShowChangePw(v => !v)}>
+                <IconSettings size={14} />
+              </button>
+            </>
           ) : (
-            <div style={{display:'flex',flexDirection:'column',gap:10}}>
-              <div style={{textAlign:'center',marginBottom:2}}>
-                <div style={{width:40,height:40,borderRadius:'50%',background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,color:'rgba(255,255,255,0.4)',margin:'0 auto 8px'}}>🔒</div>
-                <div style={{fontSize:13,fontWeight:600,color:'rgba(255,255,255,0.85)',marginBottom:2}}>{t("登录以同步", "Sign in to sync")}</div>
-                <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',lineHeight:1.4}}>{t("跨设备共享快照数据", "Share snapshots across devices")}</div>
+            <>
+              <div className="acct-avatar locked" title={t("登录以同步", "Sign in to sync")}>🔒</div>
+              <div className="acct-info">
+                <div className="acct-name">{t("登录以同步", "Sign in to sync")}</div>
+                <div className="acct-status">{t("跨设备共享快照数据", "Share snapshots across devices")}</div>
               </div>
-              <input style={{fontSize:12,padding:'8px 10px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.06)',color:'rgba(255,255,255,0.85)',width:'100%',outline:'none',transition:'border 0.15s'}}
+            </>
+          )}
+          {!authUser && (
+            <div className="acct-login">
+              <input
                 placeholder={t("邮箱", "Email")}
                 value={authEmail}
-                onChange={e => setAuthEmail(e.target.value)}
-                onFocus={e => {(e.target as HTMLElement).style.borderColor='var(--accent)'}}
-                onBlur={e => {(e.target as HTMLElement).style.borderColor='rgba(255,255,255,0.12)'}} />
-              <input style={{fontSize:12,padding:'8px 10px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.06)',color:'rgba(255,255,255,0.85)',width:'100%',outline:'none',transition:'border 0.15s'}}
+                onChange={e => setAuthEmail(e.target.value)} />
+              <input
                 type="password"
                 placeholder={t("密码", "Password")}
                 value={authPassword}
-                onChange={e => setAuthPassword(e.target.value)}
-                onFocus={e => {(e.target as HTMLElement).style.borderColor='var(--accent)'}}
-                onBlur={e => {(e.target as HTMLElement).style.borderColor='rgba(255,255,255,0.12)'}} />
-              <button style={{fontSize:12,padding:'8px 0',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,transition:'background 0.15s'}} onClick={async () => {
+                onChange={e => setAuthPassword(e.target.value)} />
+              <button className="acct-signin" onClick={async () => {
                 try { await signIn(authEmail, authPassword); setAuthPassword(""); } catch (e: any) { showAlert(`${t("登录失败", "Login failed")}: ${e.message || e}`); }
-              }}
-                onMouseEnter={e => {(e.target as HTMLElement).style.background='var(--accent-hover)'}}
-                onMouseLeave={e => {(e.target as HTMLElement).style.background='var(--accent)'}}
-              >{t("登录", "Sign In")}</button>
-              <span style={{fontSize:10,color:'rgba(255,255,255,0.3)',textAlign:'center',marginTop:2}}>{t("账号由管理员创建", "Accounts created by admin")}</span>
+              }}>{t("登录", "Sign In")}</button>
+              <span className="acct-hint">{t("账号由管理员创建", "Accounts created by admin")}</span>
+            </div>
+          )}
+          {authUser && showChangePw && (
+            <div className="acct-pw">
+              <input
+                type="password"
+                placeholder={t("新密码", "New password")}
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)} />
+              <div className="acct-pw-row">
+                <button className="acct-signin" onClick={async () => {
+                  try { await changePassword(newPassword); setNewPassword(""); setShowChangePw(false); showAlert(t("密码已修改", "Password changed")); } catch (e: any) { showAlert(`${t("修改失败", "Change failed")}: ${e.message || e}`); }
+                }}>{t("确认", "Confirm")}</button>
+                <button className="acct-cancel" onClick={() => { setShowChangePw(false); setNewPassword(""); }}>
+                  {t("取消", "Cancel")}
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -4206,19 +4216,19 @@ function App() {
         </div>
         <div className="sidebar-actions">
           <button className="action-primary" onClick={saveSnapshot}>
-            <IconSave color="#fff" /> {t("保存", "Save")}
+            <IconSave color="#fff" /> <span className="action-label">{t("保存", "Save")}</span>
           </button>
-          <div className="action-grid">
-            <button className="action-btn" onClick={newSession}>
-              <IconNewSession /> <span>{t("新会话", "New Session")}</span>
+          <div className="action-row">
+            <button className="action-btn" onClick={newSession} title={t("新会话", "New Session")}>
+              <IconNewSession /> <span>{t("新建", "New")}</span>
             </button>
-            <button className="action-btn" onClick={showHistoryModal}>
-              <IconHistory /> <span>{t("历史记录", "History")}</span>
+            <button className="action-btn" onClick={showHistoryModal} title={t("历史记录", "History")}>
+              <IconHistory /> <span>{t("历史", "History")}</span>
             </button>
-            <button className="action-btn" onClick={importPdf}>
-              <IconReport /> <span>{t("上传PDF", "Upload PDF")}</span>
+            <button className="action-btn" onClick={importPdf} title={t("上传PDF", "Upload PDF")}>
+              <IconUpload /> <span>{t("PDF", "PDF")}</span>
             </button>
-            <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)}>
+            <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)} title={t("导出", "Export")}>
               <IconExport /> <span>{t("导出", "Export")}</span>
             </button>
           </div>
