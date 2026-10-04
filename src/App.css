@@ -2191,6 +2191,10 @@ body {
 .phead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 9px; }
 .phead h3 { margin: 0; }
 .pmeta { font-size: 10.5px; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+.seg-toggle { display: inline-flex; gap: 2px; background: #eef2f7; border-radius: 9px; padding: 3px; }
+.seg-toggle button { border: 0; background: transparent; color: var(--text-muted); padding: 5px 12px; border-radius: 7px; font-size: 10.5px; font-weight: 700; cursor: pointer; }
+.seg-toggle button:hover { color: var(--text-primary); }
+.seg-toggle button.on { background: #fff; color: var(--accent); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.15); }
 
 .prov-table { overflow-x: auto; }
 .prov-row {

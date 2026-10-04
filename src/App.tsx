@@ -1790,15 +1790,6 @@ function App() {
   );
 
   const ImportTab = () => {
-    // Per-provider split counts shown in the header.
-    const provStats = (() => {
-      let egp = 0, usd = 0, excl = 0;
-      for (const e of (data.import_entries ?? [])) {
-        if (e.exclude_split || !importSplitIncluded(e.service_name, importEntryHasTaxId(e))) { excl += 1; continue; }
-        if (toNum(e.rate) > 0) usd += 1; else egp += 1;
-      }
-      return { total: (data.import_entries ?? []).length, egp, usd, excl };
-    })();
     return (
       <div className="import-tab">
         <div className="card bank-anchor" id="sec-imp-invoice">
@@ -1847,9 +1838,10 @@ function App() {
           <div className="card bank-anchor" id="sec-imp-providers">
             <div className="phead">
               <h3>{t("服务商", "Service Providers")}</h3>
-              <span className="pmeta">
-                {provStats.total} {t("项", "providers")} · {provStats.egp} EGP · {provStats.usd} USD{provStats.excl ? ` · ${provStats.excl} ${t("已排除", "excluded")}` : ""}
-              </span>
+              <div className="seg-toggle">
+                <button className={rateVisible ? "on" : ""} onClick={() => setRateVisible(true)} title={t("显示 EGP (应用汇率)", "Show EGP (rate applied)")}>{t("EGP", "EGP")}</button>
+                <button className={!rateVisible ? "on" : ""} onClick={() => setRateVisible(false)} title={t("显示 USD (忽略汇率)", "Show USD (rate ignored)")}>{t("USD", "USD")}</button>
+              </div>
             </div>
             <div className="prov-table">
               <div className="prov-row prov-head">
@@ -4197,9 +4189,7 @@ function App() {
             </span>
           </div>
           <div className="doc-context">
-            {isImport
-              ? `${(data.import_entries ?? []).length} ${t("服务商", "providers")}`
-              : `${(data.invoices ?? []).length} ${t("发票", "invoices")}`}
+            {`${(isImport ? (data.import_entries ?? []) : (data.invoices ?? [])).length} ${t("发票", "invoices")}`}
             {data.buyer_tax_id ? ` · ${data.buyer_tax_id}` : ""}
           </div>
           <div className="doc-chips">
@@ -4455,24 +4445,6 @@ function App() {
           </>
         ) : tab === "import" ? (
           <>
-            <div className="bank-summary">
-              <div className="bank-left">
-                <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
-                <span className={`doc-pill ${docPill.cls}`}>{docPill.label}</span>
-              </div>
-              <div className="bank-chain">
-                <div className="bank-cstep"><span className="bk">{t("总额 (金额+VAT)", "Grand Total")}</span><span className="bv green">{fmt(computed.import_grand_total)}</span></div>
-                <div className="bank-cstep"><span className="bk">{t("净额 (总额-WHT)", "Grand Net")}</span><span className="bv green">{fmt(computed.import_grand_net)}</span></div>
-                <div className="bank-cstep"><span className="bk">{t("EGP 金额", "EGP amount")}</span><span className="bv">{fmt(importSplit.egpInclVat)}</span></div>
-                <div className="bank-cstep"><span className="bk">{t("USD 金额", "USD amount")}</span><span className="bv violet">{fmtUsd(importSplit.usdInclVat)}</span></div>
-              </div>
-              <div className="bank-right">
-                <div className="sidebar-seg" style={{margin:0}}>
-                  <button className={rateVisible ? "on" : ""} onClick={() => setRateVisible(true)}>{t("EGP", "EGP")}</button>
-                  <button className={!rateVisible ? "on" : ""} onClick={() => setRateVisible(false)}>{t("USD", "USD")}</button>
-                </div>
-              </div>
-            </div>
             <div className="bank-jump">
               {([
                 ["sec-imp-info", t("文件", "Document")],
