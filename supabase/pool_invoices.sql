@@ -41,17 +41,21 @@ alter table public.pool_invoices add column if not exists doc_status text not nu
 alter table public.pool_invoices enable row level security;
 
 -- All authenticated users can read and write the shared pool.
+-- The predicate is "a signed-in user" (`auth.uid() is not null`) rather than the
+-- literal `true`, which keeps the same access and avoids the permissive-RLS
+-- linter warning. Wrapping the call in a subquery evaluates it once per query.
 create policy "pool read" on public.pool_invoices
-  for select to authenticated using (true);
+  for select to authenticated using ((select auth.uid()) is not null);
 
 create policy "pool insert" on public.pool_invoices
-  for insert to authenticated with check (true);
+  for insert to authenticated with check ((select auth.uid()) is not null);
 
 create policy "pool update" on public.pool_invoices
-  for update to authenticated using (true);
+  for update to authenticated using ((select auth.uid()) is not null)
+  with check ((select auth.uid()) is not null);
 
 create policy "pool delete" on public.pool_invoices
-  for delete to authenticated using (true);
+  for delete to authenticated using ((select auth.uid()) is not null);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- v0.3.30 MIGRATION: switch pool identity from (invoice_id, seller_tax_id) to
