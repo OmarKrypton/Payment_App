@@ -782,6 +782,7 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
@@ -4098,7 +4099,7 @@ function App() {
                 <span className="stat-l">{t("VAT 合计", "Total VAT")}</span>
               </div>
               <div className="stat-chip wide">
-                <span className="stat-n white">{fmt(computed.import_total_wht)}</span>
+                <span className="stat-n">{fmt(computed.import_total_wht)}</span>
                 <span className="stat-l">{t("WHT 合计", "Total WHT")}</span>
               </div>
             </>
@@ -4113,7 +4114,7 @@ function App() {
                 <span className="stat-l">{t("扣款合计", "Deductions")}</span>
               </div>
               <div className="stat-chip wide">
-                <span className={`stat-n white${computed.c_10A < 0 ? " neg" : ""}`}>{fmt(computed.c_10A)}</span>
+                <span className={`stat-n${computed.c_10A < 0 ? " neg" : ""}`}>{fmt(computed.c_10A)}</span>
                 <span className="stat-l">{t("本期实付", "Current Paid")}</span>
               </div>
             </>
@@ -4154,10 +4155,10 @@ function App() {
                 <div className="acct-name">{(authUser || "").split("@")[0]}</div>
                 <div className="acct-status"><span className={`doc-dot${synced ? "" : " red"}`} />{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</div>
               </div>
-              <button className="acct-btn" onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); }}>
+              <button className="acct-btn" onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); setShowSettings(false); }}>
                 {t("登出", "Logout")}
               </button>
-              <button className="acct-gear" title={t("修改密码", "Change password")} onClick={() => setShowChangePw(v => !v)}>
+              <button className={`acct-gear${showSettings ? " active" : ""}`} title={t("设置", "Settings")} onClick={() => setShowSettings(v => !v)}>
                 <IconSettings size={14} />
               </button>
             </>
@@ -4168,6 +4169,9 @@ function App() {
                 <div className="acct-name">{t("登录以同步", "Sign in to sync")}</div>
                 <div className="acct-status">{t("跨设备共享快照数据", "Share snapshots across devices")}</div>
               </div>
+              <button className={`acct-gear${showSettings ? " active" : ""}`} title={t("设置", "Settings")} onClick={() => setShowSettings(v => !v)}>
+                <IconSettings size={14} />
+              </button>
             </>
           )}
           {!authUser && (
@@ -4187,32 +4191,44 @@ function App() {
               <span className="acct-hint">{t("账号由管理员创建", "Accounts created by admin")}</span>
             </div>
           )}
-          {authUser && showChangePw && (
-            <div className="acct-pw">
-              <input
-                type="password"
-                placeholder={t("新密码", "New password")}
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)} />
-              <div className="acct-pw-row">
-                <button className="acct-signin" onClick={async () => {
-                  try { await changePassword(newPassword); setNewPassword(""); setShowChangePw(false); showAlert(t("密码已修改", "Password changed")); } catch (e: any) { showAlert(`${t("修改失败", "Change failed")}: ${e.message || e}`); }
-                }}>{t("确认", "Confirm")}</button>
-                <button className="acct-cancel" onClick={() => { setShowChangePw(false); setNewPassword(""); }}>
-                  {t("取消", "Cancel")}
+          {showSettings && (
+            <div className="acct-settings">
+              {authUser && (
+                <button className="acct-setrow" onClick={() => setShowChangePw(v => !v)}>
+                  <span>{t("修改密码", "Change password")}</span>
+                  <IconChevronRight size={13} style={{ transform: showChangePw ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }} />
                 </button>
+              )}
+              {authUser && showChangePw && (
+                <div className="acct-pw">
+                  <input
+                    type="password"
+                    placeholder={t("新密码", "New password")}
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)} />
+                  <div className="acct-pw-row">
+                    <button className="acct-signin" onClick={async () => {
+                      try { await changePassword(newPassword); setNewPassword(""); setShowChangePw(false); showAlert(t("密码已修改", "Password changed")); } catch (e: any) { showAlert(`${t("修改失败", "Change failed")}: ${e.message || e}`); }
+                    }}>{t("确认", "Confirm")}</button>
+                    <button className="acct-cancel" onClick={() => { setShowChangePw(false); setNewPassword(""); }}>
+                      {t("取消", "Cancel")}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <button className="acct-setrow" onClick={handleCheckUpdate} disabled={checkingUpdate}>
+                <span>{checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}</span>
+              </button>
+              <button className="acct-setrow" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
+                <span>{t("语言", "Language")}</span>
+                <span className="acct-setval">{lang === "zh" ? "English" : "中文"}</span>
+              </button>
+              <div className="acct-setrow static">
+                <span>{t("版本", "Version")}</span>
+                <span className="acct-setval">{appVersion ? `v${appVersion}` : ""}</span>
               </div>
             </div>
           )}
-        </div>
-        <div className="sidebar-util">
-          <span className="util-version">{appVersion ? `v${appVersion}` : ""}</span>
-          <button className="util-btn" onClick={handleCheckUpdate} disabled={checkingUpdate}>
-            {checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}
-          </button>
-          <button className="util-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
-            {lang === "zh" ? "English" : "中文"}
-          </button>
         </div>
         <div className="sidebar-actions">
           <button className="action-primary" onClick={saveSnapshot}>
@@ -4225,8 +4241,8 @@ function App() {
             <button className="action-btn" onClick={showHistoryModal} title={t("历史记录", "History")}>
               <IconHistory /> <span>{t("历史", "History")}</span>
             </button>
-            <button className="action-btn" onClick={importPdf} title={t("上传PDF", "Upload PDF")}>
-              <IconUpload /> <span>{t("PDF", "PDF")}</span>
+            <button className="action-btn" onClick={importPdf} title={t("上传PDF (OCR)", "Upload PDF (OCR)")}>
+              <IconUpload /> <span>{t("OCR", "OCR")}</span>
             </button>
             <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)} title={t("导出", "Export")}>
               <IconExport /> <span>{t("导出", "Export")}</span>
