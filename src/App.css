@@ -2079,3 +2079,71 @@ body {
   padding: 1px 8px;
   flex-shrink: 0;
 }
+
+/* ── Bank tab: summary bar, jump-nav, collapsible cards, decision footer ── */
+.card-row { align-items: start; }
+
+.bank-summary {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  box-shadow: var(--shadow-sm);
+}
+.bank-serial { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; }
+.bank-chain { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; overflow: hidden; }
+.bank-cstep { display: flex; flex-direction: column; min-width: 0; }
+.bank-cstep .bk { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); white-space: nowrap; }
+.bank-cstep .bv { font-family: var(--font-mono); font-size: 12.5px; font-weight: 700; color: var(--text-primary); white-space: nowrap; }
+.bank-cstep .bv.green { color: var(--green); }
+.bank-cstep .bv.orange { color: var(--orange); }
+.bank-cstep .bv.red { color: var(--red); }
+.bank-op { color: var(--border); font-weight: 700; }
+.bank-unpaid { font-size: 10px; color: var(--text-muted); text-align: right; white-space: nowrap; }
+.bank-unpaid b { display: block; font-family: var(--font-mono); font-size: 13px; color: var(--orange); }
+.bank-save { background: var(--accent); color: #fff; border: 0; border-radius: var(--radius); padding: 8px 14px; font-weight: 700; font-size: 12px; cursor: pointer; box-shadow: var(--shadow-sm); white-space: nowrap; }
+.bank-save:hover { background: var(--accent-hover); }
+
+.bank-jump { display: flex; gap: 5px; flex-wrap: wrap; }
+.bank-jump button { border: 1px solid var(--border); background: var(--bg-card); color: var(--text-secondary); border-radius: 999px; padding: 5px 11px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.bank-jump button:hover { border-color: var(--accent); color: var(--accent); }
+.bank-jump button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.bank-anchor { scroll-margin-top: 72px; }
+
+.bank-collapsible > .card { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.bank-collapsible > .card > h3 { display: none; }
+.card-toggle { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; padding: 0 0 10px; margin: 0; cursor: pointer; border-bottom: 1px solid var(--border); text-align: left; font: inherit; }
+.card-title { font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 0.02em; }
+.card-summary { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; font-weight: 650; color: var(--green); white-space: nowrap; }
+.card-summary.warn { color: var(--orange); }
+.card-chev { display: inline-flex; color: var(--text-muted); transition: transform 0.15s; flex-shrink: 0; }
+.card-collapse-body { padding-top: 12px; }
+
+.bank-decbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  box-shadow: 0 -4px 18px rgba(15, 23, 42, 0.06);
+}
+.bank-prog { font-size: 11px; color: var(--text-muted); }
+.bank-prog b { color: var(--green); }
+.bank-decbtns { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.dec-btn { border: 1px solid var(--border); background: var(--bg-card); border-radius: var(--radius); padding: 8px 12px; font-size: 11.5px; font-weight: 650; cursor: pointer; color: var(--text-secondary); }
+.dec-btn:hover { border-color: var(--accent); color: var(--accent); }
+.dec-btn.approve.on { background: var(--green); border-color: var(--green); color: #fff; }
+.dec-btn.conditional.on { background: var(--orange); border-color: var(--orange); color: #fff; }
+.dec-btn.reject.on { background: var(--red); border-color: var(--red); color: #fff; }

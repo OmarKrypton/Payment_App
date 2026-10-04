@@ -699,6 +699,25 @@ function NumericInput({ value, onChange, className, style, maxDecimals }: {
     }} />;
 }
 
+// Collapsible wrapper for the Bank tab. The card content renders inside; its
+// own <h3> is hidden so this toggle header is the single title (with a summary
+// of the card's key result).
+function CollapsibleSection({ id, title, summary, summaryClass, defaultOpen = true, children }: {
+  id?: string; title: React.ReactNode; summary?: React.ReactNode; summaryClass?: string; defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="card bank-anchor bank-collapsible" id={id}>
+      <button type="button" className="card-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <span className="card-title">{title}</span>
+        {summary != null && summary !== "" && <span className={`card-summary${summaryClass ? ` ${summaryClass}` : ""}`}>{summary}</span>}
+        <span className="card-chev" style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}><IconChevronRight size={14} /></span>
+      </button>
+      {open && <div className="card-collapse-body">{children}</div>}
+    </section>
+  );
+}
+
 interface HistoryEntry {
   id: number; label: string; notes: string; created_at: string; owner?: string;
   delete_requested_at?: string | null; delete_requested_by?: string | null;
@@ -776,6 +795,7 @@ function App() {
   }, []);
   const [computed, setComputed] = useState<CalcResult>(EMPTY_CALC);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
   const [modalMsg, setModalMsg] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -783,6 +803,7 @@ function App() {
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [bankSection, setBankSection] = useState("sec-info");
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
@@ -1039,6 +1060,26 @@ function App() {
   }, []);
 
   const data = formRef.current;
+
+  // Bank tab: highlight the section chip nearest the top of the scroll area.
+  useEffect(() => {
+    if (tab !== "bank") return;
+    const root = contentRef.current;
+    if (!root) return;
+    const anchors = Array.from(root.querySelectorAll<HTMLElement>(".bank-anchor"));
+    if (!anchors.length) return;
+    const onScroll = () => {
+      const rootTop = root.getBoundingClientRect().top;
+      let activeId = anchors[0].id;
+      for (const a of anchors) {
+        if (a.getBoundingClientRect().top - rootTop <= 96) activeId = a.id;
+      }
+      setBankSection(prev => (prev === activeId ? prev : activeId));
+    };
+    onScroll();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => root.removeEventListener("scroll", onScroll);
+  }, [tab, data.doc_type]);
 
   const ocrConf = (field: string): number | undefined => {
     if (!data.ocr_meta) return undefined;
@@ -4263,27 +4304,83 @@ function App() {
           )}
         </div>
       </aside>
-      <main className="content">
+      <main className="content" ref={contentRef}>
         {tab === "bank" ? (
           <>
-            {AuditInfoCard()}
-            {Card1()}
+            <div className="bank-summary">
+              <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
+              <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>{data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}</span>
+              <div className="bank-chain">
+                <div className="bank-cstep"><span className="bk">{t("含税结算", "Settlement incl. VAT")}</span><span className="bv green">{fmt(computed.c_1G)}</span></div>
+                <span className="bank-op">−</span>
+                <div className="bank-cstep"><span className="bk">{t("扣款合计", "Deductions")}</span><span className="bv orange">{fmt(computed.total_deductions)}</span></div>
+                <span className="bank-op">=</span>
+                <div className="bank-cstep"><span className="bk">{t("应付净额 (9A)", "Net Payable (9A)")}</span><span className={`bv ${computed.c_9A < 0 ? "red" : "green"}`}>{fmt(computed.c_9A)}</span></div>
+                <span className="bank-op">−</span>
+                <div className="bank-cstep"><span className="bk">{t("本期实付 (10A)", "Current Paid (10A)")}</span><span className={`bv${computed.c_10A < 0 ? " red" : ""}`}>{fmt(computed.c_10A)}</span></div>
+              </div>
+              <div className="bank-unpaid">{t("未付余额", "Unpaid balance")}<b>{fmt(computed.c_9A - computed.c_10A)}</b></div>
+              <button className="bank-save" onClick={saveSnapshot}>{t("保存", "Save")}</button>
+            </div>
+
+            <div className="bank-jump">
+              {([
+                ["sec-info", t("文件", "Document")],
+                ["sec-supplier", t("供应商", "Supplier")],
+                ["sec-advance", t("预付款", "Advance")],
+                ["sec-retention", t("保留金", "Retention")],
+                ["sec-temp", t("临时工", "Temp Labour")],
+                ["sec-wht", t("预提税", "WHT")],
+                ["sec-others", t("其他", "Others")],
+                ["sec-paid", t("已付", "Paid")],
+                ["sec-net", t("净应付", "Net")],
+                ["sec-invoices", t("发票", "Invoices")],
+                ["sec-checklist", t("清单", "Checklist")],
+              ] as [string, string][]).map(([id, label]) => (
+                <button key={id} className={bankSection === id ? "on" : ""} onClick={() => {
+                  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}>{label}</button>
+              ))}
+            </div>
+
+            <div id="sec-info" className="bank-anchor">{AuditInfoCard()}</div>
+            <CollapsibleSection id="sec-supplier" title={t("1. 供应商结算", "1. Supplier Settlement")} summary={`${t("含税结算", "Settlement incl. VAT")} ${fmt(computed.c_1G)}`}>{Card1()}</CollapsibleSection>
             <div className="card-row">
-              {Card2()}{Card3()}
+              <CollapsibleSection id="sec-advance" title={t("2. 预付款", "2. Advance Payment")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_2E)}`}>{Card2()}</CollapsibleSection>
+              <CollapsibleSection id="sec-payable" title={t("3. 应付金额", "3. Amount Payable")} summary={fmt(computed.c_3A)} defaultOpen={false}>{Card3()}</CollapsibleSection>
             </div>
             <div className="card-row">
-              {Card4()}{Card5()}
+              <CollapsibleSection id="sec-retention" title={t("4. 保留金", "4. Retention")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_4D)}`}>{Card4()}</CollapsibleSection>
+              <CollapsibleSection id="sec-temp" title={t("5. 临时工社保", "5. Temp. Labour Insurance")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_5D)}`}>{Card5()}</CollapsibleSection>
             </div>
             <div className="card-row">
-              {Card6()}{Card78()}
+              <CollapsibleSection id="sec-wht" title={t("6. 预提税", "6. WHT")} summary={`${t("期末累计", "Ending")} ${fmt(computed.c_6C)}`}>{Card6()}</CollapsibleSection>
+              <CollapsibleSection id="sec-others" title={t("8 & 12. 其他扣款与社保", "8 & 12. Others & Social")} summary={`${fmt(computed.c_8C)} · ${fmt(computed.c_12C)}`}>{Card78()}</CollapsibleSection>
             </div>
             <div className="card-row">
-              {Card9()}{Card10()}
+              <CollapsibleSection id="sec-paid" title={t("7. 已付款", "7. Amount Paid")} summary={fmt(computed.c_7B)}>{Card9()}</CollapsibleSection>
+              <CollapsibleSection id="sec-net" title={t("9. 净应付", "9. Net Payable")} summary={fmt(computed.c_9A)} defaultOpen={false}>{Card10()}</CollapsibleSection>
             </div>
-            {Card11()}
-            {!isImport && InvoicesCard()}
-            {AuditChecklistCard()}
+            <CollapsibleSection id="sec-paidtotals" title={t("10 & 11. 实付合计", "10 & 11. Paid Totals")} summary={fmt(computed.c_11B)} defaultOpen={false}>{Card11()}</CollapsibleSection>
+            {!isImport && <CollapsibleSection id="sec-invoices" title={t("发票", "Invoices")} summary={`${(data.invoices ?? []).length}`}>{InvoicesCard()}</CollapsibleSection>}
+            <div id="sec-checklist" className="bank-anchor">{AuditChecklistCard()}</div>
             {AuditNotesDecisionCard()}
+
+            <div className="bank-decbar">
+              {checkSummary && <span className="bank-prog">{t("清单", "Checklist")} <b>{checkSummary}</b> {t("通过", "passed")}</span>}
+              <span className={`doc-pill ${synced ? "saved" : "draft"}`}>{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</span>
+              <div className="bank-decbtns">
+                <button className={`dec-btn approve${data.final_decision === "approve" ? " on" : ""}`} onClick={() => updateField("final_decision", "approve")}>{t("批准", "Approve")}</button>
+                <button className={`dec-btn conditional${data.final_decision === "conditional" ? " on" : ""}`} onClick={() => updateField("final_decision", "conditional")}>{t("有条件", "Conditional")}</button>
+                <button className={`dec-btn reject${data.final_decision === "reject" ? " on" : ""}`} onClick={() => {
+                  updateField("final_decision", "reject");
+                  if (failedItems.length && !(data.reject_reason || "").trim()) {
+                    updateField("reject_reason", failedItems.map((l: string) => `• ${l}`).join("\n"));
+                  }
+                }}>{t("拒绝", "Reject")}</button>
+                <button className="bank-save" onClick={saveSnapshot}>{t("保存", "Save")}</button>
+              </div>
+            </div>
           </>
         ) : tab === "import" ? (
           <>
