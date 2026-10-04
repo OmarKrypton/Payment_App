@@ -76,6 +76,28 @@ set uuid = case when file_name <> '' then 'GEN:file:' || file_name else 'GEN:row
 where (uuid is null or uuid = '' or uuid like 'legacy-%')
   and invoice_id = '';
 
+-- 6) The app uploads with ON CONFLICT (uuid), which PostgREST can only resolve
+--    against a NON-partial unique index. If an earlier setup skipped the v0.3.30
+--    migration (or created a partial index), every upload is rejected with
+--    "there is no unique or exclusion constraint matching the ON CONFLICT
+--    specification" and the cloud never grows — which is exactly how the portal
+--    ends up far behind the app. Collapse any rows that still share a uuid, then
+--    create the index the app needs.
+with dups as (
+  select id,
+         row_number() over (
+           partition by uuid
+           order by (status = 'used') desc, (raw_xml <> '') desc, id asc
+         ) as rn
+  from public.pool_invoices
+  where uuid <> ''
+)
+delete from public.pool_invoices p
+using dups d
+where p.id = d.id and d.rn > 1;
+
+create unique index if not exists idx_pool_invoices_uuid on public.pool_invoices (uuid);
+
 commit;
 
 -- Verify: this must return 0.

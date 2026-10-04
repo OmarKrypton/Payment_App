@@ -540,12 +540,41 @@ function focusNext(current: HTMLElement) {
   }
 }
 
+// Count "significant" characters (digits and the decimal point) before a caret
+// offset, so the caret can be restored after a value is re-formatted.
+const significantBefore = (s: string, caret: number): number =>
+  (s.slice(0, caret).match(/[\d.]/g) || []).length;
+const caretAfterFormat = (formatted: string, sigBefore: number): number => {
+  if (sigBefore <= 0) return 0;
+  let seen = 0;
+  for (let i = 0; i < formatted.length; i++) {
+    if (/[\d.]/.test(formatted[i])) {
+      seen++;
+      if (seen === sigBefore) return i + 1;
+    }
+  }
+  return formatted.length;
+};
+
+// The form data lives in a ref (not React state), so an input must own its text
+// while the user types or WebKit/React can drop fast keystrokes and jump the
+// caret to the end. These inputs are therefore uncontrolled: the DOM is only
+// overwritten when the incoming value truly differs (loading a document, OCR
+// prefill, programmatic set), which never happens mid-keystroke.
+function useSyncedValue<T extends HTMLInputElement | HTMLTextAreaElement>(
+  ref: { current: T | null }, value: string
+) {
+  useEffect(() => {
+    if (ref.current && ref.current.value !== value) ref.current.value = value;
+  }, [value]);
+}
+
 function Input({ label, sub, value, onChange, width, confidence, numeric, maxDecimals }: {
   label: string; sub?: string; value: string; onChange: (v: string) => void; width?: number; confidence?: number;
   numeric?: boolean; maxDecimals?: number;
 }) {
-  const [local, setLocal] = useState(value);
-  useEffect(() => setLocal(value), [value]);
+  const ref = useRef<HTMLInputElement>(null);
+  useSyncedValue(ref, value);
   const dot = confidence !== undefined ? (
     <span className={`conf-dot ${confidence >= 0.67 ? "conf-high" : confidence >= 0.33 ? "conf-med" : "conf-low"}`}
           title={`OCR confidence: ${(confidence * 100).toFixed(0)}%${confidence >= 0.67 ? " ✓" : confidence >= 0.33 ? " ~" : " ✗"}`}
@@ -555,11 +584,22 @@ function Input({ label, sub, value, onChange, width, confidence, numeric, maxDec
     <div className="field" style={width ? { maxWidth: width } : {}}>
       <label className="field-label">{dot}{label}{sub ? <><br /><span className="field-sub">{sub}</span></> : null}</label>
       <input
+        ref={ref}
         className={"field-input" + (confidence !== undefined && confidence < 0.33 ? " conf-low-input" : "")}
-        type="text" inputMode={numeric ? "decimal" : "text"} value={local}
+        type="text" inputMode={numeric ? "decimal" : "text"} defaultValue={value}
         onChange={e => {
-          const next = numeric ? formatNumberInput(e.target.value, maxDecimals) : e.target.value;
-          setLocal(next); onChange(next);
+          if (!numeric) { onChange(e.target.value); return; }
+          const el = e.currentTarget;
+          const raw = el.value;
+          const caret = el.selectionStart ?? raw.length;
+          const next = formatNumberInput(raw, maxDecimals);
+          if (next !== raw) {
+            const sig = significantBefore(raw, caret);
+            el.value = next;
+            const pos = caretAfterFormat(next, sig);
+            el.setSelectionRange(pos, pos);
+          }
+          onChange(next);
         }}
         onKeyDown={e => {
           if (e.key === 'Enter') { e.preventDefault(); focusNext(e.currentTarget); }
@@ -604,50 +644,57 @@ function Computed({ label, sub, value, highlight }: { label: string; sub?: strin
 function FastInput({ value, onChange, className, type, rows, style }: {
   value: string; onChange: (v: string) => void; className?: string; type?: string; rows?: number; style?: React.CSSProperties;
 }) {
-  const [local, setLocal] = useState(value);
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const ref = useRef<any>(null);
+  useSyncedValue(ref, value);
 
-  useEffect(() => {
-    setLocal(value);
-  }, [value]);
-
-  useEffect(() => {
-    if (rows && ref.current) {
-      ref.current.style.height = 'auto';
-      ref.current.style.height = ref.current.scrollHeight + 'px';
+  const autoHeight = useCallback(() => {
+    const el = ref.current as HTMLTextAreaElement | null;
+    if (rows && el) {
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
     }
-  }, [local, rows]);
+  }, [rows]);
+  useEffect(() => { autoHeight(); }, [value, autoHeight]);
 
   if (rows) {
     return <textarea
       ref={ref}
       className={className || "field-input"}
-      value={local}
+      defaultValue={value}
       rows={rows}
       style={{ resize: 'none', overflowY: 'hidden', minHeight: '32px', ...style }}
-      onChange={e => { setLocal(e.target.value); onChange(e.target.value); }}
+      onChange={e => { onChange(e.target.value); autoHeight(); }}
       onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
     />;
   }
-  return <input className={className || "field-input"} type={type || "text"} value={local}
+  return <input ref={ref} className={className || "field-input"} type={type || "text"} defaultValue={value}
     style={style}
-    onChange={e => { setLocal(e.target.value); onChange(e.target.value); }} />;
+    onChange={e => onChange(e.target.value)} />;
 }
 
 // Numeric input that live-formats amounts with thousand separators as the
 // user types (e.g. 1000 -> 1,000). The raw comma-free value is passed to
-// onChange so the underlying parse logic is unaffected.
+// onChange so the underlying parse logic is unaffected. It is uncontrolled so
+// fast typing never drops a digit, and the caret is kept in place while the
+// text is re-formatted.
 function NumericInput({ value, onChange, className, style, maxDecimals }: {
   value: string; onChange: (v: string) => void; className?: string; style?: React.CSSProperties; maxDecimals?: number;
 }) {
-  const [local, setLocal] = useState(value);
-  useEffect(() => { setLocal(value); }, [value]);
-  return <input className={className || "field-input"} type="text" inputMode="decimal" value={local}
+  const ref = useRef<HTMLInputElement>(null);
+  useSyncedValue(ref, value);
+  return <input ref={ref} className={className || "field-input"} type="text" inputMode="decimal" defaultValue={value}
     style={style}
     onChange={e => {
-      const raw = e.target.value;
+      const el = e.currentTarget;
+      const raw = el.value;
+      const caret = el.selectionStart ?? raw.length;
       const formatted = formatNumberInput(raw, maxDecimals);
-      setLocal(formatted);
+      if (formatted !== raw) {
+        const sig = significantBefore(raw, caret);
+        el.value = formatted;
+        const pos = caretAfterFormat(formatted, sig);
+        el.setSelectionRange(pos, pos);
+      }
       onChange(formatted);
     }} />;
 }
