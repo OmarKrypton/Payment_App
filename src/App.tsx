@@ -651,8 +651,8 @@ function Computed({ label, sub, value, highlight }: { label: string; sub?: strin
   );
 }
 
-function FastInput({ value, onChange, className, type, rows, style }: {
-  value: string; onChange: (v: string) => void; className?: string; type?: string; rows?: number; style?: React.CSSProperties;
+function FastInput({ value, onChange, className, type, rows, style, placeholder }: {
+  value: string; onChange: (v: string) => void; className?: string; type?: string; rows?: number; style?: React.CSSProperties; placeholder?: string;
 }) {
   const ref = useRef<any>(null);
   useSyncedValue(ref, value);
@@ -671,6 +671,7 @@ function FastInput({ value, onChange, className, type, rows, style }: {
       ref={ref}
       className={className || "field-input"}
       defaultValue={value}
+      placeholder={placeholder}
       rows={rows}
       style={{ resize: 'none', overflowY: 'hidden', minHeight: '32px', ...style }}
       onChange={e => { onChange(e.target.value); autoHeight(); }}
@@ -678,6 +679,7 @@ function FastInput({ value, onChange, className, type, rows, style }: {
     />;
   }
   return <input ref={ref} className={className || "field-input"} type={type || "text"} defaultValue={value}
+    placeholder={placeholder}
     style={style}
     onChange={e => onChange(e.target.value)} />;
 }
@@ -1098,6 +1100,17 @@ function App() {
     root.addEventListener("scroll", onScroll, { passive: true });
     return () => root.removeEventListener("scroll", onScroll);
   }, [tab, data.doc_type]);
+
+  // Naming the document: the serial becomes its identity/label. Typing one
+  // clears any draft number so the doc is saved under the serial.
+  const setDocSerial = (v: string) => {
+    updateField("doc_serial", v);
+    if (v && v.trim()) {
+      formRef.current = { ...formRef.current, draft_no: null };
+      setDraftNo(null);
+      queueFlush();
+    }
+  };
 
   const ocrConf = (field: string): number | undefined => {
     if (!data.ocr_meta) return undefined;
@@ -1587,14 +1600,7 @@ function App() {
   const AuditInfoCard = () => (
     <div className="card">
       <h3>{t("文件信息", "Document Information")}</h3>
-        <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={v => {
-          updateField("doc_serial", v);
-          if (v && v.trim()) {
-            formRef.current = { ...formRef.current, draft_no: null };
-            setDraftNo(null);
-            queueFlush();
-          }
-        }} />
+        <Input label={t("文档编号", "Doc Serial")} value={data.doc_serial} onChange={setDocSerial} />
         {isSerialDuplicate && (
           <div className="field-warning" style={{color: 'var(--red)'}}>
             {t("警告: 该文档编号已存在!", "Warning: This document serial already exists!")}
@@ -4123,9 +4129,7 @@ function App() {
         {/* Current document */}
         <div className="sidebar-doc">
           <div className="doc-top">
-            <span className="doc-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>
-              {data.doc_serial || draftLabel(data.draft_no ?? draftNo)}
-            </span>
+            <FastInput className="doc-serial-input" value={data.doc_serial} onChange={setDocSerial} placeholder={draftLabel(data.draft_no ?? draftNo)} />
             <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>
               {data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}
             </span>
@@ -4327,7 +4331,7 @@ function App() {
           <>
             <div className="bank-summary">
               <div className="bank-left">
-                <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
+                <FastInput className="bank-serial-input" value={data.doc_serial} onChange={setDocSerial} placeholder={draftLabel(data.draft_no ?? draftNo)} />
                 <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>{data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}</span>
               </div>
               <div className="bank-chain">
