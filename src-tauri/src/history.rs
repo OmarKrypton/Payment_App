@@ -106,6 +106,10 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN doc_status TEXT DEFAULT 'Valid'", [])
             .map_err(|e| e.to_string())?;
     }
+    // Guarantee no pool row is left with an empty / legacy uuid, and collapse any
+    // rows that are the same document as another (they used to multiply when a
+    // file without an embedded uuid was re-imported).
+    normalize_synthetic_uuids(conn)?;
     Ok(())
 }
 
@@ -258,35 +262,202 @@ pub enum PoolAddOutcome {
     Updated(i64),
 }
 
+/// A UUID is "synthetic" when it did not come from the ETA document itself:
+/// empty, a legacy backfill (`legacy-<rowid>`), or a deterministic fallback we
+/// generated (`GEN:…`). A real ETA UUID always wins over a synthetic one.
+pub fn is_synthetic_pool_uuid(uuid: &str) -> bool {
+    let u = uuid.trim();
+    u.is_empty() || u.starts_with("legacy-") || u.starts_with("GEN:")
+}
+
+fn fnv1a_hex(s: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:016x}", h)
+}
+
+/// Deterministic, never-empty UUID for an invoice whose ETA UUID is missing.
+/// Built from stable identity fields so the same document derives the same
+/// value on every device — and so it can be reproduced in SQL as
+/// `'GEN:' || invoice_id || ':' || seller_tax_id`.
+pub fn derived_pool_uuid(invoice_id: &str, seller_tax_id: &str, file_name: &str, raw_xml: &str) -> String {
+    let iid = invoice_id.trim();
+    if !iid.is_empty() {
+        return format!("GEN:{}:{}", iid, seller_tax_id.trim());
+    }
+    let fname = file_name.trim();
+    if !fname.is_empty() {
+        return format!("GEN:file:{}", fname);
+    }
+    format!("GEN:raw:{}", fnv1a_hex(raw_xml))
+}
+
+/// Never returns an empty uuid: keeps a real ETA uuid, otherwise derives one.
+pub fn resolve_pool_uuid(uuid: &str, invoice_id: &str, seller_tax_id: &str, file_name: &str, raw_xml: &str) -> String {
+    let u = uuid.trim();
+    if u.is_empty() || u.starts_with("legacy-") {
+        derived_pool_uuid(invoice_id, seller_tax_id, file_name, raw_xml)
+    } else {
+        u.to_string()
+    }
+}
+
+/// Decide which existing row an incoming invoice should update, so re-imports
+/// and cross-device syncs converge instead of duplicating:
+///   * exact uuid match -> that row;
+///   * incoming carries a real uuid while the same (invoice_id, seller_tax_id)
+///     already has only a synthetic row -> upgrade that row (write the real id);
+///   * incoming carries a synthetic uuid while the document already has a real
+///     uuid -> update the real row and keep its uuid.
+/// Genuine resubmissions (different real uuids) match nothing and get their own
+/// row, as before. Returns (row id, uuid to write).
+fn reconcile_pool_row(
+    conn: &Connection,
+    invoice_id: &str,
+    seller_tax_id: &str,
+    incoming_uuid: &str,
+) -> Result<Option<(i64, String)>, String> {
+    if let Ok(id) = conn.query_row(
+        "SELECT id FROM eta_invoices WHERE uuid = ?1",
+        params![incoming_uuid],
+        |r| r.get::<_, i64>(0),
+    ) {
+        return Ok(Some((id, incoming_uuid.to_string())));
+    }
+    if invoice_id.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, uuid FROM eta_invoices WHERE invoice_id = ?1 AND seller_tax_id = ?2")
+        .map_err(|e| e.to_string())?;
+    let candidates: Vec<(i64, String)> = stmt
+        .query_map(params![invoice_id, seller_tax_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    if is_synthetic_pool_uuid(incoming_uuid) {
+        if let Some((id, existing)) = candidates.iter().find(|(_, u)| !is_synthetic_pool_uuid(u)) {
+            return Ok(Some((*id, existing.clone())));
+        }
+    } else if let Some((id, _)) = candidates.iter().find(|(_, u)| is_synthetic_pool_uuid(u)) {
+        return Ok(Some((*id, incoming_uuid.to_string())));
+    }
+    Ok(None)
+}
+
+/// Carry a claim (used status / delete request) from a row about to be removed
+/// onto the row that survives, so de-duplication never loses a claim.
+fn merge_claim_into(conn: &Connection, from_id: i64, to_id: i64) -> Result<(), String> {
+    let (status, snap, label, del_at, del_by): (String, Option<i64>, String, Option<String>, String) = conn
+        .query_row(
+            "SELECT status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by FROM eta_invoices WHERE id = ?1",
+            params![from_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    if status == "used" {
+        let to_used: bool = conn
+            .query_row("SELECT status = 'used' FROM eta_invoices WHERE id = ?1", params![to_id], |r| r.get(0))
+            .unwrap_or(false);
+        if !to_used {
+            conn.execute(
+                "UPDATE eta_invoices SET status = 'used', used_by_snapshot_id = ?2, used_by_label = ?3 WHERE id = ?1",
+                params![to_id, snap, label],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    if del_at.is_some() {
+        conn.execute(
+            "UPDATE eta_invoices SET delete_requested_at = ?2, delete_requested_by = ?3 WHERE id = ?1 AND delete_requested_at IS NULL",
+            params![to_id, del_at, del_by],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// One-time repair for databases written before UUIDs were guaranteed non-empty:
+/// give every synthetic row a deterministic uuid, drop rows that are the same
+/// document as a real-uuid row (or as another synthetic row), and keep claims.
+/// Returns how many rows were changed or removed.
+pub fn normalize_synthetic_uuids(conn: &Connection) -> Result<usize, String> {
+    let rows: Vec<(i64, String, String, String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT id, invoice_id, seller_tax_id, file_name, raw_xml FROM eta_invoices WHERE uuid IS NULL OR uuid = '' OR uuid LIKE 'legacy-%'")
+            .map_err(|e| e.to_string())?;
+        let collected = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        collected
+    };
+    let mut changed = 0usize;
+    for (id, invoice_id, seller_tax_id, file_name, raw_xml) in rows {
+        if !invoice_id.trim().is_empty() {
+            let real: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM eta_invoices WHERE id <> ?1 AND invoice_id = ?2 AND seller_tax_id = ?3 \
+                     AND uuid <> '' AND uuid NOT LIKE 'legacy-%' AND uuid NOT LIKE 'GEN:%' \
+                     ORDER BY (status = 'used') DESC, id ASC LIMIT 1",
+                    params![id, invoice_id, seller_tax_id],
+                    |r| r.get(0),
+                )
+                .ok();
+            if let Some(keep) = real {
+                merge_claim_into(conn, id, keep)?;
+                conn.execute("DELETE FROM eta_invoices WHERE id = ?1", params![id])
+                    .map_err(|e| e.to_string())?;
+                changed += 1;
+                continue;
+            }
+        }
+        let derived = derived_pool_uuid(&invoice_id, &seller_tax_id, &file_name, &raw_xml);
+        let clash: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM eta_invoices WHERE id <> ?1 AND uuid = ?2",
+                params![id, derived],
+                |r| r.get(0),
+            )
+            .ok();
+        if let Some(keep) = clash {
+            merge_claim_into(conn, id, keep)?;
+            conn.execute("DELETE FROM eta_invoices WHERE id = ?1", params![id])
+                .map_err(|e| e.to_string())?;
+        } else {
+            conn.execute("UPDATE eta_invoices SET uuid = ?2 WHERE id = ?1", params![id, derived])
+                .map_err(|e| e.to_string())?;
+        }
+        changed += 1;
+    }
+    Ok(changed)
+}
+
 pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_name: &str) -> Result<PoolAddOutcome, String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let lines_json = serde_json::to_string(&invoice.lines).unwrap_or_else(|_| "[]".to_string());
     let incoming_status = if invoice.doc_status.is_empty() { "Valid".to_string() } else { invoice.doc_status.clone() };
 
-    // Identity is the ETA document UUID.  The same invoice (same internalID +
-    // seller) may be resubmitted with a different UUID (e.g. a corrected copy),
-    // and each attempt keeps its own row so a rejected/cancelled attempt never
-    // hides a valid one.  When the EXACT same uuid is seen again (a re-import or
-    // a genuine state change of that document, e.g. Valid -> Cancelled or vice
-    // versa) the row is refreshed in place with the newest data and status.
-    let existing_id: Option<i64> = if invoice.uuid.is_empty() {
-        None
-    } else {
-        conn.query_row(
-            "SELECT id FROM eta_invoices WHERE uuid = ?1",
-            params![invoice.uuid],
-            |r| r.get(0),
-        )
-        .ok()
-    };
+    // Identity is the ETA document UUID, and it is NEVER empty: when the file
+    // carries no uuid we derive a deterministic one (GEN:…) so a re-import
+    // updates the same row instead of piling up duplicates.
+    let resolved = resolve_pool_uuid(&invoice.uuid, &invoice.invoice_id, &invoice.seller_tax_id, file_name, raw_xml);
 
-    if let Some(id) = existing_id {
+    // Reconcile so a real ETA uuid always wins over a synthetic one and a
+    // synthetic uuid never adds a second row for a document that already has
+    // its real uuid. Genuine resubmissions (different real uuids) still get
+    // their own row.
+    if let Some((id, final_uuid)) = reconcile_pool_row(conn, &invoice.invoice_id, &invoice.seller_tax_id, &resolved)? {
         conn.execute(
-            "UPDATE eta_invoices SET invoice_id=?2, seller_tax_id=?3, seller_name=?4, buyer_tax_id=?5, buyer_name=?6,
-             issue_date=?7, currency=?8, net_amount=?9, total_vat=?10, total_wht=?11, grand_total=?12,
-             lines_json=?13, raw_xml=?14, file_name=?15, doc_status=?16 WHERE id=?1",
+            "UPDATE eta_invoices SET invoice_id=?2, uuid=?3, seller_tax_id=?4, seller_name=?5, buyer_tax_id=?6, buyer_name=?7,
+             issue_date=?8, currency=?9, net_amount=?10, total_vat=?11, total_wht=?12, grand_total=?13,
+             lines_json=?14, raw_xml=?15, file_name=?16, doc_status=?17 WHERE id=?1",
             params![
-                id, invoice.invoice_id, invoice.seller_tax_id, invoice.seller_name, invoice.buyer_tax_id,
+                id, invoice.invoice_id, final_uuid, invoice.seller_tax_id, invoice.seller_name, invoice.buyer_tax_id,
                 invoice.buyer_name, invoice.issue_date, invoice.currency, invoice.net_amount,
                 invoice.total_vat, invoice.total_wht, invoice.grand_total, lines_json,
                 raw_xml, file_name, incoming_status
@@ -299,7 +470,7 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
         "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'available', ?17)",
         params![
-            invoice.invoice_id, invoice.uuid, invoice.seller_tax_id, invoice.seller_name,
+            invoice.invoice_id, resolved, invoice.seller_tax_id, invoice.seller_name,
             invoice.buyer_tax_id, invoice.buyer_name, invoice.issue_date, invoice.currency,
             invoice.net_amount, invoice.total_vat, invoice.total_wht, invoice.grand_total,
             lines_json, raw_xml, file_name, incoming_status, now
@@ -552,31 +723,31 @@ pub fn reject_pool_delete(conn: &Connection, id: i64) -> Result<(), String> {
 // Identity is the ETA document uuid: a different-uuid resubmission inserts its
 // own row (mirroring add_to_pool), while the same uuid refreshes that row.
 pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(), String> {
+    // Never store an empty uuid, and reconcile against local rows so a real ETA
+    // uuid wins over a synthetic one and a synthetic remote row does not create
+    // a second copy of a document we already hold under its real uuid.
+    let resolved = resolve_pool_uuid(&inv.uuid, &inv.invoice_id, &inv.seller_tax_id, &inv.file_name, &inv.raw_xml);
+    if let Some((id, final_uuid)) = reconcile_pool_row(conn, &inv.invoice_id, &inv.seller_tax_id, &resolved)? {
+        conn.execute(
+            "UPDATE eta_invoices SET invoice_id=?2, uuid=?3, seller_tax_id=?4, seller_name=?5, buyer_tax_id=?6, buyer_name=?7,
+             issue_date=?8, currency=?9, net_amount=?10, total_vat=?11, total_wht=?12, grand_total=?13,
+             lines_json=?14, raw_xml = CASE WHEN ?15 = '' THEN raw_xml ELSE ?15 END, file_name=?16,
+             doc_status = CASE WHEN ?17 IS NULL OR ?17 = '' THEN doc_status ELSE ?17 END,
+             status=?18, used_by_label=?19, delete_requested_at=?20, delete_requested_by=?21 WHERE id=?1",
+            params![
+                id, inv.invoice_id, final_uuid, inv.seller_tax_id, inv.seller_name, inv.buyer_tax_id, inv.buyer_name,
+                inv.issue_date, inv.currency, inv.net_amount, inv.total_vat, inv.total_wht, inv.grand_total,
+                inv.lines_json, inv.raw_xml, inv.file_name, inv.doc_status, inv.status, inv.used_by_label,
+                inv.delete_requested_at, inv.delete_requested_by
+            ],
+        ).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     conn.execute(
         "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
-         ON CONFLICT(uuid) WHERE uuid <> '' DO UPDATE SET
-            invoice_id = excluded.invoice_id,
-            seller_tax_id = excluded.seller_tax_id,
-            seller_name = excluded.seller_name,
-            buyer_tax_id = excluded.buyer_tax_id,
-            buyer_name = excluded.buyer_name,
-            issue_date = excluded.issue_date,
-            currency = excluded.currency,
-            net_amount = excluded.net_amount,
-            total_vat = excluded.total_vat,
-            total_wht = excluded.total_wht,
-            grand_total = excluded.grand_total,
-            lines_json = excluded.lines_json,
-            raw_xml = CASE WHEN excluded.raw_xml = '' THEN eta_invoices.raw_xml ELSE excluded.raw_xml END,
-            file_name = excluded.file_name,
-            doc_status = CASE WHEN excluded.doc_status IS NULL OR excluded.doc_status = '' THEN eta_invoices.doc_status ELSE excluded.doc_status END,
-            status = excluded.status,
-            used_by_label = excluded.used_by_label,
-            delete_requested_at = excluded.delete_requested_at,
-            delete_requested_by = excluded.delete_requested_by",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
-            inv.invoice_id, inv.uuid, inv.seller_tax_id, inv.seller_name,
+            inv.invoice_id, resolved, inv.seller_tax_id, inv.seller_name,
             inv.buyer_tax_id, inv.buyer_name, inv.issue_date, inv.currency,
             inv.net_amount, inv.total_vat, inv.total_wht, inv.grand_total,
             inv.lines_json, inv.raw_xml, inv.file_name, inv.doc_status,
@@ -715,5 +886,68 @@ mod pool_supersede_tests {
 
         // Seller B is unaffected
         assert_eq!(row(&conn, "UUID-B1").1, "Valid");
+    }
+
+    #[test]
+    fn empty_uuid_is_derived_and_reimport_updates() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        let o = add_to_pool(&conn, &sample("555", "", "Valid"), "<x/>", "555.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Inserted(_)));
+        let uuid: String = conn
+            .query_row("SELECT uuid FROM eta_invoices WHERE invoice_id='555'", [], |r| r.get(0))
+            .unwrap();
+        assert!(!uuid.is_empty(), "uuid must never be empty");
+
+        // Re-import the same document, as if the browser named it "555 (1).xml".
+        let o = add_to_pool(&conn, &sample("555", "", "Valid"), "<x/>", "555 (1).xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Updated(_)), "re-import must update, not duplicate");
+        assert_eq!(row_count_where(&conn, "555"), 1);
+    }
+
+    #[test]
+    fn real_uuid_upgrades_a_synthetic_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        add_to_pool(&conn, &sample("777", "", "Valid"), "<x/>", "777.xml").unwrap();
+        // A later import of the same document carries the real ETA uuid: it must
+        // upgrade the synthetic row in place, not add a second row.
+        let o = add_to_pool(&conn, &sample("777", "REALUUID777AAAAAAAAAAAAAAAA", "Valid"), "<x/>", "777.xml").unwrap();
+        assert!(matches!(o, PoolAddOutcome::Updated(_)));
+        assert_eq!(row_count_where(&conn, "777"), 1);
+        assert_eq!(row(&conn, "REALUUID777AAAAAAAAAAAAAAAA").0, "777");
+    }
+
+    #[test]
+    fn normalize_backfills_and_collapses_synthetic_duplicates() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // Simulate a pre-fix DB with two copies of the same document and no
+        // uuid, one of them already claimed.
+        conn.execute(
+            "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, created_at) \
+             VALUES ('999','','111','S','2','B','d','EGP',1,0,0,1,'[]','','a.xml','Valid','used','t')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, created_at) \
+             VALUES ('999','','111','S','2','B','d','EGP',1,0,0,1,'[]','','999 (1).xml','Valid','available','t')",
+            [],
+        ).unwrap();
+
+        let changed = normalize_synthetic_uuids(&conn).unwrap();
+        assert!(changed >= 1);
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM eta_invoices WHERE invoice_id='999'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "duplicates must collapse to one row");
+        let (uuid, status): (String, String) = conn
+            .query_row("SELECT uuid, status FROM eta_invoices WHERE invoice_id='999'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert!(!uuid.is_empty());
+        assert_eq!(status, "used", "claim must survive the merge");
     }
 }

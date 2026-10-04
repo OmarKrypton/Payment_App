@@ -141,16 +141,18 @@ struct PoolImportResult {
 }
 
 /// Best-effort recovery for exports that omit <uuid>/<internalId> in the XML
-/// wrapper: browser-extension bundles name each file with the ETA UUID as the
-/// final dash-separated token of the file stem.
+/// wrapper. Browser-extension bundles name each file with the ETA UUID as a
+/// token (e.g. "<uuid>.xml" or "[Cancelled] - <uuid>.xml"), and re-downloading
+/// adds a " (1)" copy suffix. Find the longest 20+ character alphanumeric token
+/// so the real uuid is still recovered through status prefixes and copy
+/// suffixes. (ETA uuids are 26 chars; invoice ids are shorter, so a 20-char
+/// floor avoids mistaking one for the other.)
 fn uuid_from_file_name(path: &str) -> Option<String> {
     let stem = std::path::Path::new(path).file_stem()?.to_string_lossy().to_string();
-    let token = stem.rsplit('-').next()?.trim().to_string();
-    if token.len() >= 10 && token.chars().all(|c| c.is_ascii_alphanumeric()) {
-        Some(token)
-    } else {
-        None
-    }
+    stem.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() >= 20)
+        .max_by_key(|t| t.len())
+        .map(|t| t.to_string())
 }
 
 #[tauri::command]

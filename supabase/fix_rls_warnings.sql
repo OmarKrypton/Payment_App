@@ -13,7 +13,11 @@
 -- than once per row. UPDATE policies also set WITH CHECK explicitly so the write
 -- side is covered (previously it silently defaulted to the USING expression).
 --
--- Safe to run more than once.
+-- Safe to run more than once. Wrapped in a transaction so the drop/create of
+-- each policy is atomic (RLS fails closed during the swap, but a transaction
+-- removes even that brief window).
+
+begin;
 
 -- ── pool_invoices ───────────────────────────────────────────────────────────
 drop policy if exists "pool read"   on public.pool_invoices;
@@ -71,3 +75,5 @@ create policy "manual suppliers update" on public.manual_suppliers
 
 create policy "manual suppliers delete" on public.manual_suppliers
   for delete to authenticated using ((select auth.uid()) is not null);
+
+commit;

@@ -226,6 +226,14 @@ const importSplitIncluded = (name: string, hasTaxId: boolean): boolean => {
   return hasTaxId;                            // otherwise only if it carries a tax id
 };
 
+// Mirrors the Rust pool uuid rules (history.rs): a uuid is "synthetic" when it
+// was not read from the ETA document itself — empty, a legacy backfill
+// (`legacy-<id>`), or a deterministic fallback we generated (`GEN:…`).
+const isSyntheticPoolUuid = (u: unknown): boolean => {
+  const s = String(u ?? "").trim();
+  return s === "" || s.startsWith("legacy-") || s.startsWith("GEN:");
+};
+
 // When the same seller tax id is captured in both a truncated and full form
 // (e.g. "533446" and "533446333"), keep only the complete/longest id.
 const dedupeTaxIds = (set: Set<string>): string[] => {
@@ -2837,9 +2845,21 @@ function App() {
       // needs pushing when its uuid is entirely missing from the cloud, or when
       // it claims (used) the invoice and the cloud doesn't reflect that claim.
       const remoteByUuid = new Map(remoteMeta.map((r) => [r.uuid, r]));
+      // Real-uuid cloud rows keyed by document, so a local synthetic-uuid row is
+      // not uploaded as a second copy of a document the cloud already holds
+      // under its real uuid (the pull below then adopts the real uuid).
+      const remoteRealByDoc = new Map<string, any>();
+      for (const r of remoteMeta) {
+        if (!isSyntheticPoolUuid(r.uuid)) remoteRealByDoc.set(`${r.invoice_id}|${r.seller_tax_id}`, r);
+      }
       const toPush = localAll.filter((l) => {
         const r = l.uuid ? remoteByUuid.get(l.uuid) : undefined;
-        if (!r) return true;
+        if (!r) {
+          if (isSyntheticPoolUuid(l.uuid) && remoteRealByDoc.has(`${l.invoice_id}|${l.seller_tax_id}`)) {
+            return false;
+          }
+          return true;
+        }
         if (l.status === "used") {
           return r.status !== "used" || (r.used_by_label || "") !== (l.used_by_label || "");
         }
@@ -2858,12 +2878,25 @@ function App() {
           await upsertPoolInvoicesRemote(toPush);
         } catch (e) { console.error("upsert pool remote failed", e); info.error = `upsert: ${(e as any)?.message || e}`; }
       }
+      // 1b) Drop cloud rows that still carry a synthetic uuid for a document we
+      //     now hold locally under its real uuid, so they stop reappearing as
+      //     duplicates. They are excluded from the pull below.
+      const purgedSynthetic = new Set<string>();
+      const staleCloudSynthetic = remoteMeta.filter((r) =>
+        isSyntheticPoolUuid(r.uuid) &&
+        localAll.some((l) => !isSyntheticPoolUuid(l.uuid) && l.invoice_id === r.invoice_id && l.seller_tax_id === r.seller_tax_id)
+      );
+      for (const r of staleCloudSynthetic) {
+        try { await deletePoolInvoiceRemote(r.uuid); purgedSynthetic.add(r.uuid); }
+        catch (e) { console.error("pool synthetic cleanup failed", e); }
+      }
       // 2) Pull only the remote rows that differ from local state (missing
       //    locally, or claim state changed). This avoids re-downloading the
       //    entire pool (with full raw_xml) on every sync, which was slowing
       //    the app down as the pool grew.
       const localByUuid = new Map(localAll.map((l) => [l.uuid, l]));
       const changedRemote = remoteMeta.filter((r) => {
+        if (purgedSynthetic.has(r.uuid)) return false;
         const l = r.uuid ? localByUuid.get(r.uuid) : undefined;
         if (!l) return true;
         return (l.status || "available") !== (r.status || "available") ||
