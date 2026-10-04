@@ -4189,7 +4189,7 @@ function App() {
             </span>
           </div>
           <div className="doc-context">
-            {`${(isImport ? (data.import_entries ?? []) : (data.invoices ?? [])).length} ${t("发票", "invoices")}`}
+            {`${(isImport ? (data.import_entries ?? []).filter((e: any) => e.attached_invoice) : (data.invoices ?? [])).length} ${t("发票", "invoices")}`}
             {data.buyer_tax_id ? ` · ${data.buyer_tax_id}` : ""}
           </div>
           <div className="doc-chips">
@@ -4381,23 +4381,6 @@ function App() {
       <main className="content" ref={contentRef}>
         {tab === "bank" ? (
           <>
-            <div className="bank-summary">
-              <div className="bank-left">
-                <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
-                <span className={`doc-pill ${docPill.cls}`}>{docPill.label}</span>
-              </div>
-              <div className="bank-chain">
-                <div className="bank-cstep"><span className="bk">{t("含税结算", "Settlement incl. VAT")}</span><span className="bv green">{fmt(computed.c_1G)}</span></div>
-                <span className="bank-op">−</span>
-                <div className="bank-cstep"><span className="bk">{t("扣款合计", "Deductions")}</span><span className="bv orange">{fmt(computed.total_deductions)}</span></div>
-                <span className="bank-op">=</span>
-                <div className="bank-cstep"><span className="bk">{t("应付净额 (9A)", "Net Payable (9A)")}</span><span className={`bv ${computed.c_9A < 0 ? "red" : "green"}`}>{fmt(computed.c_9A)}</span></div>
-                <span className="bank-op">−</span>
-                <div className="bank-cstep"><span className="bk">{t("本期实付 (10A)", "Current Paid (10A)")}</span><span className={`bv${computed.c_10A < 0 ? " red" : ""}`}>{fmt(computed.c_10A)}</span></div>
-              </div>
-              <div className="bank-unpaid">{t("未付余额", "Unpaid balance")}<b>{fmt(computed.c_9A - computed.c_10A)}</b></div>
-            </div>
-
             <div className="bank-jump">
               {([
                 ["sec-info", t("文件", "Document")],
