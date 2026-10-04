@@ -2183,3 +2183,33 @@ body {
 .dec-btn.approve.on { background: var(--green); border-color: var(--green); color: #fff; }
 .dec-btn.conditional.on { background: var(--orange); border-color: var(--orange); color: #fff; }
 .dec-btn.reject.on { background: var(--red); border-color: var(--red); color: #fff; }
+
+/* Import tab: summary switch + refined Service Providers table */
+.bank-right { justify-self: end; display: flex; align-items: center; gap: 8px; }
+.bv.violet { color: #7c3aed; }
+
+.phead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 9px; }
+.phead h3 { margin: 0; }
+.pmeta { font-size: 10.5px; color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+
+.prov-table { overflow-x: auto; }
+.prov-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.6fr) 104px 92px 46px 72px 72px 46px 96px 96px 104px 104px 30px;
+  gap: 6px; align-items: center; padding: 6px 2px; border-top: 1px solid var(--border);
+}
+.prov-head { border-top: 0; padding-top: 0; padding-bottom: 4px; }
+.prov-h { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prov-row:not(.prov-head):hover { background: var(--bg-input-hover); }
+.prov-row:not(.prov-head):nth-child(even) { background: rgba(15, 23, 42, 0.015); }
+.prov-svc { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.prov-svc .attached-pill { flex: none; }
+.prov-input { border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); background: var(--bg-input); width: 100%; min-width: 0; text-align: right; }
+.prov-input.l { text-align: left; }
+.prov-input:focus { outline: none; border-color: var(--border-focus); background: #fff; }
+.prov-sel { border: 1px solid var(--border); border-radius: 7px; padding: 6px 4px; font-size: 11px; background: var(--bg-input); color: var(--text-primary); width: 100%; min-width: 0; }
+.prov-chk { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.prov-out { font-family: var(--font-mono); font-size: 11.5px; font-weight: 700; color: var(--green); background: var(--green-bg); border: 1px solid #bbf7d0; border-radius: 7px; padding: 6px 8px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prov-out.gray { color: var(--text-secondary); background: var(--bg-input); border-color: var(--border); }
+.prov-del { border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 7px; padding: 5px 7px; font-size: 12px; }
+.prov-del:hover { color: var(--red); background: var(--red-bg); border-color: #fecaca; }

@@ -1094,7 +1094,7 @@ function App() {
 
   // Bank tab: highlight the section chip nearest the top of the scroll area.
   useEffect(() => {
-    if (tab !== "bank") return;
+    if (tab !== "bank" && tab !== "import") return;
     const root = contentRef.current;
     if (!root) return;
     const anchors = Array.from(root.querySelectorAll<HTMLElement>(".bank-anchor"));
@@ -1513,6 +1513,28 @@ function App() {
   const isImport = data.doc_type === "import";
   const isRemainder = !!data.remainder_of;
   const availablePoolCount = poolList.filter((p: any) => p.status === "available").length;
+  // EGP vs foreign-currency service split for the Import tab (shared by the
+  // summary bar and the Import tab body). Lines without an A–D code or a
+  // 9-digit tax id — and Nafeza/Commercial/Form 4–6 — are excluded.
+  const importSplit = (() => {
+    let egpInclVat = 0, usdInclVat = 0, usdEgpInclVat = 0;
+    for (const e of (data.import_entries ?? [])) {
+      if (e.exclude_split || !importSplitIncluded(e.service_name, importEntryHasTaxId(e))) continue;
+      const amt = toNum(e.amount);
+      const rate = toNum(e.rate);
+      const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
+      if (rate > 0) {
+        const vatUsd = amt * vatRate / 100;
+        const vatEgp = Math.round(amt * rate * vatRate / 100 * 100) / 100;
+        usdInclVat += amt + vatUsd;
+        usdEgpInclVat += amt * rate + vatEgp;
+      } else {
+        egpInclVat += amt + Math.round(amt * vatRate / 100 * 100) / 100;
+      }
+    }
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    return { egpInclVat: r2(egpInclVat), usdInclVat: r2(usdInclVat), usdEgpInclVat: r2(usdEgpInclVat) };
+  })();
   const cl = data.checklist || {};
   const setCheck = (key: string, s: "pass" | "fail" | "na" | "") =>
     updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), s } });
@@ -1768,34 +1790,18 @@ function App() {
   );
 
   const ImportTab = () => {
-    // Split service-provider entries into EGP-billed (no exchange rate) and
-    // foreign-currency (a rate is entered) so each portion can be summarised.
-    // Entries marked "exclude" (Nafeza, Commercial invoice, Form 4, …) are left
-    // out of both totals.
-    const importSplit = (() => {
-      let egpInclVat = 0;    // EGP services total + VAT
-      let usdInclVat = 0;    // foreign-currency services total + VAT (in USD)
-      let usdEgpInclVat = 0; // the same total in EGP
+    // Per-provider split counts shown in the header.
+    const provStats = (() => {
+      let egp = 0, usd = 0, excl = 0;
       for (const e of (data.import_entries ?? [])) {
-        if (e.exclude_split || !importSplitIncluded(e.service_name, importEntryHasTaxId(e))) continue;
-        const amt = toNum(e.amount);
-        const rate = toNum(e.rate);
-        const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
-        if (rate > 0) {
-          const vatUsd = amt * vatRate / 100;
-          const vatEgp = Math.round(amt * rate * vatRate / 100 * 100) / 100;
-          usdInclVat += amt + vatUsd;
-          usdEgpInclVat += amt * rate + vatEgp;
-        } else {
-          egpInclVat += amt + Math.round(amt * vatRate / 100 * 100) / 100;
-        }
+        if (e.exclude_split || !importSplitIncluded(e.service_name, importEntryHasTaxId(e))) { excl += 1; continue; }
+        if (toNum(e.rate) > 0) usd += 1; else egp += 1;
       }
-      const r2 = (n: number) => Math.round(n * 100) / 100;
-      return { egpInclVat: r2(egpInclVat), usdInclVat: r2(usdInclVat), usdEgpInclVat: r2(usdEgpInclVat) };
+      return { total: (data.import_entries ?? []).length, egp, usd, excl };
     })();
     return (
       <div className="import-tab">
-        <div className="card">
+        <div className="card bank-anchor" id="sec-imp-invoice">
           <h3>{t("进口文件信息", "Import Document Info")}</h3>
 
           {/* Commercial Invoice Row */}
@@ -1838,71 +1844,77 @@ function App() {
             </div>
           </div>
         </div>
-          <div className="card" style={{overflowX:'auto'}}>
-          <h3>{t("服务商", "Service Providers")}</h3>
-            <div className="invoice-header" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,fontSize:11,fontWeight:600,marginBottom:8,alignItems:'end'}}>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("服务名称", "Service")}</div>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("金额", "Amount")}</div>
-              <div style={{paddingTop:14,paddingLeft:10,display:'flex',alignItems:'center',gap:4}}>
-                {t("汇率", "Rate")}
-                <input type="checkbox" checked={rateVisible} onChange={() => setRateVisible(v => !v)} style={{width:14,height:14,accentColor:'var(--accent)',cursor:'pointer'}} title={rateVisible ? "Showing EGP (rate applied)" : "Showing USD (rate ignored)"} />
-              </div>
-              <div style={{paddingTop:14,textAlign:'center'}}>{t("免WHT", "Free")}</div>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT率", "VAT")}</div>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT率", "WHT")}</div>
-              <div style={{paddingTop:14,textAlign:'center'}}>{t("临时工", "Temp")}</div>
-              <div></div> {/* Spacer header */}
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("VAT", "VAT")}</div>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("WHT", "WHT")}</div>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("净额", "Net")}</div>
-              <div style={{paddingTop:14,paddingLeft:10}}>{t("含税合计", "+VAT")}</div>
-              <div></div>
+          <div className="card bank-anchor" id="sec-imp-providers">
+            <div className="phead">
+              <h3>{t("服务商", "Service Providers")}</h3>
+              <span className="pmeta">
+                {provStats.total} {t("项", "providers")} · {provStats.egp} EGP · {provStats.usd} USD{provStats.excl ? ` · ${provStats.excl} ${t("已排除", "excluded")}` : ""}
+              </span>
             </div>
-          {(data.import_entries ?? []).map((e: any, i: number) => {
-            const amt = toNum(e.amount);
-            const rate = toNum(e.rate) || 1;
-            const egpAmt = amt * rate;
-            const displayAmt = rateVisible ? egpAmt : amt;
-            const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
-            const vat = Math.round(displayAmt * vatRate / 100 * 100) / 100;
-            const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
-            const wht = e.free_wht ? 0 : Math.round(displayAmt * whtRate / 100 * 100) / 100;
-            return (
-              <div key={i} className="invoice-row" style={{display:'grid',gridTemplateColumns:'minmax(200px, 1.5fr) minmax(110px, 1fr) 80px 50px 80px 80px 50px 1fr 100px 100px 110px 110px 30px',gap:6,alignItems:'center'}}>
-                <div style={{minWidth:0}}>
-                  {e.attached_invoice && (
-                    <div className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${e.attached_invoice}`}>✓ {e.attached_invoice}</div>
-                  )}
-                  <FastInput value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} rows={1} />
-                </div>
-                <NumericInput value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
-                <NumericInput value={e.rate} onChange={v => updImportEntry(i, "rate", v)} maxDecimals={4} style={rateVisible ? {} : {opacity: 0.4, textDecoration: 'line-through'}} />
-                <input type="checkbox" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} style={{margin:'auto'}} />
-                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.vat_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
-                  {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <select className="field-select" style={{padding:'7px 4px 7px 8px',fontSize:11}} value={e.wht_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
-                  {["0%","1%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <input type="checkbox" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} style={{margin:'auto'}} />
-                <div></div> {/* Spacer cell */}
-                <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(vat)}</div>
-                <div className="computed-value" style={{fontSize:11,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(displayAmt + vat - wht)}</div>
-                <div className="computed-value" style={{fontSize:11,fontWeight:600,padding:'7px 10px',wordBreak:'break-all'}}>{fmtShort(displayAmt + vat)}</div>
-                <button className="btn-danger" style={{padding:'7px 10px'}} onClick={() => delImportEntry(i)}>✕</button>
+            <div className="prov-table">
+              <div className="prov-row prov-head">
+                <div className="prov-h">{t("服务名称", "Service")}</div>
+                <div className="prov-h">{t("金额", "Amount")}</div>
+                <div className="prov-h">{t("汇率", "Rate")}</div>
+                <div className="prov-h" style={{textAlign:'center'}}>{t("免WHT", "Free")}</div>
+                <div className="prov-h">{t("VAT率", "VAT")}</div>
+                <div className="prov-h">{t("WHT率", "WHT")}</div>
+                <div className="prov-h" style={{textAlign:'center'}}>{t("临时工", "Temp")}</div>
+                <div className="prov-h">{t("VAT", "VAT")}</div>
+                <div className="prov-h">{t("WHT", "WHT")}</div>
+                <div className="prov-h">{t("净额", "Net")}</div>
+                <div className="prov-h">{t("含税合计", "+VAT")}</div>
+                <div className="prov-h"></div>
               </div>
-            );
-          })}
-          <div style={{display:'flex',gap:8,marginTop:8}}>
-          <button className="btn-add" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
-          <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
-          <button className="btn-validation" onClick={openValidationResults} disabled={!(data.import_entries ?? []).some(e => e.attached_invoice) && !(etaResult && etaResult.length > 0)}>
-            {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
-          </button>
-        </div>
-        </div>
-        <div className="card">
+              {(data.import_entries ?? []).map((e: any, i: number) => {
+                const amt = toNum(e.amount);
+                const rate = toNum(e.rate) || 1;
+                const egpAmt = amt * rate;
+                const displayAmt = rateVisible ? egpAmt : amt;
+                const vatRate = parseFloat((e.vat_rate || "0%").replace('%', '')) || 0;
+                const vat = Math.round(displayAmt * vatRate / 100 * 100) / 100;
+                const whtRate = parseFloat((e.wht_rate || "0%").replace('%', '')) || 0;
+                const wht = e.free_wht ? 0 : Math.round(displayAmt * whtRate / 100 * 100) / 100;
+                return (
+                  <div key={i} className="prov-row">
+                    <div className="prov-svc">
+                      {e.attached_invoice && (
+                        <span className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${e.attached_invoice}`}>✓ {e.attached_invoice}</span>
+                      )}
+                      <FastInput className="prov-input l" value={e.service_name} onChange={v => updImportEntry(i, "service_name", v)} />
+                    </div>
+                    <NumericInput className="prov-input" value={e.amount} onChange={v => updImportEntry(i, "amount", v)} />
+                    <NumericInput className="prov-input" value={e.rate} onChange={v => updImportEntry(i, "rate", v)} maxDecimals={4} style={rateVisible ? {} : {opacity: 0.5, textDecoration: 'line-through'}} />
+                    <div style={{textAlign:'center'}}>
+                      <input type="checkbox" className="prov-chk" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} />
+                    </div>
+                    <select className="prov-sel" value={e.vat_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
+                      {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <select className="prov-sel" value={e.wht_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
+                      {["0%","1%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <div style={{textAlign:'center'}}>
+                      <input type="checkbox" className="prov-chk" checked={e.temp_labour} onChange={() => updImportEntry(i, "temp_labour", !e.temp_labour)} />
+                    </div>
+                    <div className="prov-out gray">{fmtShort(vat)}</div>
+                    <div className="prov-out gray">{fmtShort(wht)}</div>
+                    <div className="prov-out">{fmtShort(displayAmt + vat - wht)}</div>
+                    <div className="prov-out">{fmtShort(displayAmt + vat)}</div>
+                    <button className="prov-del" onClick={() => delImportEntry(i)} title={t("删除", "Delete")}>✕</button>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:'flex',gap:8,marginTop:10}}>
+              <button className="btn-add" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
+              <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+              <button className="btn-validation" onClick={openValidationResults} disabled={!(data.import_entries ?? []).some(e => e.attached_invoice) && !(etaResult && etaResult.length > 0)}>
+                {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
+              </button>
+            </div>
+          </div>
+        <div className="card bank-anchor" id="sec-imp-summary">
           <h3>{t("进口汇总", "Import Summary")}</h3>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))',gap:16,marginTop:12}}>
             <Computed label={t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")} value={computed.import_grand_total} highlight />
@@ -4443,9 +4455,40 @@ function App() {
           </>
         ) : tab === "import" ? (
           <>
-            {AuditInfoCard()}
+            <div className="bank-summary">
+              <div className="bank-left">
+                <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
+                <span className={`doc-pill ${docPill.cls}`}>{docPill.label}</span>
+              </div>
+              <div className="bank-chain">
+                <div className="bank-cstep"><span className="bk">{t("总额 (金额+VAT)", "Grand Total")}</span><span className="bv green">{fmt(computed.import_grand_total)}</span></div>
+                <div className="bank-cstep"><span className="bk">{t("净额 (总额-WHT)", "Grand Net")}</span><span className="bv green">{fmt(computed.import_grand_net)}</span></div>
+                <div className="bank-cstep"><span className="bk">{t("EGP 金额", "EGP amount")}</span><span className="bv">{fmt(importSplit.egpInclVat)}</span></div>
+                <div className="bank-cstep"><span className="bk">{t("USD 金额", "USD amount")}</span><span className="bv violet">{fmtUsd(importSplit.usdInclVat)}</span></div>
+              </div>
+              <div className="bank-right">
+                <div className="sidebar-seg" style={{margin:0}}>
+                  <button className={rateVisible ? "on" : ""} onClick={() => setRateVisible(true)}>{t("EGP", "EGP")}</button>
+                  <button className={!rateVisible ? "on" : ""} onClick={() => setRateVisible(false)}>{t("USD", "USD")}</button>
+                </div>
+              </div>
+            </div>
+            <div className="bank-jump">
+              {([
+                ["sec-imp-info", t("文件", "Document")],
+                ["sec-imp-invoice", t("发票与费用", "Invoice & Costs")],
+                ["sec-imp-providers", t("服务商", "Providers")],
+                ["sec-imp-summary", t("汇总", "Summary")],
+                ["sec-imp-checklist", t("清单", "Checklist")],
+              ] as [string, string][]).map(([id, label]) => (
+                <button key={id} className={bankSection === id ? "on" : ""} onClick={() => {
+                  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}>{label}</button>
+              ))}
+            </div>
+            <div id="sec-imp-info" className="bank-anchor">{AuditInfoCard()}</div>
             {ImportTab()}
-            {AuditChecklistCard()}
+            <div id="sec-imp-checklist" className="bank-anchor">{AuditChecklistCard()}</div>
             {AuditNotesDecisionCard()}
           </>
         ) : (
