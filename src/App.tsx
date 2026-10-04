@@ -4308,8 +4308,10 @@ function App() {
         {tab === "bank" ? (
           <>
             <div className="bank-summary">
-              <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
-              <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>{data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}</span>
+              <div className="bank-left">
+                <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
+                <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>{data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}</span>
+              </div>
               <div className="bank-chain">
                 <div className="bank-cstep"><span className="bk">{t("含税结算", "Settlement incl. VAT")}</span><span className="bv green">{fmt(computed.c_1G)}</span></div>
                 <span className="bank-op">−</span>
@@ -4320,7 +4322,6 @@ function App() {
                 <div className="bank-cstep"><span className="bk">{t("本期实付 (10A)", "Current Paid (10A)")}</span><span className={`bv${computed.c_10A < 0 ? " red" : ""}`}>{fmt(computed.c_10A)}</span></div>
               </div>
               <div className="bank-unpaid">{t("未付余额", "Unpaid balance")}<b>{fmt(computed.c_9A - computed.c_10A)}</b></div>
-              <button className="bank-save" onClick={saveSnapshot}>{t("保存", "Save")}</button>
             </div>
 
             <div className="bank-jump">
@@ -4365,22 +4366,6 @@ function App() {
             {!isImport && <CollapsibleSection id="sec-invoices" title={t("发票", "Invoices")} summary={`${(data.invoices ?? []).length}`}>{InvoicesCard()}</CollapsibleSection>}
             <div id="sec-checklist" className="bank-anchor">{AuditChecklistCard()}</div>
             {AuditNotesDecisionCard()}
-
-            <div className="bank-decbar">
-              {checkSummary && <span className="bank-prog">{t("清单", "Checklist")} <b>{checkSummary}</b> {t("通过", "passed")}</span>}
-              <span className={`doc-pill ${synced ? "saved" : "draft"}`}>{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</span>
-              <div className="bank-decbtns">
-                <button className={`dec-btn approve${data.final_decision === "approve" ? " on" : ""}`} onClick={() => updateField("final_decision", "approve")}>{t("批准", "Approve")}</button>
-                <button className={`dec-btn conditional${data.final_decision === "conditional" ? " on" : ""}`} onClick={() => updateField("final_decision", "conditional")}>{t("有条件", "Conditional")}</button>
-                <button className={`dec-btn reject${data.final_decision === "reject" ? " on" : ""}`} onClick={() => {
-                  updateField("final_decision", "reject");
-                  if (failedItems.length && !(data.reject_reason || "").trim()) {
-                    updateField("reject_reason", failedItems.map((l: string) => `• ${l}`).join("\n"));
-                  }
-                }}>{t("拒绝", "Reject")}</button>
-                <button className="bank-save" onClick={saveSnapshot}>{t("保存", "Save")}</button>
-              </div>
-            </div>
           </>
         ) : tab === "import" ? (
           <>

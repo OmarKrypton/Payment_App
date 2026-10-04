@@ -2084,10 +2084,8 @@ body {
 .card-row { align-items: start; }
 
 .bank-summary {
-  position: sticky;
-  top: 0;
-  z-index: 6;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 14px;
   background: var(--bg-card);
@@ -2096,8 +2094,9 @@ body {
   padding: 10px 14px;
   box-shadow: var(--shadow-sm);
 }
+.bank-left { justify-self: start; display: flex; align-items: center; gap: 10px; min-width: 0; }
 .bank-serial { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; }
-.bank-chain { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; overflow: hidden; }
+.bank-chain { justify-self: center; display: flex; align-items: center; gap: 10px; min-width: 0; overflow: hidden; }
 .bank-cstep { display: flex; flex-direction: column; min-width: 0; }
 .bank-cstep .bk { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); white-space: nowrap; }
 .bank-cstep .bv { font-family: var(--font-mono); font-size: 12.5px; font-weight: 700; color: var(--text-primary); white-space: nowrap; }
@@ -2105,12 +2104,24 @@ body {
 .bank-cstep .bv.orange { color: var(--orange); }
 .bank-cstep .bv.red { color: var(--red); }
 .bank-op { color: var(--border); font-weight: 700; }
-.bank-unpaid { font-size: 10px; color: var(--text-muted); text-align: right; white-space: nowrap; }
+.bank-unpaid { justify-self: end; font-size: 10px; color: var(--text-muted); text-align: right; white-space: nowrap; }
 .bank-unpaid b { display: block; font-family: var(--font-mono); font-size: 13px; color: var(--orange); }
 .bank-save { background: var(--accent); color: #fff; border: 0; border-radius: var(--radius); padding: 8px 14px; font-weight: 700; font-size: 12px; cursor: pointer; box-shadow: var(--shadow-sm); white-space: nowrap; }
 .bank-save:hover { background: var(--accent-hover); }
 
-.bank-jump { display: flex; gap: 5px; flex-wrap: wrap; }
+.bank-jump {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 8px 12px;
+  box-shadow: var(--shadow-sm);
+}
 .bank-jump button { border: 1px solid var(--border); background: var(--bg-card); color: var(--text-secondary); border-radius: 999px; padding: 5px 11px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .bank-jump button:hover { border-color: var(--accent); color: var(--accent); }
 .bank-jump button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
