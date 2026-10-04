@@ -849,6 +849,23 @@ function App() {
   const [poolImportProgress, setPoolImportProgress] = useState<{ processed: number; total: number; file: string } | null>(null);
   const [resultSearch, setResultSearch] = useState("");
   const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
+  // "Saved" means persisted to history — not merely having a serial typed.
+  // savedJsonRef holds the form as last saved/loaded/newed; any later edit makes
+  // the document dirty. guardUnsaved() intercepts New/Load when dirty.
+  const savedJsonRef = useRef<string>("");
+  const [docStatus, setDocStatus] = useState<"draft" | "saved">("draft");
+  const [pendingAction, setPendingAction] = useState<{ run: () => void } | null>(null);
+  const isDocDirty = savedJsonRef.current !== "" && JSON.stringify(formRef.current) !== savedJsonRef.current;
+  const docPill = isDocDirty
+    ? { cls: "dirty", label: t("未保存", "Unsaved") }
+    : docStatus === "saved"
+      ? { cls: "saved", label: t("已保存", "Saved") }
+      : { cls: "draft", label: t("草稿", "Draft") };
+  const guardUnsaved = (run: () => void) => {
+    const dirty = savedJsonRef.current !== "" && JSON.stringify(formRef.current) !== savedJsonRef.current;
+    if (!dirty) { run(); return; }
+    setPendingAction({ run });
+  };
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
@@ -956,6 +973,7 @@ function App() {
       try {
         const cfg = await invoke<FormData>("load_config");
         formRef.current = cfg;
+        savedJsonRef.current = JSON.stringify(cfg);
         setTab(cfg.doc_type === "import" ? "import" : "bank");
         recalc(cfg);
       } catch (e) {
@@ -1046,6 +1064,7 @@ function App() {
     const unlisten = listen<FormData>("import-complete", (event) => {
       const parsed = event.payload;
       formRef.current = parsed;
+      setDocStatus("draft");
       recalc(parsed);
       saveConfig();
       hideOverlay();
@@ -2239,9 +2258,7 @@ function App() {
     return assignDraftNo();
   }, [draftNo, assignDraftNo]);
 
-  const newSession = useCallback(async () => {
-    const confirmed = window.confirm(t("确定要开始新会话吗？当前未保存的更改将丢失。", "Start a new session? Any unsaved changes will be lost."));
-    if (!confirmed) return;
+  const newSessionNow = useCallback(async () => {
     formRef.current = { ...EMPTY_FORM };
     setComputed(EMPTY_CALC);
     setTab("bank");
@@ -2250,8 +2267,12 @@ function App() {
     setResultSearch("");
     setOverwriteTarget(null);
     await recalc(formRef.current);
+    savedJsonRef.current = JSON.stringify(formRef.current);
+    setDocStatus("draft");
     try { await invoke("save_config", { data: formRef.current }); } catch {}
-  }, [t, recalc]);
+  }, [recalc]);
+  // Sidebar "New": warn if the current document has unsaved changes.
+  const newSession = () => guardUnsaved(() => { void newSessionNow(); });
 
   const exportExcel = async () => {
     try {
@@ -2527,7 +2548,7 @@ function App() {
     return () => { if (serialCheckTimer.current) clearTimeout(serialCheckTimer.current); };
   }, [data.doc_serial]);
 
-  const saveSnapshot = async () => {
+  const saveSnapshot = async (): Promise<boolean> => {
     if (overwriteTarget) {
       // Overwrite an existing snapshot (maker fixed a rejected document).
       // Preserve the decision chosen in the Final Decision card (e.g. an approved
@@ -2548,7 +2569,7 @@ function App() {
           showAlert(`${t("已覆盖并同步", "Overwritten & synced")} (${target.label})`);
         } catch (e: any) {
           showAlert(`${t("覆盖失败", "Overwrite failed")}: ${e.message || e}`);
-          return;
+          return false;
         }
       } else {
         try {
@@ -2556,12 +2577,14 @@ function App() {
           showAlert(`${t("已覆盖", "Overwritten")} (${target.label})`);
         } catch (e: any) {
           showAlert(`${t("覆盖失败", "Overwrite failed")}: ${e.message || e}`);
-          return;
+          return false;
         }
       }
       setOverwriteTarget(null);
       loadHistoryList(historySearch);
-      return;
+      savedJsonRef.current = JSON.stringify(formRef.current);
+      setDocStatus("saved");
+      return true;
     }
     let serial = data.doc_serial;
     if (!serial && !data.draft_no) {
@@ -2576,7 +2599,7 @@ function App() {
           const remoteRows = await listSnapshotsRemote(serial);
           if (remoteRows.some(r => r.label === serial)) {
             showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
-            return;
+            return false;
           }
         } catch (e) {
           console.error("Supabase serial check failed", e);
@@ -2587,7 +2610,7 @@ function App() {
         const localExists = await invoke<boolean>("check_serial_exists", { serial });
         if (localExists) {
           showAlert(t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate"));
-          return;
+          return false;
         }
       } catch {}
     }
@@ -2618,12 +2641,14 @@ function App() {
       }
     }
     const dataJson = JSON.stringify(saveData);
+    let saved = false;
     if (authUser) {
       try {
         await saveSnapshotRemote(label, "", dataJson);
         setSynced(true);
         loadSavedDocsIndex();
         showAlert(`${t("快照已保存并同步", "Snapshot saved & synced")} (${label})`);
+        saved = true;
       } catch (e: any) {
         console.error("saveSnapshotRemote failed", e);
         try {
@@ -2631,18 +2656,29 @@ function App() {
           setSynced(false);
           loadSavedDocsIndex();
           showAlert(`${t("快照已保存(本地)", "Snapshot saved (local)")} (${label})`);
+          saved = true;
         } catch (e2) {
           console.error("save_history fallback failed", e2);
         }
       }
     } else {
-      await invoke("save_history", { label, notes: "", dataJson });
-      loadSavedDocsIndex();
-      showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
+      try {
+        await invoke("save_history", { label, notes: "", dataJson });
+        loadSavedDocsIndex();
+        showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
+        saved = true;
+      } catch (e: any) {
+        console.error("save_history failed", e);
+      }
     }
+    if (saved) {
+      savedJsonRef.current = JSON.stringify(formRef.current);
+      setDocStatus("saved");
+    }
+    return saved;
   };
 
-  const loadSnapshot = async (id: number) => {
+  const loadSnapshotNow = async (id: number) => {
     try {
       let dataJson: string;
       if (authUser) {
@@ -2677,6 +2713,8 @@ function App() {
       }
       if (!parsed.auditor) parsed.auditor = "";
       formRef.current = parsed;
+      savedJsonRef.current = JSON.stringify(parsed);
+      setDocStatus("saved");
       setTab(parsed.doc_type === "import" ? "import" : "bank");
       setEtaResult(null);
       setShowEtaResult(false);
@@ -2691,10 +2729,20 @@ function App() {
     hideHistoryModal();
   };
 
-  const startOverwrite = async (id: number) => {
+  // Loading a different document replaces the current one: warn if it has
+  // unsaved changes first.
+  const loadSnapshot = (id: number) => {
+    guardUnsaved(() => { void loadSnapshotNow(id); });
+  };
+
+  const startOverwrite = (id: number) => {
     const entry = historyList.find(h => h.id === id);
-    await loadSnapshot(id);
-    setOverwriteTarget({ id, label: entry?.label || "", remote: !!authUser });
+    guardUnsaved(() => {
+      void (async () => {
+        await loadSnapshotNow(id);
+        setOverwriteTarget({ id, label: entry?.label || "", remote: !!authUser });
+      })();
+    });
   };
 
   const historySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -4132,8 +4180,8 @@ function App() {
             <span className="doc-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>
               {data.doc_serial || draftLabel(data.draft_no ?? draftNo)}
             </span>
-            <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>
-              {data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}
+            <span className={`doc-pill ${docPill.cls}`}>
+              {docPill.label}
             </span>
           </div>
           <div className="doc-context">
@@ -4334,7 +4382,7 @@ function App() {
             <div className="bank-summary">
               <div className="bank-left">
                 <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
-                <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>{data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}</span>
+                <span className={`doc-pill ${docPill.cls}`}>{docPill.label}</span>
               </div>
               <div className="bank-chain">
                 <div className="bank-cstep"><span className="bk">{t("含税结算", "Settlement incl. VAT")}</span><span className="bv green">{fmt(computed.c_1G)}</span></div>
@@ -4374,7 +4422,7 @@ function App() {
             <CollapsibleSection id="sec-supplier" title={t("1. 供应商结算", "1. Supplier Settlement")} summary={`${t("含税结算", "Settlement incl. VAT")} ${fmt(computed.c_1G)}`}>{Card1()}</CollapsibleSection>
             <div className="card-row">
               <CollapsibleSection id="sec-advance" title={t("2. 预付款", "2. Advance Payment")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_2E)}`}>{Card2()}</CollapsibleSection>
-              <CollapsibleSection id="sec-payable" title={t("3. 应付金额", "3. Amount Payable")} summary={fmt(computed.c_3A)} defaultOpen={false}>{Card3()}</CollapsibleSection>
+              <CollapsibleSection id="sec-payable" title={t("3. 应付金额", "3. Amount Payable")} summary={fmt(computed.c_3A)}>{Card3()}</CollapsibleSection>
             </div>
             <div className="card-row">
               <CollapsibleSection id="sec-retention" title={t("4. 保留金", "4. Retention")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_4D)}`}>{Card4()}</CollapsibleSection>
@@ -4386,9 +4434,9 @@ function App() {
             </div>
             <div className="card-row">
               <CollapsibleSection id="sec-paid" title={t("7. 已付款", "7. Amount Paid")} summary={fmt(computed.c_7B)}>{Card9()}</CollapsibleSection>
-              <CollapsibleSection id="sec-net" title={t("9. 净应付", "9. Net Payable")} summary={fmt(computed.c_9A)} defaultOpen={false}>{Card10()}</CollapsibleSection>
+              <CollapsibleSection id="sec-net" title={t("9. 净应付", "9. Net Payable")} summary={fmt(computed.c_9A)}>{Card10()}</CollapsibleSection>
             </div>
-            <CollapsibleSection id="sec-paidtotals" title={t("10 & 11. 实付合计", "10 & 11. Paid Totals")} summary={fmt(computed.c_11B)} defaultOpen={false}>{Card11()}</CollapsibleSection>
+            <CollapsibleSection id="sec-paidtotals" title={t("10 & 11. 实付合计", "10 & 11. Paid Totals")} summary={fmt(computed.c_11B)}>{Card11()}</CollapsibleSection>
             {!isImport && <CollapsibleSection id="sec-invoices" title={t("发票", "Invoices")} summary={`${(data.invoices ?? []).length}`}>{InvoicesCard()}</CollapsibleSection>}
             <div id="sec-checklist" className="bank-anchor">{AuditChecklistCard()}</div>
             {AuditNotesDecisionCard()}
@@ -5060,6 +5108,31 @@ function App() {
           </div>
         );
       })()}
+
+      {pendingAction && (
+        <div className="modal-overlay" style={{ position: 'fixed', zIndex: 400 }} onClick={() => setPendingAction(null)}>
+          <div className="modal" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t("未保存的更改", "Unsaved changes")}</h3>
+              <button className="modal-close" onClick={() => setPendingAction(null)}>✕</button>
+            </div>
+            <div style={{ padding: '4px 20px 20px' }}>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
+                {t("当前文档尚未保存，继续将丢失这些更改。", "This document has unsaved changes. Continuing will discard them.")}
+              </p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button className="btn-load" onClick={() => setPendingAction(null)}>{t("取消", "Cancel")}</button>
+                <button className="btn-delete" onClick={() => { const run = pendingAction.run; setPendingAction(null); run(); }}>{t("放弃更改", "Discard")}</button>
+                <button className="btn-add" onClick={async () => {
+                  const run = pendingAction.run;
+                  const ok = await saveSnapshot();
+                  if (ok) { setPendingAction(null); run(); }
+                }}>{t("保存并继续", "Save & continue")}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
