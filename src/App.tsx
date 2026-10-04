@@ -4333,7 +4333,7 @@ function App() {
           <>
             <div className="bank-summary">
               <div className="bank-left">
-                <FastInput className="bank-serial-input" value={data.doc_serial} onChange={setDocSerial} placeholder={draftLabel(data.draft_no ?? draftNo)} />
+                <span className="bank-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>{data.doc_serial || draftLabel(data.draft_no ?? draftNo)}</span>
                 <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>{data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}</span>
               </div>
               <div className="bank-chain">
