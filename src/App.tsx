@@ -6,7 +6,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, rejectPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote } from "./supabase";
-import { IconSave, IconHistory, IconNewSession, IconExport, IconChevronDown, IconReport, IconInvoice } from "./icons";
+import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
 interface OcrFieldInfo {
@@ -1410,6 +1410,7 @@ function App() {
 
   const isImport = data.doc_type === "import";
   const isRemainder = !!data.remainder_of;
+  const availablePoolCount = poolList.filter((p: any) => p.status === "available").length;
   const cl = data.checklist || {};
   const setCheck = (key: string, s: "pass" | "fail" | "na" | "") =>
     updateField("checklist", { ...cl, [key]: { ...(cl[key] || {}), s } });
@@ -4042,92 +4043,85 @@ function App() {
             </div>
           </div>
         </div>
-        <div className="sidebar-metrics">
+        {/* Current document */}
+        <div className="sidebar-doc">
+          <div className="doc-top">
+            <span className="doc-serial" title={data.doc_serial || draftLabel(data.draft_no ?? draftNo)}>
+              {data.doc_serial || draftLabel(data.draft_no ?? draftNo)}
+            </span>
+            <span className={`doc-pill ${data.doc_serial ? "saved" : "draft"}`}>
+              {data.doc_serial ? t("已保存", "Saved") : t("草稿", "Draft")}
+            </span>
+          </div>
+          <div className="doc-context">
+            {isImport
+              ? `${(data.import_entries ?? []).length} ${t("服务商", "providers")}`
+              : `${(data.invoices ?? []).length} ${t("发票", "invoices")}`}
+            {data.buyer_tax_id ? ` · ${data.buyer_tax_id}` : ""}
+          </div>
+          <div className="doc-chips">
+            <span className="chip">{isImport ? t("进口", "Import") : t("银行", "Bank")}</span>
+            <span className="doc-sync">
+              <span className={`doc-dot${synced ? "" : " red"}`} />
+              {synced ? t("已同步", "Synced") : t("未同步", "Not synced")}
+            </span>
+          </div>
+        </div>
+
+        {/* Live totals for the document being edited */}
+        <div className="sidebar-stats">
           {isImport ? (
             <>
-              <div className="metric">
-                <span className="metric-label">{fmt(computed.import_grand_total)}</span>
-                <span className="metric-sub">{t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")}</span>
+              <div className="stat-chip">
+                <span className="stat-n">{fmt(computed.import_grand_total)}</span>
+                <span className="stat-l">{t("总额 (金额+VAT)", "Grand Total (Amount+VAT)")}</span>
               </div>
-              <div className="metric">
-                <span className="metric-label" style={{color: '#f59e0b'}}>{fmt(computed.import_total_vat)}</span>
-                <span className="metric-sub">{t("VAT 合计", "Total VAT")}</span>
-              </div>
-              <div className="metric">
-                <span className="metric-label">{fmt(computed.import_total_wht)}</span>
-                <span className="metric-sub">{t("WHT 合计", "Total WHT")}</span>
+              <div className="stat-chip">
+                <span className="stat-n orange">{fmt(computed.import_total_vat)}</span>
+                <span className="stat-l">{t("VAT 合计", "Total VAT")}</span>
               </div>
             </>
           ) : (
             <>
-              <div className="metric">
-                <span className={`metric-label${computed.c_9A < 0 ? ' negative' : ''}`}>{fmt(computed.c_9A)}</span>
-                <span className="metric-sub">{t("应付净额", "Net Payable")}</span>
+              <div className="stat-chip">
+                <span className={`stat-n${computed.c_9A < 0 ? " neg" : ""}`}>{fmt(computed.c_9A)}</span>
+                <span className="stat-l">{t("应付净额", "Net Payable")}</span>
               </div>
-              <div className="metric">
-                <span className={`metric-label${computed.total_deductions < 0 ? ' negative' : ''}`} style={{color: '#f59e0b'}}>{fmt(computed.total_deductions)}</span>
-                <span className="metric-sub">{t("扣款合计", "Deductions")}</span>
-              </div>
-              <div className="metric">
-                <span className={`metric-label${computed.c_10A < 0 ? ' negative' : ''}`}>{fmt(computed.c_10A)}</span>
-                <span className="metric-sub">{t("本期实付", "Current Paid")}</span>
+              <div className="stat-chip">
+                <span className={`stat-n orange${computed.total_deductions < 0 ? " neg" : ""}`}>{fmt(computed.total_deductions)}</span>
+                <span className="stat-l">{t("扣款合计", "Deductions")}</span>
               </div>
             </>
           )}
         </div>
-        <nav className="sidebar-nav">
-          <button className={tab === "bank" ? "active" : ""} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>{t("银行", "Bank")}</button>
-          <button className={tab === "import" ? "active" : ""} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>{t("进口", "Import")}</button>
-          <button className={tab === "suppliers" ? "active" : ""} onClick={() => setTab("suppliers")}>{t("供应商", "Suppliers")}</button>
-        </nav>
-        <div style={{padding:'6px 0 2px', display:'flex', flexDirection:'column', gap:8}}>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={openPool}
-            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPool(); } }}
-            style={{
-              width:'100%', padding:'14px 16px', borderRadius:12, cursor:'pointer',
-              background:'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 55%, #5b21b6 100%)',
-              color:'#fff', border:'1px solid rgba(255,255,255,0.15)', fontWeight:700, fontSize:15,
-              display:'flex', alignItems:'center', justifyContent:'space-between', gap:10,
-              boxShadow:'0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)',
-              transition:'transform 0.15s, box-shadow 0.15s, filter 0.15s',
-              textAlign:'left',
-              outline:'none',
-              userSelect:'none',
-            }}
-            onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.transform='translateY(-1px)'; el.style.boxShadow='0 9px 22px rgba(109,40,217,0.45), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
-            onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.transform='translateY(0)'; el.style.boxShadow='0 6px 18px rgba(109,40,217,0.35), inset 0 1px 0 rgba(255,255,255,0.2)'; }}
-          >
-            <span style={{display:'flex', alignItems:'center', gap:10}}>
-              <span style={{width:34,height:34,borderRadius:10,background:'rgba(255,255,255,0.18)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                <IconInvoice size={18} color="#fff" />
-              </span>
-              <span style={{display:'flex', flexDirection:'column', lineHeight:1.2}}>
-                <span>{t("发票池", "Invoice Pool")}</span>
-                <span style={{fontSize:11, fontWeight:500, opacity:0.7}}>{t("管理待处理发票", "Manage pending invoices")}</span>
-              </span>
-            </span>
-            <span
-              role="button"
-              tabIndex={0}
-              title={t("打开 ETA 门户", "Open ETA portal")}
-              onClick={(ev) => { ev.stopPropagation(); openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`)); }}
-              style={{
-                display:'flex', alignItems:'center', gap:5, padding:'6px 11px', borderRadius:999,
-                background:'#facc15', color:'#713f12', border:'1px solid #eab308',
-                fontWeight:800, fontSize:12, cursor:'pointer', whiteSpace:'nowrap',
-                boxShadow:'0 2px 6px rgba(234,179,8,0.45)', transition:'filter 0.15s', flexShrink:0,
-              }}
-              onMouseEnter={e => { (e.target as HTMLElement).style.filter='brightness(1.08)'; }}
-              onMouseLeave={e => { (e.target as HTMLElement).style.filter='brightness(1)'; }}
-            >
-              ETA ↗
-            </span>
-          </div>
+
+        {/* Document type */}
+        <div className="sidebar-section-label">{t("文档", "Document")}</div>
+        <div className="sidebar-seg">
+          <button className={tab === "bank" ? "on" : ""} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
+            {t("银行", "Bank")}
+          </button>
+          <button className={tab === "import" ? "on" : ""} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
+            {t("进口", "Import")}
+          </button>
         </div>
-        <div className="sidebar-sync" style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4}}>
+
+        {/* Views */}
+        <div className="sidebar-section-label">{t("视图", "Views")}</div>
+        <button className={`navitem${tab === "suppliers" ? " active" : ""}`} onClick={() => setTab("suppliers")}>
+          <IconReport size={15} color="currentColor" />
+          <span className="navlabel">{t("供应商", "Suppliers")}</span>
+          {supplierData.length > 0 && <span className="navbadge">{supplierData.length}</span>}
+        </button>
+        <button className="navitem" onClick={openPool}>
+          <IconInvoice size={15} color="currentColor" />
+          <span className="navlabel">{t("发票池", "Invoice Pool")}</span>
+          {availablePoolCount > 0 && <span className="navbadge violet">{availablePoolCount}</span>}
+        </button>
+        <button className="eta-link" onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
+          <IconExport size={13} color="currentColor" /> {t("打开 ETA 门户", "Open ETA portal")}
+        </button>
+        <div className="sidebar-sync" style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.08)'}}>
           {authUser ? (
             <div>
               <div style={{display:'flex',alignItems:'center',gap:10}}>
@@ -4200,51 +4194,47 @@ function App() {
               <span style={{fontSize:10,color:'rgba(255,255,255,0.3)',textAlign:'center',marginTop:2}}>{t("账号由管理员创建", "Accounts created by admin")}</span>
             </div>
           )}
-          <div style={{marginTop:10,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.06)',textAlign:'center'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:6}}>
-              <span style={{fontSize:10,color:'rgba(255,255,255,0.35)'}}>{appVersion ? `v${appVersion}` : ""}</span>
-              <button style={{fontSize:10,padding:'2px 8px',borderRadius:6,border:'1px solid rgba(255,255,255,0.12)',background:'transparent',color:'rgba(255,255,255,0.4)',cursor:'pointer'}} onClick={handleCheckUpdate} disabled={checkingUpdate}>
-                {checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}
-              </button>
-            </div>
-            <button style={{fontSize:10,padding:'4px 12px',borderRadius:6,border:'1px solid rgba(255,255,255,0.12)',background:'transparent',color:'rgba(255,255,255,0.4)',cursor:'pointer'}} onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
-              {lang === "zh" ? "English" : "中文"}
-            </button>
-          </div>
+        </div>
+        <div className="sidebar-util">
+          <span className="util-version">{appVersion ? `v${appVersion}` : ""}</span>
+          <button className="util-btn" onClick={handleCheckUpdate} disabled={checkingUpdate}>
+            {checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}
+          </button>
+          <button className="util-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
+            {lang === "zh" ? "English" : "中文"}
+          </button>
         </div>
         <div className="sidebar-actions">
-          <button onClick={saveSnapshot} style={{background:'var(--accent)',color:'#fff',fontWeight:600}}>
+          <button className="action-primary" onClick={saveSnapshot}>
             <IconSave color="#fff" /> {t("保存", "Save")}
           </button>
-          <button onClick={showHistoryModal}>
-            <IconHistory /> {t("历史记录", "History")}
-          </button>
-          <div className="sidebar-actions-divider" />
-          <button onClick={newSession}>
-            <IconNewSession /> {t("新会话", "New Session")}
-          </button>
-          <button onClick={importPdf}>
-            <IconReport /> {t("上传PDF", "Upload PDF")}
-          </button>
-          <div className="sidebar-actions-divider" />
-          <div className="sidebar-export-group">
-            <button onClick={() => setShowExportMenu(!showExportMenu)} style={{width:'100%'}}>
-              <IconExport /> {t("导出", "Export")} <IconChevronDown size={12} style={{marginLeft:'auto', transition:'transform 0.2s', transform: showExportMenu ? 'rotate(0deg)' : 'rotate(180deg)'}} />
+          <div className="action-grid">
+            <button className="action-btn" onClick={newSession}>
+              <IconNewSession /> <span>{t("新会话", "New Session")}</span>
             </button>
-            {showExportMenu && (
-              <div className="sidebar-export-dropdown">
-                <button onClick={() => { setShowExportMenu(false); exportExcel(); }}>
-                  <IconReport /> {t("结算报告", "Settlement Report")}
-                </button>
-                <button onClick={() => { setShowExportMenu(false); setShowInvoiceExport(true); }}>
-                  <IconInvoice /> {t("发票清单", "Invoice Registry")}
-                </button>
-                <button onClick={() => { setShowExportMenu(false); setShowHistoryExport(true); }}>
-                  <IconHistory /> {t("历史记录清单", "History Registry")}
-                </button>
-              </div>
-            )}
+            <button className="action-btn" onClick={showHistoryModal}>
+              <IconHistory /> <span>{t("历史记录", "History")}</span>
+            </button>
+            <button className="action-btn" onClick={importPdf}>
+              <IconReport /> <span>{t("上传PDF", "Upload PDF")}</span>
+            </button>
+            <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)}>
+              <IconExport /> <span>{t("导出", "Export")}</span>
+            </button>
           </div>
+          {showExportMenu && (
+            <div className="sidebar-export-dropdown">
+              <button onClick={() => { setShowExportMenu(false); exportExcel(); }}>
+                <IconReport /> {t("结算报告", "Settlement Report")}
+              </button>
+              <button onClick={() => { setShowExportMenu(false); setShowInvoiceExport(true); }}>
+                <IconInvoice /> {t("发票清单", "Invoice Registry")}
+              </button>
+              <button onClick={() => { setShowExportMenu(false); setShowHistoryExport(true); }}>
+                <IconHistory /> {t("历史记录清单", "History Registry")}
+              </button>
+            </div>
+          )}
         </div>
       </aside>
       <main className="content">
