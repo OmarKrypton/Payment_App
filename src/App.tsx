@@ -4195,6 +4195,7 @@ function App() {
             <button
               className="sidebar-toggle"
               title={sidebarCollapsed ? t("展开侧栏", "Expand sidebar") : t("收起侧栏", "Collapse sidebar")}
+              data-tip={sidebarCollapsed ? t("展开", "Expand") : t("收起", "Collapse")}
               onClick={toggleSidebar}
             >
               <IconChevronRight size={16} style={{ transform: sidebarCollapsed ? "rotate(0deg)" : "rotate(180deg)", transition: "transform 0.2s" }} />
@@ -4262,33 +4263,33 @@ function App() {
         {/* Document type */}
         <div className="sidebar-section-label">{t("文档", "Document")}</div>
         <div className="sidebar-seg">
-          <button className={tab === "bank" ? "on" : ""} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
+          <button className={tab === "bank" ? "on" : ""} data-tip={t("银行", "Bank")} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
             <span className="sb-tile"><IconBank size={15} /></span> <span className="seg-label">{t("银行", "Bank")}</span>
           </button>
-          <button className={tab === "import" ? "on" : ""} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
+          <button className={tab === "import" ? "on" : ""} data-tip={t("进口", "Import")} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
             <span className="sb-tile"><IconTruck size={15} /></span> <span className="seg-label">{t("进口", "Import")}</span>
           </button>
         </div>
 
         {/* Views */}
         <div className="sidebar-section-label">{t("视图", "Views")}</div>
-        <button className={`navitem${tab === "suppliers" ? " active" : ""}`} onClick={() => setTab("suppliers")}>
+        <button className={`navitem${tab === "suppliers" ? " active" : ""}`} data-tip={t("供应商", "Suppliers")} onClick={() => setTab("suppliers")}>
           <span className="sb-tile"><IconUsers size={15} /></span>
           <span className="navlabel">{t("供应商", "Suppliers")}</span>
           {supplierData.length > 0 && <span className="navbadge">{supplierData.length}</span>}
         </button>
-        <button className="navitem" onClick={openPool}>
+        <button className="navitem" data-tip={t("发票池", "Invoice Pool")} onClick={openPool}>
           <span className="sb-tile"><IconLayers size={15} /></span>
           <span className="navlabel">{t("发票池", "Invoice Pool")}</span>
           {availablePoolCount > 0 && <span className="navbadge violet">{availablePoolCount}</span>}
         </button>
-        <button className="eta-link" onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
+        <button className="eta-link" data-tip={t("打开 ETA 门户", "Open ETA portal")} onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
           <IconExternal size={13} /> <span className="eta-text">{t("打开 ETA 门户", "Open ETA portal")}</span>
         </button>
         <div className="sidebar-account">
           {authUser ? (
             <>
-              <div className="acct-avatar" title={authUser}>{authUser.charAt(0).toUpperCase()}</div>
+              <div className="acct-avatar" title={authUser} data-tip={authUser}>{authUser.charAt(0).toUpperCase()}</div>
               <div className="acct-info">
                 <div className="acct-name">{(authUser || "").split("@")[0]}</div>
                 <div className="acct-status"><span className={`doc-dot${synced ? "" : " red"}`} />{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</div>
@@ -4302,7 +4303,7 @@ function App() {
             </>
           ) : (
             <>
-              <div className="acct-avatar locked" title={t("登录以同步", "Sign in to sync")}>🔒</div>
+              <div className="acct-avatar locked" title={t("登录以同步", "Sign in to sync")} data-tip={t("登录以同步", "Sign in to sync")}>🔒</div>
               <div className="acct-info">
                 <div className="acct-name">{t("登录以同步", "Sign in to sync")}</div>
                 <div className="acct-status">{t("跨设备共享快照数据", "Share snapshots across devices")}</div>
@@ -4369,20 +4370,20 @@ function App() {
           )}
         </div>
         <div className="sidebar-actions">
-          <button className="action-primary" onClick={saveSnapshot}>
+          <button className="action-primary" onClick={saveSnapshot} data-tip={t("保存", "Save")}>
             <IconSave color="#fff" /> <span className="action-label">{t("保存", "Save")}</span>
           </button>
           <div className="action-row">
-            <button className="action-btn" onClick={newSession} title={t("新会话", "New Session")}>
+            <button className="action-btn" onClick={newSession} title={t("新会话", "New Session")} data-tip={t("新建", "New")}>
               <span className="sb-tile"><IconNewSession size={14} /></span> <span className="action-text">{t("新建", "New")}</span>
             </button>
-            <button className="action-btn" onClick={showHistoryModal} title={t("历史记录", "History")}>
+            <button className="action-btn" onClick={showHistoryModal} title={t("历史记录", "History")} data-tip={t("历史", "History")}>
               <span className="sb-tile"><IconHistory size={14} /></span> <span className="action-text">{t("历史", "History")}</span>
             </button>
-            <button className="action-btn" onClick={importPdf} title={t("上传PDF (OCR)", "Upload PDF (OCR)")}>
+            <button className="action-btn" onClick={importPdf} title={t("上传PDF (OCR)", "Upload PDF (OCR)")} data-tip={t("OCR", "OCR")}>
               <span className="sb-tile"><IconUpload size={14} /></span> <span className="action-text">{t("OCR", "OCR")}</span>
             </button>
-            <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)} title={t("导出", "Export")}>
+            <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)} title={t("导出", "Export")} data-tip={t("导出", "Export")}>
               <span className="sb-tile"><IconExport size={14} /></span> <span className="action-text">{t("导出", "Export")}</span>
             </button>
           </div>
