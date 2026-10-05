@@ -4286,27 +4286,27 @@ function App() {
         {/* Document type */}
         <div className="sidebar-section-label">{t("文档", "Document")}</div>
         <div className="sidebar-seg">
-          <button className={tab === "bank" ? "on" : ""} data-tip={t("银行", "Bank")} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
+          <button className={tab === "bank" ? "on" : ""} data-tip={sidebarCollapsed ? t("银行", "Bank") : undefined} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
             <span className="sb-tile"><IconBank size={15} /></span> <span className="seg-label">{t("银行", "Bank")}</span>
           </button>
-          <button className={tab === "import" ? "on" : ""} data-tip={t("进口", "Import")} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
+          <button className={tab === "import" ? "on" : ""} data-tip={sidebarCollapsed ? t("进口", "Import") : undefined} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
             <span className="sb-tile"><IconTruck size={15} /></span> <span className="seg-label">{t("进口", "Import")}</span>
           </button>
         </div>
 
         {/* Views */}
         <div className="sidebar-section-label">{t("视图", "Views")}</div>
-        <button className={`navitem${tab === "suppliers" ? " active" : ""}`} data-tip={t("供应商", "Suppliers")} onClick={() => setTab("suppliers")}>
+        <button className={`navitem${tab === "suppliers" ? " active" : ""}`} data-tip={sidebarCollapsed ? t("供应商", "Suppliers") : undefined} onClick={() => setTab("suppliers")}>
           <span className="sb-tile"><IconUsers size={15} /></span>
           <span className="navlabel">{t("供应商", "Suppliers")}</span>
           {supplierData.length > 0 && <span className="navbadge">{supplierData.length}</span>}
         </button>
-        <button className="navitem" data-tip={t("发票池", "Invoice Pool")} onClick={openPool}>
+        <button className="navitem" data-tip={sidebarCollapsed ? t("发票池", "Invoice Pool") : undefined} onClick={openPool}>
           <span className="sb-tile"><IconLayers size={15} /></span>
           <span className="navlabel">{t("发票池", "Invoice Pool")}</span>
           {availablePoolCount > 0 && <span className="navbadge violet">{availablePoolCount}</span>}
         </button>
-        <button className="eta-link" data-tip={t("打开 ETA 门户", "Open ETA portal")} onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
+        <button className="eta-link" data-tip={sidebarCollapsed ? t("打开 ETA 门户", "Open ETA portal") : undefined} onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
           <IconExternal size={13} /> <span className="eta-text">{t("打开 ETA 门户", "Open ETA portal")}</span>
         </button>
         <div className="sidebar-account">
