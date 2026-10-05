@@ -1127,6 +1127,30 @@ function App() {
     return () => root.removeEventListener("scroll", onScroll);
   }, [tab, data.doc_type]);
 
+  // Sidebar tooltips (styled) — works both collapsed and expanded. Delegated so
+  // every control with a data-tip gets one, without per-element handlers.
+  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    const onOver = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement)?.closest?.("[data-tip]") as HTMLElement | null;
+      if (el && el.closest(".sidebar")) {
+        const r = el.getBoundingClientRect();
+        setTip({ text: el.getAttribute("data-tip") || "", x: Math.round(r.right + 10), y: Math.round(r.top + r.height / 2) });
+      } else {
+        setTip(null);
+      }
+    };
+    const clear = () => setTip(null);
+    document.addEventListener("mouseover", onOver);
+    document.addEventListener("mouseleave", clear);
+    document.addEventListener("scroll", clear, true);
+    return () => {
+      document.removeEventListener("mouseover", onOver);
+      document.removeEventListener("mouseleave", clear);
+      document.removeEventListener("scroll", clear, true);
+    };
+  }, []);
+
   // Liquid-glass specular: track the pointer inside a dock chip so the highlight
   // follows the cursor (--mx/--my consumed by .bank-jump button::before).
   useEffect(() => {
@@ -4194,7 +4218,6 @@ function App() {
             </div>
             <button
               className="sidebar-toggle"
-              title={sidebarCollapsed ? undefined : t("收起侧栏", "Collapse sidebar")}
               data-tip={sidebarCollapsed ? t("展开", "Expand") : t("收起", "Collapse")}
               onClick={toggleSidebar}
             >
@@ -4289,7 +4312,7 @@ function App() {
         <div className="sidebar-account">
           {authUser ? (
             <>
-              <div className="acct-avatar" title={sidebarCollapsed ? undefined : authUser} data-tip={authUser}>{authUser.charAt(0).toUpperCase()}</div>
+              <div className="acct-avatar" data-tip={authUser}>{authUser.charAt(0).toUpperCase()}</div>
               <div className="acct-info">
                 <div className="acct-name">{(authUser || "").split("@")[0]}</div>
                 <div className="acct-status"><span className={`doc-dot${synced ? "" : " red"}`} />{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</div>
@@ -4303,7 +4326,7 @@ function App() {
             </>
           ) : (
             <>
-              <div className="acct-avatar locked" title={sidebarCollapsed ? undefined : t("登录以同步", "Sign in to sync")} data-tip={t("登录以同步", "Sign in to sync")}>🔒</div>
+              <div className="acct-avatar locked" data-tip={t("登录以同步", "Sign in to sync")}>🔒</div>
               <div className="acct-info">
                 <div className="acct-name">{t("登录以同步", "Sign in to sync")}</div>
                 <div className="acct-status">{t("跨设备共享快照数据", "Share snapshots across devices")}</div>
@@ -4374,16 +4397,16 @@ function App() {
             <IconSave color="#fff" /> <span className="action-label">{t("保存", "Save")}</span>
           </button>
           <div className="action-row">
-            <button className="action-btn" onClick={newSession} title={sidebarCollapsed ? undefined : t("新会话", "New Session")} data-tip={t("新建", "New")}>
+            <button className="action-btn" onClick={newSession} data-tip={t("新会话", "New Session")}>
               <span className="sb-tile"><IconNewSession size={14} /></span> <span className="action-text">{t("新建", "New")}</span>
             </button>
-            <button className="action-btn" onClick={showHistoryModal} title={sidebarCollapsed ? undefined : t("历史记录", "History")} data-tip={t("历史", "History")}>
+            <button className="action-btn" onClick={showHistoryModal} data-tip={t("历史记录", "History")}>
               <span className="sb-tile"><IconHistory size={14} /></span> <span className="action-text">{t("历史", "History")}</span>
             </button>
-            <button className="action-btn" onClick={importPdf} title={sidebarCollapsed ? undefined : t("上传PDF (OCR)", "Upload PDF (OCR)")} data-tip={t("OCR", "OCR")}>
+            <button className="action-btn" onClick={importPdf} data-tip={t("上传PDF (OCR)", "Upload PDF (OCR)")}>
               <span className="sb-tile"><IconUpload size={14} /></span> <span className="action-text">{t("OCR", "OCR")}</span>
             </button>
-            <button className="action-btn export-trigger" onClick={() => setShowExportMenu(!showExportMenu)} title={sidebarCollapsed ? undefined : t("导出", "Export")} data-tip={t("导出", "Export")}>
+            <button className="action-btn export-trigger" onClick={() => { if (sidebarCollapsed) { toggleSidebar(); setShowExportMenu(true); } else { setShowExportMenu(!showExportMenu); } }} data-tip={t("导出", "Export")}>
               <span className="sb-tile"><IconExport size={14} /></span> <span className="action-text">{t("导出", "Export")}</span>
             </button>
           </div>
@@ -5155,6 +5178,7 @@ function App() {
           </div>
         </div>
       )}
+      {tip && <div className="sb-tooltip" style={{ left: tip.x, top: tip.y }}>{tip.text}</div>}
     </div>
   );
 }

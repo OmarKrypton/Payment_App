@@ -2334,16 +2334,11 @@ body {
 .navitem { border-radius: 999px; }
 .navitem.active::before { display: none; }
 
-/* tooltips for the collapsed (icon-only) sidebar */
-.sidebar.collapsed { overflow: visible; position: relative; z-index: 20; }
-.sidebar.collapsed :is(.navitem, .sidebar-seg button, .eta-link, .acct-avatar, .action-btn, .action-primary, .sidebar-toggle)[data-tip] { position: relative; }
-.sidebar.collapsed :is(.navitem, .sidebar-seg button, .eta-link, .acct-avatar, .action-btn, .action-primary, .sidebar-toggle)[data-tip]::before {
-  content: attr(data-tip);
-  position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%) scale(0.96);
-  transform-origin: left center;
+/* styled tooltip for sidebar controls (JS-positioned; works collapsed + expanded) */
+.sb-tooltip {
+  position: fixed;
+  transform: translateY(-50%);
+  z-index: 2000;
   background: rgba(15, 23, 42, 0.97);
   color: #fff;
   font-size: 11px;
@@ -2354,12 +2349,10 @@ body {
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
-  z-index: 60;
+  animation: sb-tip-in 0.14s ease;
 }
-.sidebar.collapsed :is(.navitem, .sidebar-seg button, .eta-link, .acct-avatar, .action-btn, .action-primary, .sidebar-toggle)[data-tip]:hover::before {
-  opacity: 1;
-  transform: translateY(-50%) scale(1);
+@keyframes sb-tip-in {
+  from { opacity: 0; transform: translateY(-50%) scale(0.96); }
+  to { opacity: 1; transform: translateY(-50%) scale(1); }
 }
