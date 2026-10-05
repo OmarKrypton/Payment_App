@@ -720,11 +720,18 @@ function CollapsibleSection({ id, title, summary, summaryClass, defaultOpen = tr
   const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="card bank-anchor bank-collapsible" id={id}>
-      <button type="button" className="card-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+      <div
+        className="card-toggle"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(o => !o); } }}
+      >
         <span className="card-title">{title}</span>
         {summary != null && summary !== "" && <span className={`card-summary${summaryClass ? ` ${summaryClass}` : ""}`}>{summary}</span>}
         <span className="card-chev" style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}><IconChevronRight size={14} /></span>
-      </button>
+      </div>
       {open && <div className="card-collapse-body">{children}</div>}
     </section>
   );

@@ -2155,7 +2155,7 @@ body {
 
 .bank-collapsible > .card-collapse-body > .card { background: transparent; border: 0; box-shadow: none; padding: 0; }
 .bank-collapsible > .card-collapse-body > .card > h3 { display: none; }
-.card-toggle { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; padding: 0 0 10px; margin: 0; cursor: pointer; border-bottom: 1px solid var(--border); text-align: left; font: inherit; }
+.card-toggle { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; padding: 0 0 10px; margin: 0; cursor: pointer; border-bottom: 1px solid var(--border); text-align: left; font: inherit; user-select: none; outline: none; }
 .card-title { font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 0.02em; }
 .card-summary { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; font-weight: 650; color: var(--green); white-space: nowrap; }
 .card-summary.warn { color: var(--orange); }
