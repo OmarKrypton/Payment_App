@@ -1133,7 +1133,9 @@ function App() {
     const root = contentRef.current;
     if (!root) return;
     const onMove = (e: PointerEvent) => {
-      const el = (e.target as HTMLElement)?.closest?.(".bank-jump button") as HTMLElement | null;
+      const el = (e.target as HTMLElement)?.closest?.(
+        ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button)"
+      ) as HTMLElement | null;
       if (!el) return;
       const r = el.getBoundingClientRect();
       el.style.setProperty("--mx", ((e.clientX - r.left) / r.width * 100) + "%");

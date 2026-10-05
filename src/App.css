@@ -2256,3 +2256,52 @@ body {
 .prov-out.gray { color: var(--text-secondary); background: var(--bg-input); border-color: var(--border); }
 .prov-del { border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 7px; padding: 5px 7px; font-size: 12px; }
 .prov-del:hover { color: var(--red); background: var(--red-bg); border-color: #fecaca; }
+
+/* ── Sidebar: liquid-glass controls (all interactive items) ── */
+.sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow,
+  .util-btn, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button) {
+  position: relative;
+  background:
+    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.05));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  backdrop-filter: blur(10px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 12px rgba(0, 0, 0, 0.2);
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow,
+  .util-btn, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button):hover {
+  --sb-hl: rgba(255, 255, 255, 0.42);
+  transform: translateY(-1px) scale(1.02);
+  border-color: rgba(255, 255, 255, 0.26);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 8px 20px rgba(0, 0, 0, 0.3);
+}
+.sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow,
+  .util-btn, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button):active {
+  transform: scale(0.96);
+}
+/* selected / primary keep a solid indigo tint so they still stand out */
+.sidebar .navitem.active {
+  color: #fff;
+  border-color: rgba(129, 140, 248, 0.55);
+  background:
+    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
+    linear-gradient(180deg, rgba(99, 102, 241, 0.55), rgba(79, 70, 229, 0.4));
+}
+.sidebar .sidebar-seg button.on {
+  color: #fff;
+  border-color: rgba(129, 140, 248, 0.6);
+  background:
+    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
+    linear-gradient(180deg, rgba(99, 102, 241, 0.78), rgba(79, 70, 229, 0.62));
+}
+.sidebar .sidebar-actions .action-primary {
+  color: #fff;
+  border-color: rgba(129, 140, 248, 0.6);
+  background:
+    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
+    linear-gradient(180deg, rgba(99, 102, 241, 0.92), rgba(79, 70, 229, 0.78));
+}
+/* the export dropdown sits above; keep its items legible */
+.sidebar .sidebar-export-dropdown { background: rgba(16, 26, 43, 0.96); }
