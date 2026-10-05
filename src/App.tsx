@@ -4516,10 +4516,10 @@ function App() {
           </div>
           <div className="history-filters history-status">
             <button className={historyStatusFilter === "all" ? "active" : ""} onClick={() => setHistoryStatusFilter("all")}>{t("任意状态", "Any status")}</button>
-            <button className={historyStatusFilter === "approve" ? "active" : ""} onClick={() => setHistoryStatusFilter("approve")}>{t("已批准", "Approved")}</button>
-            <button className={historyStatusFilter === "conditional" ? "active" : ""} onClick={() => setHistoryStatusFilter("conditional")}>{t("有条件", "Conditional")}</button>
-            <button className={historyStatusFilter === "reject" ? "active" : ""} onClick={() => setHistoryStatusFilter("reject")}>{t("已拒绝", "Rejected")}</button>
-            <button className={historyStatusFilter === "pending" ? "active" : ""} onClick={() => setHistoryStatusFilter("pending")}>{t("待删除", "Pending delete")}</button>
+            <button className={`st-approve ${historyStatusFilter === "approve" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("approve")}>{t("已批准", "Approved")}</button>
+            <button className={`st-conditional ${historyStatusFilter === "conditional" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("conditional")}>{t("有条件", "Conditional")}</button>
+            <button className={`st-reject ${historyStatusFilter === "reject" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("reject")}>{t("已拒绝", "Rejected")}</button>
+            <button className={`st-pending ${historyStatusFilter === "pending" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("pending")}>{t("待删除", "Pending delete")}</button>
             <select className="history-sort" value={historySort} onChange={e => setHistorySort(e.target.value as any)}>
               <option value="newest">{t("最新优先", "Newest first")}</option>
               <option value="oldest">{t("最早优先", "Oldest first")}</option>
