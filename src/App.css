@@ -2192,7 +2192,7 @@ body {
 
 .bank-anchor { scroll-margin-top: 72px; }
 
-.bank-collapsible > .card-collapse-body > .card { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.bank-collapsible > .card-collapse-body > .card { background: transparent; border: 0; box-shadow: none; padding: 0; border-radius: 0; contain: none; }
 .bank-collapsible > .card-collapse-body > .card > h3 { display: none; }
 .card-toggle { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; padding: 0 0 10px; margin: 0; cursor: pointer; border-bottom: 1px solid var(--border); text-align: left; font: inherit; user-select: none; outline: none; }
 .card-title { font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 0.02em; }
@@ -2261,9 +2261,7 @@ body {
 .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow,
   .util-btn, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button) {
   position: relative;
-  background:
-    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.05));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.05));
   border: 1px solid rgba(255, 255, 255, 0.14);
   -webkit-backdrop-filter: blur(10px) saturate(150%);
   backdrop-filter: blur(10px) saturate(150%);
@@ -2271,8 +2269,22 @@ body {
   transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow,
+  .util-btn, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  background: radial-gradient(140px 80px at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.6), transparent 62%);
+}
+.sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow,
+  .util-btn, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button):hover::after {
+  opacity: 1;
+}
+.sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow,
   .util-btn, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button):hover {
-  --sb-hl: rgba(255, 255, 255, 0.42);
   transform: translateY(-1px) scale(1.02);
   border-color: rgba(255, 255, 255, 0.26);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 8px 20px rgba(0, 0, 0, 0.3);
@@ -2285,23 +2297,18 @@ body {
 .sidebar .navitem.active {
   color: #fff;
   border-color: rgba(129, 140, 248, 0.55);
-  background:
-    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
-    linear-gradient(180deg, rgba(99, 102, 241, 0.55), rgba(79, 70, 229, 0.4));
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.55), rgba(79, 70, 229, 0.4));
 }
+.sidebar .navitem.active::after { background: radial-gradient(140px 80px at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.4), transparent 62%); }
 .sidebar .sidebar-seg button.on {
   color: #fff;
   border-color: rgba(129, 140, 248, 0.6);
-  background:
-    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
-    linear-gradient(180deg, rgba(99, 102, 241, 0.78), rgba(79, 70, 229, 0.62));
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.78), rgba(79, 70, 229, 0.62));
 }
 .sidebar .sidebar-actions .action-primary {
   color: #fff;
   border-color: rgba(129, 140, 248, 0.6);
-  background:
-    radial-gradient(150px 80px at var(--mx, 50%) var(--my, 50%), var(--sb-hl, transparent), transparent 62%),
-    linear-gradient(180deg, rgba(99, 102, 241, 0.92), rgba(79, 70, 229, 0.78));
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.92), rgba(79, 70, 229, 0.78));
 }
 /* the export dropdown sits above; keep its items legible */
 .sidebar .sidebar-export-dropdown { background: rgba(16, 26, 43, 0.96); }

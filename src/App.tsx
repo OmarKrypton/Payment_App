@@ -1130,8 +1130,6 @@ function App() {
   // Liquid-glass specular: track the pointer inside a dock chip so the highlight
   // follows the cursor (--mx/--my consumed by .bank-jump button::before).
   useEffect(() => {
-    const root = contentRef.current;
-    if (!root) return;
     const onMove = (e: PointerEvent) => {
       const el = (e.target as HTMLElement)?.closest?.(
         ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button)"
@@ -1141,8 +1139,8 @@ function App() {
       el.style.setProperty("--mx", ((e.clientX - r.left) / r.width * 100) + "%");
       el.style.setProperty("--my", ((e.clientY - r.top) / r.height * 100) + "%");
     };
-    root.addEventListener("pointermove", onMove, { passive: true });
-    return () => root.removeEventListener("pointermove", onMove);
+    document.addEventListener("pointermove", onMove, { passive: true });
+    return () => document.removeEventListener("pointermove", onMove);
   }, []);
 
   // Naming the document: the serial becomes its identity/label. Typing one
