@@ -4374,16 +4374,16 @@ function App() {
           </button>
           <div className="action-row">
             <button className="action-btn" onClick={newSession} title={t("新会话", "New Session")}>
-              <span className="sb-tile"><IconNewSession size={14} /></span> <span>{t("新建", "New")}</span>
+              <span className="sb-tile"><IconNewSession size={14} /></span> <span className="action-text">{t("新建", "New")}</span>
             </button>
             <button className="action-btn" onClick={showHistoryModal} title={t("历史记录", "History")}>
-              <span className="sb-tile"><IconHistory size={14} /></span> <span>{t("历史", "History")}</span>
+              <span className="sb-tile"><IconHistory size={14} /></span> <span className="action-text">{t("历史", "History")}</span>
             </button>
             <button className="action-btn" onClick={importPdf} title={t("上传PDF (OCR)", "Upload PDF (OCR)")}>
-              <span className="sb-tile"><IconUpload size={14} /></span> <span>{t("OCR", "OCR")}</span>
+              <span className="sb-tile"><IconUpload size={14} /></span> <span className="action-text">{t("OCR", "OCR")}</span>
             </button>
             <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)} title={t("导出", "Export")}>
-              <span className="sb-tile"><IconExport size={14} /></span> <span>{t("导出", "Export")}</span>
+              <span className="sb-tile"><IconExport size={14} /></span> <span className="action-text">{t("导出", "Export")}</span>
             </button>
           </div>
           {showExportMenu && (
