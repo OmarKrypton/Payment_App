@@ -460,7 +460,7 @@ body {
 .sidebar.collapsed .action-label { display: none; }
 .sidebar.collapsed .sidebar-actions .action-primary { width: 44px; margin: 0 auto; padding: 9px 0; }
 .sidebar.collapsed .sb-tile { width: 24px; height: 24px; border-radius: 7px; }
-.sidebar.collapsed .sidebar-export-dropdown { left: 8px; right: 8px; }
+.sidebar.collapsed .sidebar-export-dropdown { left: 8px; right: auto; width: 210px; }
 
 /* ── Main Content ── */
 .content {

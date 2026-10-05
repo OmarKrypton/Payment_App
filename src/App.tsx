@@ -1026,7 +1026,7 @@ function App() {
     if (!showExportMenu) return;
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest('.sidebar-export-group')) setShowExportMenu(false);
+      if (!target.closest('.sidebar-export-dropdown') && !target.closest('.export-trigger')) setShowExportMenu(false);
     };
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
@@ -4383,7 +4383,7 @@ function App() {
             <button className="action-btn" onClick={importPdf} title={sidebarCollapsed ? undefined : t("上传PDF (OCR)", "Upload PDF (OCR)")} data-tip={t("OCR", "OCR")}>
               <span className="sb-tile"><IconUpload size={14} /></span> <span className="action-text">{t("OCR", "OCR")}</span>
             </button>
-            <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)} title={sidebarCollapsed ? undefined : t("导出", "Export")} data-tip={t("导出", "Export")}>
+            <button className="action-btn export-trigger" onClick={() => setShowExportMenu(!showExportMenu)} title={sidebarCollapsed ? undefined : t("导出", "Export")} data-tip={t("导出", "Export")}>
               <span className="sb-tile"><IconExport size={14} /></span> <span className="action-text">{t("导出", "Export")}</span>
             </button>
           </div>
