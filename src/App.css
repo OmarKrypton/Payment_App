@@ -2312,3 +2312,24 @@ body {
 }
 /* the export dropdown sits above; keep its items legible */
 .sidebar .sidebar-export-dropdown { background: rgba(16, 26, 43, 0.96); }
+
+/* icon tiles: a small glass chip behind each sidebar icon (bright top lip) */
+.sb-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.94);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 3px rgba(0, 0, 0, 0.22);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.sidebar-seg button .sb-tile { width: 22px; height: 22px; border-radius: 7px; }
+.action-btn .sb-tile { width: 24px; height: 24px; border-radius: 7px; }
+/* nav rows read like the dock chips */
+.navitem { border-radius: 999px; }
+.navitem.active::before { display: none; }

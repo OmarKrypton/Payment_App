@@ -4263,22 +4263,22 @@ function App() {
         <div className="sidebar-section-label">{t("文档", "Document")}</div>
         <div className="sidebar-seg">
           <button className={tab === "bank" ? "on" : ""} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
-            <IconBank size={15} /> <span className="seg-label">{t("银行", "Bank")}</span>
+            <span className="sb-tile"><IconBank size={15} /></span> <span className="seg-label">{t("银行", "Bank")}</span>
           </button>
           <button className={tab === "import" ? "on" : ""} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
-            <IconTruck size={15} /> <span className="seg-label">{t("进口", "Import")}</span>
+            <span className="sb-tile"><IconTruck size={15} /></span> <span className="seg-label">{t("进口", "Import")}</span>
           </button>
         </div>
 
         {/* Views */}
         <div className="sidebar-section-label">{t("视图", "Views")}</div>
         <button className={`navitem${tab === "suppliers" ? " active" : ""}`} onClick={() => setTab("suppliers")}>
-          <IconUsers size={15} />
+          <span className="sb-tile"><IconUsers size={15} /></span>
           <span className="navlabel">{t("供应商", "Suppliers")}</span>
           {supplierData.length > 0 && <span className="navbadge">{supplierData.length}</span>}
         </button>
         <button className="navitem" onClick={openPool}>
-          <IconLayers size={15} />
+          <span className="sb-tile"><IconLayers size={15} /></span>
           <span className="navlabel">{t("发票池", "Invoice Pool")}</span>
           {availablePoolCount > 0 && <span className="navbadge violet">{availablePoolCount}</span>}
         </button>
@@ -4374,16 +4374,16 @@ function App() {
           </button>
           <div className="action-row">
             <button className="action-btn" onClick={newSession} title={t("新会话", "New Session")}>
-              <IconNewSession /> <span>{t("新建", "New")}</span>
+              <span className="sb-tile"><IconNewSession size={14} /></span> <span>{t("新建", "New")}</span>
             </button>
             <button className="action-btn" onClick={showHistoryModal} title={t("历史记录", "History")}>
-              <IconHistory /> <span>{t("历史", "History")}</span>
+              <span className="sb-tile"><IconHistory size={14} /></span> <span>{t("历史", "History")}</span>
             </button>
             <button className="action-btn" onClick={importPdf} title={t("上传PDF (OCR)", "Upload PDF (OCR)")}>
-              <IconUpload /> <span>{t("OCR", "OCR")}</span>
+              <span className="sb-tile"><IconUpload size={14} /></span> <span>{t("OCR", "OCR")}</span>
             </button>
             <button className="action-btn" onClick={() => setShowExportMenu(!showExportMenu)} title={t("导出", "Export")}>
-              <IconExport /> <span>{t("导出", "Export")}</span>
+              <span className="sb-tile"><IconExport size={14} /></span> <span>{t("导出", "Export")}</span>
             </button>
           </div>
           {showExportMenu && (
