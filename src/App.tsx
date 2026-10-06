@@ -919,6 +919,7 @@ function App() {
   const contentRef = useRef<HTMLElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
   const [modalMsg, setModalMsg] = useState<string | null>(null);
+  const [showSplash, setShowSplash] = useState(true);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -1077,6 +1078,12 @@ function App() {
     if (importTimerRef.current) { clearTimeout(importTimerRef.current); importTimerRef.current = null; }
     setProgressMsg("");
     if (overlayRef.current) overlayRef.current.style.display = 'none';
+  }, []);
+
+  // Splash screen: show the branded intro once on start, then fade into the app.
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSplash(false), 4600);
+    return () => clearTimeout(timer);
   }, []);
 
   // Init: load local config and restore Supabase session
@@ -4276,6 +4283,20 @@ function App() {
 
   return (
     <div className="app">
+      {showSplash && (
+        <div className="splash-screen" aria-hidden="true">
+          <div className="splash-glow" />
+          <div className="splash-grid" />
+          <div className="splash-stack">
+            <div className="splash-logo"><img src="/assets/vouchify.svg" alt="Vouchify" /></div>
+            <div className="splash-name">Vouchify</div>
+            <div className="splash-tag">{t("付款凭证", "Payment Voucher")}</div>
+            <div className="splash-progress"><i /></div>
+            <div className="splash-dots"><span /><span /><span /></div>
+          </div>
+          <div className="splash-credit">By <b>Omar Mahmoud</b></div>
+        </div>
+      )}
       <div ref={overlayRef} className="loading-overlay" style={{ display: 'none' }}>
         <div className="loading-modal">
           <div className="loading-spinner" />
