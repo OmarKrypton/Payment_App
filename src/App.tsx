@@ -639,6 +639,70 @@ function Select({ label, sub, value, options, onChange, disabled }: {
   );
 }
 
+// Glass dropdown used by the Invoice Pool filters: a frosted control with a
+// chevron pinned to the right (it never shifts with the selected text) and a
+// glass popover menu instead of the native select list.
+function GlassSelect({ value, options, onChange, allLabel }: {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+  allLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const current = value === "all" ? allLabel : (options.find(o => o.value === value)?.label ?? allLabel);
+  const pick = (v: string) => { onChange(v); setOpen(false); };
+  return (
+    <div className="fsel" ref={ref}>
+      <button type="button" className={`fsel-btn${open ? " open" : ""}`} onClick={() => setOpen(o => !o)}>
+        <span className="val">{current}</span>
+        <svg className="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
+      </button>
+      {open && (
+        <div className="fsel-menu">
+          <div className={`fsel-opt${value === "all" ? " sel" : ""}`} onClick={() => pick("all")}>
+            {allLabel}{value === "all" && <span className="check">✓</span>}
+          </div>
+          {options.map(o => (
+            <div key={o.value} className={`fsel-opt${value === o.value ? " sel" : ""}`} onClick={() => pick(o.value)}>
+              {o.label}{value === o.value && <span className="check">✓</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Glass date control: the styled field shows a readable date and opens the
+// native date picker (showPicker) via a transparent overlaid input.
+function GlassDate({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const label = value ? new Date(value + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+  const openPicker = () => {
+    const el = ref.current;
+    if (!el) return;
+    const anyEl = el as any;
+    try { if (typeof anyEl.showPicker === "function") { anyEl.showPicker(); return; } } catch {}
+    el.focus();
+  };
+  return (
+    <button type="button" className="date-field" onClick={openPicker}>
+      <svg className="cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+      <span>{label || placeholder}</span>
+      <input ref={ref} type="date" className="date-native" value={value} onChange={e => onChange(e.target.value)} tabIndex={-1} />
+    </button>
+  );
+}
+
 function Computed({ label, sub, value, highlight }: { label: string; sub?: string; value: number; highlight?: boolean }) {
   const negative = value < 0;
   const cls = `computed-value${highlight ? " highlight" : ""}${negative ? " negative" : ""}`;
@@ -1159,7 +1223,7 @@ function App() {
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       const el = (e.target as HTMLElement)?.closest?.(
-        ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button), .hc-btn, .history-modal .history-filters button, .history-modal .pool-seg button, .history-modal .pool-chip"
+        ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button), .hc-btn, .history-modal .history-filters button, .history-modal .pool-seg button, .history-modal .pool-chip, .history-modal .fsel-btn, .history-modal .date-field"
       ) as HTMLElement | null;
       if (!el) return;
       const r = el.getBoundingClientRect();
@@ -4889,6 +4953,8 @@ function App() {
                 const q = poolSearch.trim().replace(/\s+/g, " ").toLowerCase();
                 const sellers = Array.from(new Set(poolList.map((p: any) => p.seller_tax_id).filter(Boolean))) as string[];
                 const currencies = Array.from(new Set(poolList.map((p: any) => p.currency || 'EGP').filter(Boolean))) as string[];
+                const sellerNameByTax = new Map<string, string>();
+                for (const p of poolList) { const s = p.seller_tax_id; if (s && !sellerNameByTax.has(s)) sellerNameByTax.set(s, p.seller_name || ""); }
                 const base = poolList.filter((p: any) => {
                   if (q) {
                     const hay = [p.invoice_id, p.seller_tax_id, p.seller_name, p.file_name || "", p.used_by_label || ""].join(" ").replace(/\s+/g, " ").toLowerCase();
@@ -4953,17 +5019,11 @@ function App() {
                     )}
                     {poolTab !== 'claimed' && (
                       <div className="pool-filterbar">
-                        <select className="field-input" style={{width:120}} value={poolCurrency} onChange={e => setPoolCurrency(e.target.value)}>
-                          <option value="all">{t("所有货币", "All currencies")}</option>
-                          {currencies.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <select className="field-input" style={{width:160}} value={poolSeller} onChange={e => setPoolSeller(e.target.value)}>
-                          <option value="all">{t("所有卖方", "All sellers")}</option>
-                          {sellers.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <input className="field-input" style={{width:110}} type="date" value={poolDateFrom} onChange={e => setPoolDateFrom(e.target.value)} />
+                        <GlassSelect value={poolCurrency} allLabel={t("所有货币", "All currencies")} options={currencies.map(c => ({ value: c, label: c }))} onChange={setPoolCurrency} />
+                        <GlassSelect value={poolSeller} allLabel={t("所有卖方", "All sellers")} options={sellers.map(s => ({ value: s, label: sellerNameByTax.get(s) ? `${sellerNameByTax.get(s)} · ${s}` : s }))} onChange={setPoolSeller} />
+                        <GlassDate value={poolDateFrom} onChange={setPoolDateFrom} placeholder={t("起始日期", "From")} />
                         <span style={{color:'var(--text-muted)',fontSize:11}}>–</span>
-                        <input className="field-input" style={{width:110}} type="date" value={poolDateTo} onChange={e => setPoolDateTo(e.target.value)} />
+                        <GlassDate value={poolDateTo} onChange={setPoolDateTo} placeholder={t("结束日期", "To")} />
                         {(poolSeller !== 'all' || poolCurrency !== 'all' || poolDateFrom || poolDateTo) && (
                           <button className="pool-chip" style={{marginLeft:'auto'}} onClick={() => { setPoolSeller('all'); setPoolCurrency('all'); setPoolDateFrom(''); setPoolDateTo(''); }}>
                             ✕ {t("重置筛选", "Reset filters")}
