@@ -833,6 +833,7 @@ interface HistoryEntry {
   id: number; label: string; notes: string; created_at: string; owner?: string;
   delete_requested_at?: string | null; delete_requested_by?: string | null;
   data_json?: string; final_decision?: string; doc_type?: string; auditor?: string;
+  ts?: number;
 }
 
 const normalizeId = (s: string) => (s || "").toUpperCase().replace(/\s+/g, "");
@@ -845,6 +846,16 @@ function alertKind(msg: string): "ok" | "error" | "warn" | "info" {
   if (/(saved|synced|success|exported|deleted|uploaded|claimed|restored|已保存|已同步|成功|已导出|已删除|已上传|已认领|已恢复|已是最新)/.test(m)) return "ok";
   if (/(warning|注意)/.test(m)) return "warn";
   return "info";
+}
+
+// Reliable numeric timestamp for sorting snapshots. Remote rows are shown with a
+// locale-formatted date (not sortable), so we keep the epoch separately.
+function snapshotTs(s: string | undefined): number {
+  if (!s) return 0;
+  const direct = Date.parse(s);
+  if (!Number.isNaN(direct)) return direct;
+  const alt = Date.parse(String(s).replace(" ", "T"));
+  return Number.isNaN(alt) ? 0 : alt;
 }
 
 // Mirrors service_matches_invoice in src-tauri/src/eta_xml.rs: returns true when an
@@ -2644,6 +2655,7 @@ function App() {
             notes: r.notes,
             data_json: r.data_json,
             created_at: new Date(r.created_at).toLocaleString(),
+            ts: new Date(r.created_at).getTime(),
             owner: r.user_id,
             delete_requested_at: r.delete_requested_at,
             delete_requested_by: r.delete_requested_by,
@@ -2666,7 +2678,7 @@ function App() {
               doc_type = parsed.doc_type || "bank";
               auditor = parsed.auditor || "";
             } catch {}
-            return { ...h, final_decision, doc_type, auditor };
+            return { ...h, final_decision, doc_type, auditor, ts: snapshotTs(h.created_at) };
           }));
         } catch (e2) {
           console.error("list_history fallback failed", e2);
@@ -2686,7 +2698,7 @@ function App() {
             doc_type = parsed.doc_type || "bank";
             auditor = parsed.auditor || "";
           } catch {}
-          return { ...h, final_decision, doc_type, auditor };
+          return { ...h, final_decision, doc_type, auditor, ts: snapshotTs(h.created_at) };
         }));
       } catch (e) {
         console.error("list_history failed", e);
@@ -4652,8 +4664,10 @@ function App() {
               const statusFiltered = typeFiltered.filter(h => historyStatusFilter === "all" ? true : historyStatusFilter === "pending" ? h.delete_requested_at != null : (h.final_decision || "") === historyStatusFilter);
               const sorted = [...statusFiltered].sort((a, b) => {
                 if (historySort === "label") return String(a.label || "").localeCompare(String(b.label || ""));
-                if (historySort === "oldest") return String(a.created_at || "").localeCompare(String(b.created_at || ""));
-                return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+                const at = a.ts ?? snapshotTs(a.created_at);
+                const bt = b.ts ?? snapshotTs(b.created_at);
+                if (historySort === "oldest") return at - bt;
+                return bt - at;
               });
               if (sorted.length === 0) return <div className="history-empty">{t("未找到快照", "No snapshots found")}</div>;
               return sorted.map(h => {
