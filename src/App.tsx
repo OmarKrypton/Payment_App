@@ -855,6 +855,7 @@ function App() {
   const [poolSeller, setPoolSeller] = useState("all");
   const [poolCurrency, setPoolCurrency] = useState("all");
   const [poolDocFilter, setPoolDocFilter] = useState<"all" | "Valid" | "Rejected" | "Cancelled">("all");
+  const [poolVisible, setPoolVisible] = useState(150);
   const [poolImportProgress, setPoolImportProgress] = useState<{ processed: number; total: number; file: string } | null>(null);
   const [resultSearch, setResultSearch] = useState("");
   const [overwriteTarget, setOverwriteTarget] = useState<{ id: number; label: string; remote: boolean } | null>(null);
@@ -3199,6 +3200,11 @@ function App() {
     }
   };
 
+  // Render the pool list in pages so a large pool (thousands of rows) stays
+  // responsive: only the first `poolVisible` cards are mounted. Any change to
+  // the filters/search/tab starts back at the first page.
+  useEffect(() => { setPoolVisible(150); }, [poolSearch, poolSeller, poolCurrency, poolDateFrom, poolDateTo, poolTab, poolDocFilter, showPool]);
+
   const loadPool = async () => {
     setPoolLoading(true);
     try {
@@ -4972,7 +4978,7 @@ function App() {
                         <div className="history-empty">{t("发票池为空，上传XML发票以开始", "Pool is empty. Upload XML invoices to get started.")}</div>
                       ) : shown.length === 0 ? (
                         <div className="history-empty">{t("无匹配结果", "No matching invoices")}</div>
-                      ) : shown.map((p: any) => {
+                      ) : shown.slice(0, poolVisible).map((p: any) => {
                         const pendingDelete = p.delete_requested_at != null;
                         const docStatus = p.doc_status || "Valid";
                         const unusable = docStatus !== "Valid";
@@ -5063,6 +5069,11 @@ function App() {
                         </div>
                         );
                       })}
+                      {!poolLoading && shown.length > poolVisible && (
+                        <button className="hc-btn pool-more" onClick={() => setPoolVisible(v => v + 150)}>
+                          {t("显示更多", "Show more")} ({shown.length - poolVisible})
+                        </button>
+                      )}
                     </div>
                   </>
                 );
