@@ -1279,7 +1279,7 @@ function App() {
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       const el = (e.target as HTMLElement)?.closest?.(
-        ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button), .hc-btn, .history-modal .history-filters button, .history-modal .pool-seg button, .history-modal .pool-chip, .history-modal .fsel-btn, .history-modal .date-field, .modal .btn-add, .modal .btn-load, .modal .btn-approve, .modal .btn-reject, .modal .btn-delete, .modal .btn-danger"
+        ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button), .hc-btn, .history-modal .history-filters button, .history-modal .pool-seg button, .history-modal .pool-chip, .history-modal .fsel-btn, .history-modal .date-field, .modal .btn-add, .modal .btn-load, .modal .btn-approve, .modal .btn-reject, .modal .btn-delete, .modal .btn-danger, .suppliers-tab .supplier-vat-row, .suppliers-tab .supplier-stat"
       ) as HTMLElement | null;
       if (!el) return;
       const r = el.getBoundingClientRect();
@@ -2142,12 +2142,11 @@ function App() {
             </div>
             <div className="suppliers-stats">
               <span className="supplier-stat">{supplierData.length} {t("供应商", "Suppliers")}</span>
-              <span className="dot-sep">·</span>
               <span className="supplier-stat">{totalDocs} {t("文档", "docs")}</span>
-              {whtFreeCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span></>}
-              {withholdingCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span></>}
-              {certsToRenew > 0 && <><span className="dot-sep">·</span><span className="supplier-stat bad">{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</span></>}
-              {unknownCount > 0 && <><span className="dot-sep">·</span><span className="supplier-stat warn">{unknownCount} {t("未命名", "unnamed")}</span></>}
+              {whtFreeCount > 0 && <span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span>}
+              {withholdingCount > 0 && <span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span>}
+              {certsToRenew > 0 && <span className="supplier-stat bad">{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</span>}
+              {unknownCount > 0 && <span className="supplier-stat warn">{unknownCount} {t("未命名", "unnamed")}</span>}
             </div>
           </div>
           <div className="suppliers-header-tools">
@@ -2160,7 +2159,7 @@ function App() {
                 onChange={e => setSupplierSearch(e.target.value)}
               />
             </div>
-            <button className="btn-add" onClick={() => setSupplierEditor({ taxId: "", name: "" })}>
+            <button className="hc-btn pri" onClick={() => setSupplierEditor({ taxId: "", name: "" })}>
               + {t("添加供应商", "Add Supplier")}
             </button>
           </div>
@@ -2189,8 +2188,8 @@ function App() {
                   </div>
                   {!s.name && !s.poolName && (
                     <button
-                      className="btn-load"
-                      style={{ padding: '4px 10px', fontSize: 11, flexShrink: 0 }}
+                      className="hc-btn"
+                      style={{ padding: '5px 12px', fontSize: 11, flexShrink: 0 }}
                       onClick={() => setSupplierEditor({ taxId: s.taxId, name: "", lockTaxId: true })}
                     >{t("命名", "Name")}</button>
                   )}
@@ -2277,7 +2276,7 @@ function App() {
                             </span>
                           </div>
                           <span className={`supplier-cert-badge ${st.level}`}>{label}</span>
-                          <button className="btn-load" onClick={() => openCertEditor(s.taxId, s.name || s.poolName)}>{t("更新", "Update")}</button>
+                          <button className="hc-btn" onClick={() => openCertEditor(s.taxId, s.name || s.poolName)}>{t("更新", "Update")}</button>
                         </div>
                       );
                     })()}
@@ -2294,7 +2293,7 @@ function App() {
                           <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
                           <span className="supplier-doc-label" title={d.matchedVia ? `${t("匹配来源", "Matched via")}: ${d.matchedVia}` : d.label}>{d.label}</span>
                           <span className="supplier-doc-date">{d.created_at}</span>
-                          <button className="btn-load" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
+                          <button className="hc-btn" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
                         </div>
                       ))}
                     </div>
