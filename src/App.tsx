@@ -639,17 +639,23 @@ function Select({ label, sub, value, options, onChange, disabled }: {
   );
 }
 
-// Glass dropdown used by the Invoice Pool filters: a frosted control with a
-// chevron pinned to the right (it never shifts with the selected text) and a
-// glass popover menu instead of the native select list.
-function GlassSelect({ value, options, onChange, allLabel }: {
+// Glass dropdown used by the Invoice Pool filters and the History sort: a frosted
+// control with a chevron pinned to the right (it never shifts with the selected
+// text) and a glass popover menu instead of the native select list. Optionally
+// searchable (used for the long seller list).
+function GlassSelect({ value, options, onChange, allLabel, searchable, searchPlaceholder, className }: {
   value: string;
   options: { value: string; label: string }[];
   onChange: (v: string) => void;
-  allLabel: string;
+  allLabel?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
@@ -658,24 +664,46 @@ function GlassSelect({ value, options, onChange, allLabel }: {
     document.addEventListener("keydown", onKey);
     return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
   }, [open]);
-  const current = value === "all" ? allLabel : (options.find(o => o.value === value)?.label ?? allLabel);
+  useEffect(() => {
+    if (open && searchable) {
+      setQ("");
+      const id = setTimeout(() => searchRef.current?.focus(), 0);
+      return () => clearTimeout(id);
+    }
+  }, [open, searchable]);
+  const current = (allLabel && value === "all") ? allLabel : (options.find(o => o.value === value)?.label ?? (allLabel || ""));
   const pick = (v: string) => { onChange(v); setOpen(false); };
+  const ql = q.trim().toLowerCase();
+  const opts = ql ? options.filter(o => o.label.toLowerCase().includes(ql) || o.value.toLowerCase().includes(ql)) : options;
+  const showAll = !!allLabel && (!ql || allLabel.toLowerCase().includes(ql));
   return (
-    <div className="fsel" ref={ref}>
+    <div className={`fsel${className ? " " + className : ""}`} ref={ref}>
       <button type="button" className={`fsel-btn${open ? " open" : ""}`} onClick={() => setOpen(o => !o)}>
         <span className="val">{current}</span>
         <svg className="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
       </button>
       {open && (
         <div className="fsel-menu">
-          <div className={`fsel-opt${value === "all" ? " sel" : ""}`} onClick={() => pick("all")}>
-            {allLabel}{value === "all" && <span className="check">✓</span>}
-          </div>
-          {options.map(o => (
+          {searchable && (
+            <input
+              ref={searchRef}
+              className="fsel-search"
+              placeholder={searchPlaceholder || ""}
+              value={q}
+              onChange={e => setQ(e.target.value)}
+            />
+          )}
+          {showAll && (
+            <div className={`fsel-opt${value === "all" ? " sel" : ""}`} onClick={() => pick("all")}>
+              <span className="lbl">{allLabel}</span>{value === "all" && <span className="check">✓</span>}
+            </div>
+          )}
+          {opts.map(o => (
             <div key={o.value} className={`fsel-opt${value === o.value ? " sel" : ""}`} onClick={() => pick(o.value)}>
-              {o.label}{value === o.value && <span className="check">✓</span>}
+              <span className="lbl">{o.label}</span>{value === o.value && <span className="check">✓</span>}
             </div>
           ))}
+          {opts.length === 0 && !showAll && <div className="fsel-empty">—</div>}
         </div>
       )}
     </div>
@@ -4577,11 +4605,16 @@ function App() {
             <button className={`st-conditional ${historyStatusFilter === "conditional" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("conditional")}>{t("有条件", "Conditional")}</button>
             <button className={`st-reject ${historyStatusFilter === "reject" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("reject")}>{t("已拒绝", "Rejected")}</button>
             <button className={`st-pending ${historyStatusFilter === "pending" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("pending")}>{t("待删除", "Pending delete")}</button>
-            <select className="history-sort" value={historySort} onChange={e => setHistorySort(e.target.value as any)}>
-              <option value="newest">{t("最新优先", "Newest first")}</option>
-              <option value="oldest">{t("最早优先", "Oldest first")}</option>
-              <option value="label">{t("编号 A–Z", "Serial A–Z")}</option>
-            </select>
+            <GlassSelect
+              className="history-sort-select"
+              value={historySort}
+              onChange={v => setHistorySort(v as any)}
+              options={[
+                { value: "newest", label: t("最新优先", "Newest first") },
+                { value: "oldest", label: t("最早优先", "Oldest first") },
+                { value: "label", label: t("编号 A–Z", "Serial A–Z") },
+              ]}
+            />
           </div>
           <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
             {historyLoading ? (
@@ -5020,7 +5053,7 @@ function App() {
                     {poolTab !== 'claimed' && (
                       <div className="pool-filterbar">
                         <GlassSelect value={poolCurrency} allLabel={t("所有货币", "All currencies")} options={currencies.map(c => ({ value: c, label: c }))} onChange={setPoolCurrency} />
-                        <GlassSelect value={poolSeller} allLabel={t("所有卖方", "All sellers")} options={sellers.map(s => ({ value: s, label: sellerNameByTax.get(s) ? `${sellerNameByTax.get(s)} · ${s}` : s }))} onChange={setPoolSeller} />
+                        <GlassSelect value={poolSeller} allLabel={t("所有卖方", "All sellers")} searchable searchPlaceholder={t("搜索卖方…", "Search sellers…")} options={sellers.map(s => ({ value: s, label: sellerNameByTax.get(s) ? `${sellerNameByTax.get(s)} · ${s}` : s }))} onChange={setPoolSeller} />
                         <GlassDate value={poolDateFrom} onChange={setPoolDateFrom} placeholder={t("起始日期", "From")} />
                         <span style={{color:'var(--text-muted)',fontSize:11}}>–</span>
                         <GlassDate value={poolDateTo} onChange={setPoolDateTo} placeholder={t("结束日期", "To")} />

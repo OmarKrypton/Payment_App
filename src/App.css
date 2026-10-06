@@ -2527,7 +2527,7 @@ body {
 .history-modal .pool-seg button.active { background: linear-gradient(180deg, #3b82f6, #2563eb); color: #fff; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35); }
 .history-modal .pool-seg button::after,
 .history-modal .pool-chip::after,
-.history-modal .fsel-btn::after,
+.history-modal .fsel .fsel-btn::after,
 .history-modal .date-field::after {
   content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
   opacity: 0; transition: opacity 0.18s ease;
@@ -2535,7 +2535,7 @@ body {
 }
 .history-modal .pool-seg button:hover::after,
 .history-modal .pool-chip:hover::after,
-.history-modal .fsel-btn:hover::after,
+.history-modal .fsel .fsel-btn:hover::after,
 .history-modal .date-field:hover::after { opacity: 1; }
 .history-modal .pool-chip { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.85); background: rgba(255, 255, 255, 0.55); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9); font-size: 11px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: inherit; transition: transform 0.2s, border-color 0.2s, color 0.2s; }
 .history-modal .pool-chip:hover { transform: translateY(-1px); border-color: rgba(199, 210, 254, 0.95); color: var(--text-primary); }
@@ -2553,30 +2553,46 @@ body {
 .history-modal .pool-chips .pool-chip { flex: 1 1 0; justify-content: center; border-radius: 10px; padding: 7px 6px; }
 
 /* glass dropdown (currency / seller) */
+/* glass dropdown (currency / seller / history sort) */
 .history-modal .fsel { position: relative; }
-.history-modal .fsel-btn {
+.history-modal .history-sort-select { margin-left: auto; }
+.history-modal .fsel .fsel-btn {
   position: relative; overflow: hidden; display: flex; align-items: center; gap: 8px;
   min-width: 150px; padding: 8px 11px; border-radius: 10px; cursor: pointer; font-family: inherit;
   border: 1px solid rgba(255, 255, 255, 0.85); background: rgba(255, 255, 255, 0.62);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9); color: var(--text-secondary); font-size: 11.5px; font-weight: 600;
   transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
-.history-modal .fsel-btn:hover { transform: translateY(-1px); border-color: rgba(199, 210, 254, 0.95); color: var(--text-primary); }
-.history-modal .fsel-btn .val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.history-modal .fsel-btn .chev { flex: none; width: 12px; height: 12px; color: var(--text-muted); transition: transform 0.18s ease; }
-.history-modal .fsel-btn.open .chev { transform: rotate(180deg); }
+.history-modal .fsel .fsel-btn:hover { transform: translateY(-1px); border-color: rgba(199, 210, 254, 0.95); color: var(--text-primary); }
+.history-modal .fsel .fsel-btn .val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.history-modal .fsel .fsel-btn .chev { flex: none; width: 12px; height: 12px; color: var(--text-muted); transition: transform 0.18s ease; }
+.history-modal .fsel .fsel-btn.open .chev { transform: rotate(180deg); }
 .history-modal .fsel-menu {
-  position: absolute; top: calc(100% + 6px); left: 0; min-width: 100%; max-height: 260px; overflow-y: auto; z-index: 40;
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
+  width: max-content; min-width: 100%; max-width: min(360px, 80vw);
+  max-height: 260px; overflow-y: auto; overflow-x: hidden;
   padding: 5px; border-radius: 12px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82));
   -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 18px 44px rgba(15, 23, 42, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
+.history-modal .fsel-menu::-webkit-scrollbar { width: 6px; }
+.history-modal .fsel-menu::-webkit-scrollbar-track { background: transparent; }
+.history-modal .fsel-menu::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.22); border-radius: 3px; }
+.history-modal .fsel-search {
+  width: 100%; box-sizing: border-box; margin: 0 0 5px; padding: 7px 9px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.85); background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9); font-size: 11.5px; font-family: inherit;
+  color: var(--text-primary); outline: none;
+}
+.history-modal .fsel-search::placeholder { color: var(--text-muted); }
 .history-modal .fsel-opt { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 8px; font-size: 11.5px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .history-modal .fsel-opt:hover { background: rgba(59, 130, 246, 0.10); color: var(--text-primary); }
 .history-modal .fsel-opt.sel { color: var(--accent); font-weight: 700; background: rgba(59, 130, 246, 0.12); }
-.history-modal .fsel-opt .check { margin-left: auto; color: var(--accent); }
+.history-modal .fsel-opt .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.history-modal .fsel-opt .check { flex: none; margin-left: auto; color: var(--accent); }
+.history-modal .fsel-empty { padding: 8px 9px; font-size: 11.5px; color: var(--text-muted); }
 
 /* glass date field (opens the native picker) */
 .history-modal .date-field {
