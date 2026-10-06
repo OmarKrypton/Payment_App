@@ -2491,3 +2491,16 @@ body {
 }
 .history-modal .history-filters button:hover::after,
 .hc-btn:hover::after { opacity: 1; }
+
+/* ── Unsaved-changes dialog (History Browser glass) ── */
+.history-modal.unsaved-modal { width: min(470px, 94vw); max-height: none; }
+.unsaved-modal .modal-header h3 { display: flex; align-items: center; gap: 10px; color: var(--text-primary); font-weight: 700; }
+.unsaved-modal .uc-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 9px; flex: none; font-size: 15px;
+  background: rgba(234, 88, 12, 0.13); border: 1px solid rgba(234, 88, 12, 0.28); color: var(--orange);
+}
+.unsaved-modal .uc-body { padding: 4px 18px 0; }
+.unsaved-modal .uc-body p { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+.unsaved-modal .uc-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 18px 18px; flex-wrap: wrap; }
+.unsaved-modal .hc-btn { padding: 8px 15px; font-size: 12px; }

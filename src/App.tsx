@@ -2603,7 +2603,25 @@ function App() {
 
   const saveSnapshot = async (): Promise<boolean> => {
     if (overwriteTarget) {
-      // Overwrite an existing snapshot (maker fixed a rejected document).
+      // Saving a loaded snapshot updates it in place (Load no longer needs a
+      // separate "Overwrite" action). The label follows the serial when one is
+      // set, but a serial already used by a *different* snapshot is rejected.
+      const target = overwriteTarget;
+      const newLabel = (data.doc_serial || "").trim() || target.label;
+      const dupMsg = t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate");
+      if (newLabel) {
+        if (target.remote && authUser) {
+          try {
+            const remoteRows = await listSnapshotsRemote(newLabel);
+            if (remoteRows.some(r => r.label === newLabel && r.id !== target.id)) { showAlert(dupMsg); return false; }
+          } catch (e) { console.error("Supabase serial check failed", e); }
+        } else {
+          try {
+            const local = await invoke<HistoryEntry[]>("list_history", { search: newLabel });
+            if (local.some(h => h.label === newLabel && h.id !== target.id)) { showAlert(dupMsg); return false; }
+          } catch {}
+        }
+      }
       // Preserve the decision chosen in the Final Decision card (e.g. an approved
       // doc stays approved; for a rejected doc the maker sets Approve before saving).
       const saveData = {
@@ -2614,26 +2632,25 @@ function App() {
         auditor: data.auditor || authUser || "",
       };
       const dataJson = JSON.stringify(saveData);
-      const target = overwriteTarget;
       if (target.remote && authUser) {
         try {
-          await updateSnapshotRemote(target.id, target.label, "", dataJson);
+          await updateSnapshotRemote(target.id, newLabel, "", dataJson);
           setSynced(true);
-          showAlert(`${t("已覆盖并同步", "Overwritten & synced")} (${target.label})`);
+          showAlert(`${t("已保存并同步", "Saved & synced")} (${newLabel})`);
         } catch (e: any) {
-          showAlert(`${t("覆盖失败", "Overwrite failed")}: ${e.message || e}`);
+          showAlert(`${t("保存失败", "Save failed")}: ${e.message || e}`);
           return false;
         }
       } else {
         try {
-          await invoke("update_history", { id: target.id, label: target.label, notes: "", dataJson });
-          showAlert(`${t("已覆盖", "Overwritten")} (${target.label})`);
+          await invoke("update_history", { id: target.id, label: newLabel, notes: "", dataJson });
+          showAlert(`${t("已保存", "Saved")} (${newLabel})`);
         } catch (e: any) {
-          showAlert(`${t("覆盖失败", "Overwrite failed")}: ${e.message || e}`);
+          showAlert(`${t("保存失败", "Save failed")}: ${e.message || e}`);
           return false;
         }
       }
-      setOverwriteTarget(null);
+      // Keep the snapshot as the save target, so further edits also save in place.
       loadHistoryList(historySearch);
       savedJsonRef.current = JSON.stringify(formRef.current);
       setDocStatus("saved");
@@ -2768,6 +2785,9 @@ function App() {
       formRef.current = parsed;
       savedJsonRef.current = JSON.stringify(parsed);
       setDocStatus("saved");
+      // A loaded snapshot becomes the save target: pressing Save updates this
+      // snapshot in place instead of creating a new one.
+      setOverwriteTarget({ id, label: historyList.find(h => h.id === id)?.label || parsed.doc_serial || "", remote: !!authUser });
       setTab(parsed.doc_type === "import" ? "import" : "bank");
       setEtaResult(null);
       setShowEtaResult(false);
@@ -2776,6 +2796,9 @@ function App() {
       await recalc(parsed);
       await reconcilePillsFromPool();
       await restoreClaimsFromDocument();
+      // Whatever the load auto-reconciled (pool claims, draft numbering) is the
+      // baseline, so a freshly loaded document is never considered "unsaved".
+      savedJsonRef.current = JSON.stringify(formRef.current);
     } catch (e) {
       console.error("loadSnapshot failed", e);
     }
@@ -2786,16 +2809,6 @@ function App() {
   // unsaved changes first.
   const loadSnapshot = (id: number) => {
     guardUnsaved(() => { void loadSnapshotNow(id); });
-  };
-
-  const startOverwrite = (id: number) => {
-    const entry = historyList.find(h => h.id === id);
-    guardUnsaved(() => {
-      void (async () => {
-        await loadSnapshotNow(id);
-        setOverwriteTarget({ id, label: entry?.label || "", remote: !!authUser });
-      })();
-    });
   };
 
   const historySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -4288,10 +4301,10 @@ function App() {
         {/* Document type */}
         <div className="sidebar-section-label">{t("文档", "Document")}</div>
         <div className="sidebar-seg">
-          <button className={tab === "bank" ? "on" : ""} data-tip={sidebarCollapsed ? t("银行", "Bank") : undefined} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
+          <button className={tab === "bank" ? "on" : ""} data-tip={sidebarCollapsed ? t("银行", "Bank") : undefined} onClick={() => { setTab("bank"); if (docStatus !== "saved") updateField("doc_type", "bank"); }}>
             <span className="sb-tile"><IconBank size={15} /></span> <span className="seg-label">{t("银行", "Bank")}</span>
           </button>
-          <button className={tab === "import" ? "on" : ""} data-tip={sidebarCollapsed ? t("进口", "Import") : undefined} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
+          <button className={tab === "import" ? "on" : ""} data-tip={sidebarCollapsed ? t("进口", "Import") : undefined} onClick={() => { setTab("import"); if (docStatus !== "saved") updateField("doc_type", "import"); }}>
             <span className="sb-tile"><IconTruck size={15} /></span> <span className="seg-label">{t("进口", "Import")}</span>
           </button>
         </div>
@@ -4603,9 +4616,6 @@ function App() {
                   )}
                   <div className="hc-actions">
                     <button className="hc-btn pri" onClick={() => loadSnapshot(h.id)}>Load</button>
-                    {(isOwn || isAdminUser) && !pendingDelete && (
-                      <button className="hc-btn" onClick={() => startOverwrite(h.id)} title={t("加载并覆盖此快照（重置审核决定）", "Load & overwrite this snapshot (resets decision)")}>{t("覆盖", "Overwrite")}</button>
-                    )}
                     {isAdminUser && pendingDelete && (
                       <>
                         <button className="hc-btn hc-ok" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
@@ -5175,25 +5185,22 @@ function App() {
       })()}
 
       {pendingAction && (
-        <div className="modal-overlay" style={{ position: 'fixed', zIndex: 400 }} onClick={() => setPendingAction(null)}>
-          <div className="modal" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay history-overlay" style={{ position: 'fixed', zIndex: 400 }} onClick={() => setPendingAction(null)}>
+          <div className="modal history-modal unsaved-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{t("未保存的更改", "Unsaved changes")}</h3>
+              <h3><span className="uc-ico">⚠</span> {t("未保存的更改", "Unsaved changes")}</h3>
               <button className="modal-close" onClick={() => setPendingAction(null)}>✕</button>
             </div>
-            <div style={{ padding: '4px 20px 20px' }}>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
-                {t("当前文档尚未保存，继续将丢失这些更改。", "This document has unsaved changes. Continuing will discard them.")}
-              </p>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <button className="btn-load" onClick={() => setPendingAction(null)}>{t("取消", "Cancel")}</button>
-                <button className="btn-delete" onClick={() => { const run = pendingAction.run; setPendingAction(null); run(); }}>{t("放弃更改", "Discard")}</button>
-                <button className="btn-add" onClick={async () => {
-                  const run = pendingAction.run;
-                  const ok = await saveSnapshot();
-                  if (ok) { setPendingAction(null); run(); }
-                }}>{t("保存并继续", "Save & continue")}</button>
-              </div>
+            <div className="uc-body">
+              <p>{t("当前文档有未保存的更改。您想怎么做？", "This document has unsaved changes. What would you like to do?")}</p>
+            </div>
+            <div className="uc-actions">
+              <button className="hc-btn hc-danger" onClick={() => { const run = pendingAction.run; setPendingAction(null); run(); }}>{t("放弃更改", "Discard changes")}</button>
+              <button className="hc-btn pri" onClick={async () => {
+                const run = pendingAction.run;
+                const ok = await saveSnapshot();
+                if (ok) { setPendingAction(null); run(); }
+              }}>{t("保存并继续", "Save & continue")}</button>
             </div>
           </div>
         </div>
