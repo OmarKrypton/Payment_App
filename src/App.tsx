@@ -837,6 +837,16 @@ interface HistoryEntry {
 
 const normalizeId = (s: string) => (s || "").toUpperCase().replace(/\s+/g, "");
 
+// Pick an alert tone from the message text, so the glass alert can show the
+// right status icon/colour without every caller passing a severity.
+function alertKind(msg: string): "ok" | "error" | "warn" | "info" {
+  const m = (msg || "").toLowerCase();
+  if (/(cannot|can't|already exists|failed|error|unable|invalid|无法|失败|已存在|错误|不能|请选择|请填写)/.test(m)) return "error";
+  if (/(saved|synced|success|exported|deleted|uploaded|claimed|restored|已保存|已同步|成功|已导出|已删除|已上传|已认领|已恢复|已是最新)/.test(m)) return "ok";
+  if (/(warning|注意)/.test(m)) return "warn";
+  return "info";
+}
+
 // Mirrors service_matches_invoice in src-tauri/src/eta_xml.rs: returns true when an
 // invoice id appears in a service name (as a whole "Inv:" suffix or any standalone token).
 const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boolean => {
@@ -1251,7 +1261,7 @@ function App() {
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       const el = (e.target as HTMLElement)?.closest?.(
-        ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button), .hc-btn, .history-modal .history-filters button, .history-modal .pool-seg button, .history-modal .pool-chip, .history-modal .fsel-btn, .history-modal .date-field"
+        ".bank-jump button, .sidebar :is(.navitem, .sidebar-seg button, .eta-link, .acct-btn, .acct-gear, .acct-setrow, .action-btn, .action-primary, .sidebar-toggle, .sidebar-export-dropdown button), .hc-btn, .history-modal .history-filters button, .history-modal .pool-seg button, .history-modal .pool-chip, .history-modal .fsel-btn, .history-modal .date-field, .modal .btn-add, .modal .btn-load, .modal .btn-approve, .modal .btn-reject, .modal .btn-delete, .modal .btn-danger"
       ) as HTMLElement | null;
       if (!el) return;
       const r = el.getBoundingClientRect();
@@ -4272,27 +4282,24 @@ function App() {
           <p className="loading-message">{progressMsg || t("正在上传PDF，请稍候...", "Uploading PDF, please wait...")}</p>
         </div>
       </div>
-      {modalMsg !== null && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 10000,
-        }} onClick={() => setModalMsg(null)}>
-          <div style={{
-            background: 'var(--bg-card, #fff)', borderRadius: 12, padding: '28px 36px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 280,
-            textAlign: 'center', fontSize: 15, color: 'var(--text-primary, #222)',
-            border: '1px solid var(--border, #e0e0e0)',
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ marginBottom: 20, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{modalMsg}</div>
-            <button style={{
-              padding: '8px 32px', borderRadius: 6, border: 'none',
-              background: 'var(--accent, #00529B)', color: '#fff', fontWeight: 600,
-              cursor: 'pointer', fontSize: 14,
-            }} onClick={() => setModalMsg(null)}>OK</button>
+      {modalMsg !== null && (() => {
+        const kind = alertKind(modalMsg);
+        const title = kind === "ok" ? t("已完成", "Done")
+          : kind === "error" ? t("无法继续", "Cannot continue")
+          : kind === "warn" ? t("请注意", "Please note")
+          : t("提示", "Notice");
+        const glyph = kind === "ok" ? "✓" : kind === "error" ? "!" : kind === "warn" ? "⚠" : "i";
+        return (
+          <div className="modal-overlay history-overlay" style={{ position: 'fixed', zIndex: 10000 }} onClick={() => setModalMsg(null)}>
+            <div className={`modal history-modal alert-modal ${kind}`} onClick={e => e.stopPropagation()}>
+              <div className={`alert-ic ${kind}`}>{glyph}</div>
+              <div className="alert-ttl">{title}</div>
+              <div className="alert-msg">{modalMsg}</div>
+              <button className="hc-btn pri" onClick={() => setModalMsg(null)}>{t("确定", "OK")}</button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       <aside className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`}>
         <div className="sidebar-header">
           <div className="brand">
@@ -4794,19 +4801,19 @@ function App() {
       )}
 
       {showEtaResult && etaResult && etaResult.length > 0 && (
-        <div className="modal-overlay" style={{position:'fixed'}} onClick={() => setShowEtaResult(false)}>
-          <div className="modal eta-result-modal" style={{width:700, maxHeight:'85vh'}} onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay history-overlay" style={{position:'fixed'}} onClick={() => setShowEtaResult(false)}>
+          <div className="modal history-modal eta-result-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{t("ETA XML 验证结果", "ETA XML Validation Result")} ({etaResult.length} {t("发票", "invoices")})</h3>
+              <h3>{t("ETA XML 验证结果", "ETA XML Validation Result")} <span className="history-count">{etaResult.length} {t("发票", "invoices")}</span></h3>
               <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                <button className="btn-add" style={{background:'var(--accent)'}} onClick={exportValidationReport}>
+                <button className="hc-btn pri" onClick={exportValidationReport}>
                   {t("导出报告", "Export Report")}
                 </button>
                 <button className="modal-close" onClick={() => setShowEtaResult(false)}>✕</button>
               </div>
             </div>
 
-            <div style={{marginBottom:10}}>
+            <div className="eta-search">
               <input
                 className="field-input"
                 style={{width:'100%',boxSizing:'border-box'}}
@@ -4825,26 +4832,19 @@ function App() {
               const totalErrors = shownResults.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "error").length, 0);
               const totalWarnings = shownResults.reduce((s: number, r: any) => s + r.issues.filter((i: any) => i.severity === "warning").length, 0);
               const allValid = shownResults.every((r: any) => r.is_valid);
-              if (shownResults.length !== etaResult.length) {
-                return (
-                  <div style={{fontSize:11,color:'var(--text-secondary)',marginBottom:10}}>
-                    {t("显示", "Showing")} {shownResults.length} / {etaResult.length}
-                  </div>
-                );
-              }
               return (
-                <div style={{display:'flex',gap:12,marginBottom:16}}>
-                  <div style={{flex:1,padding:'10px 14px',borderRadius:8,background:allValid?'var(--green-bg)':'var(--red-bg)',border:`1px solid ${allValid?'#bbf7d0':'#fecaca'}`,textAlign:'center'}}>
-                    <div style={{fontSize:18,fontWeight:700,color:allValid?'var(--green)':'var(--red)'}}>{allValid ? '✓' : '✗'}</div>
-                    <div style={{fontSize:11,color:'var(--text-secondary)'}}>{allValid ? t("全部通过", "All Passed") : t("存在问题", "Issues Found")}</div>
+                <div className="val-summary">
+                  <div className={`val-tile ${allValid ? 'pass' : 'fail'}`}>
+                    <div className="big" style={{color: allValid ? 'var(--green)' : 'var(--red)'}}>{allValid ? '✓' : '✗'}</div>
+                    <div className="lab">{allValid ? t("全部通过", "All Passed") : t("存在问题", "Issues Found")}</div>
                   </div>
-                  <div style={{flex:1,padding:'10px 14px',borderRadius:8,background:'var(--bg-input)',border:'1px solid var(--border)',textAlign:'center'}}>
-                    <div style={{fontSize:18,fontWeight:700,color:'var(--red)'}}>{totalErrors}</div>
-                    <div style={{fontSize:11,color:'var(--text-secondary)'}}>{t("错误", "Errors")}</div>
+                  <div className="val-tile">
+                    <div className="big" style={{color:'var(--red)'}}>{totalErrors}</div>
+                    <div className="lab">{t("错误", "Errors")}</div>
                   </div>
-                  <div style={{flex:1,padding:'10px 14px',borderRadius:8,background:'var(--bg-input)',border:'1px solid var(--border)',textAlign:'center'}}>
-                    <div style={{fontSize:18,fontWeight:700,color:'var(--orange)'}}>{totalWarnings}</div>
-                    <div style={{fontSize:11,color:'var(--text-secondary)'}}>{t("警告", "Warnings")}</div>
+                  <div className="val-tile">
+                    <div className="big" style={{color:'var(--orange)'}}>{totalWarnings}</div>
+                    <div className="lab">{t("警告", "Warnings")}</div>
                   </div>
                 </div>
               );
@@ -4860,52 +4860,49 @@ function App() {
                 return shownResults.map((r: any, idx: number) => {
                 const errorCount = r.issues.filter((i: any) => i.severity === "error").length;
                 const warnCount = r.issues.filter((i: any) => i.severity === "warning").length;
+                const cardCls = r.is_valid ? "ok" : errorCount > 0 ? "bad" : "warn";
                 return (
-                <div key={idx} style={{border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
-                  <div style={{padding:'8px 12px',background:'var(--bg-input)',display:'flex',alignItems:'center',gap:8,borderBottom:'1px solid var(--border)'}}>
-                    <span style={{width:8,height:8,borderRadius:'50%',background:r.is_valid?'var(--green)':errorCount>0?'var(--red)':'var(--orange)',flexShrink:0}} />
-                    <strong style={{fontSize:12}}>{r.invoice.invoice_id || `Invoice ${idx + 1}`}</strong>
-                    <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:'auto'}}>
-                      {r.invoice.seller_name || r.invoice.seller_tax_id}
-                      {errorCount > 0 && <span style={{color:'var(--red)',marginLeft:8}}>{errorCount} {t("错误", "errors")}</span>}
-                      {warnCount > 0 && <span style={{color:'var(--orange)',marginLeft:8}}>{warnCount} {t("警告", "warnings")}</span>}
-                    </span>
-                  </div>
-                  <div style={{padding:'8px 12px',fontSize:12}}>
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(90px,1fr))',gap:4,marginBottom:8}}>
-                      {r.invoice.currency && r.invoice.currency !== 'EGP' ? (
-                        <div><span style={{color:'var(--accent)',fontWeight:700}}>[{r.invoice.currency}]</span></div>
-                      ) : null}
-                      <div><span style={{color:'var(--text-muted)'}}>{t("净额", "Net")}:</span> {r.invoice.net_amount.toFixed(2)}</div>
-                      <div><span style={{color:'var(--text-muted)'}}>VAT:</span> {r.invoice.total_vat.toFixed(2)}</div>
-                      <div><span style={{color:'var(--text-muted)'}}>WHT:</span> {r.invoice.total_wht.toFixed(2)}</div>
-                      <div><span style={{color:'var(--text-muted)'}}>{t("合计", "Total")}:</span> {r.invoice.grand_total.toFixed(2)}</div>
-                    </div>
-                    {r.issues.length === 0 ? (
-                      <div style={{color:'var(--green)',fontWeight:600,fontSize:11,textAlign:'center',padding:4}}>✓ {t("所有检查均通过", "All checks passed")}</div>
-                    ) : (
-                      <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                        {r.issues.map((issue: any, i: number) => (
-                          <div key={i} style={{
-                            display:'flex',alignItems:'flex-start',gap:6,padding:'6px 8px',
-                            borderRadius:4,fontSize:11,
-                            background: issue.severity === 'error' ? 'var(--red-bg)' : '#fffbeb',
-                            border: `1px solid ${issue.severity === 'error' ? '#fecaca' : '#fde68a'}`,
-                          }}>
-                            <span style={{color: issue.severity === 'error' ? 'var(--red)' : 'var(--orange)',fontWeight:700,flexShrink:0}}>
-                              {issue.severity === 'error' ? '✗' : '⚠'}
-                            </span>
-                            <div>
-                              <strong>{issue.field}</strong>
-                              <span style={{color:'var(--text-secondary)',marginLeft:6}}>{issue.message}</span>
-                              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>
-                                XML: {issue.xml_value} → {t("表单", "Form")}: {issue.form_value}
+                <div key={idx} className={`hc-item val-card ${cardCls}`}>
+                  <span className="hc-bar" />
+                  <div className="hc-row">
+                    <div className="hc-main">
+                      <div className="hc-row1">
+                        <strong className="hc-serial">{r.invoice.invoice_id || `Invoice ${idx + 1}`}</strong>
+                        {r.is_valid ? (
+                          <span className="hc-pill hc-ap">{t("有效", "Valid")}</span>
+                        ) : errorCount > 0 ? (
+                          <span className="hc-pill hc-rj">{errorCount} {t("错误", "errors")}</span>
+                        ) : (
+                          <span className="hc-pill hc-co">{warnCount} {t("警告", "warnings")}</span>
+                        )}
+                        {r.invoice.currency && r.invoice.currency !== 'EGP' && (
+                          <span className="hc-pill pp-cur">{r.invoice.currency}</span>
+                        )}
+                        <span className="hc-date">{r.invoice.seller_name || r.invoice.seller_tax_id || ""}</span>
+                      </div>
+                      <div className="hc-amts">
+                        <span className="hc-info">{t("净额", "Net")} <b>{r.invoice.net_amount.toFixed(2)}</b></span>
+                        <span className="hc-info">VAT <b>{r.invoice.total_vat.toFixed(2)}</b></span>
+                        <span className="hc-info">WHT <b>{r.invoice.total_wht.toFixed(2)}</b></span>
+                        <span className="hc-info">{t("合计", "Total")} <b>{r.invoice.grand_total.toFixed(2)}</b></span>
+                      </div>
+                      {r.issues.length === 0 ? (
+                        <div className="val-passed">✓ {t("所有检查均通过", "All checks passed")}</div>
+                      ) : (
+                        <div className="val-issues">
+                          {r.issues.map((issue: any, i: number) => (
+                            <div key={i} className={`val-issue ${issue.severity === 'error' ? 'error' : 'warning'}`}>
+                              <span className="mk">{issue.severity === 'error' ? '✗' : '⚠'}</span>
+                              <div>
+                                <span className="fld">{issue.field}</span>
+                                <span className="m">{issue.message}</span>
+                                <div className="vals">XML: {issue.xml_value} → {t("表单", "Form")}: {issue.form_value}</div>
                               </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 );
