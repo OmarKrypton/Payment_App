@@ -1,4 +1,4 @@
-# Vouchify · 付款凭证
+# Vouchify
 
 **Vouchify** is a desktop payment-voucher and tax-reconciliation app for construction and import settlement work in Egypt. It turns supplier invoices, ETA e-invoices, and advance/retention data into auditable settlement vouchers, validates import documents against their XML, keeps a shared invoice pool, and synchronises everything across devices.
 
@@ -97,7 +97,6 @@ Vouchify uses a single **“liquid glass” design language** across every surfa
 - **Glass buttons, chips, tabs and inputs** with a cursor-tracking **specular highlight** on hover.
 - Consistent **status colours** (green = approved/valid, orange = conditional, red = rejected/pending, grey = cancelled).
 - **Card lists** with coloured left rails for documents, invoices and validation results.
-- A branded **splash screen** (glowing logo, progress bar, “By Omar Mahmoud”) shown for ~4.5 s on start.
 - **Bilingual** UI — English / 中文 — toggleable from the account menu.
 
 ## Other features
