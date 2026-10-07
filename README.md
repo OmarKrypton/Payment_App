@@ -12,7 +12,7 @@ Built with **Tauri 2 + React + TypeScript + Rust**, with a local SQLite store an
 
 | Bank settlement voucher | Import (ETA) voucher |
 | --- | --- |
-| ![Bank settlement voucher](docs/app/bank.png) | ![Import ETA voucher](docs/app/import.png) |
+| ![Bank settlement audit](docs/app/bank.png) | ![Import shipping audit](docs/app/import.png) |
 
 | Suppliers | Invoice Pool |
 | --- | --- |
