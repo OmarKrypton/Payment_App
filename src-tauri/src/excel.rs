@@ -724,15 +724,50 @@ fn import_code_letter(name: &str) -> Option<char> {
     if j < bytes.len() && bytes[j].is_ascii_digit() { Some(letter) } else { None }
 }
 
-// A line joins the EGP/USD split when it carries a 9-digit tax id (code
-// optional) or uses a provider code up to D. Others (Nafeza, Form 4,
-// Commercial invoice) are excluded.
-fn import_split_included(e: &ImportEntry) -> bool {
-    if e.exclude_split { return false; }
-    if has_nine_digit_run(&e.seller_tax_id) || has_nine_digit_after_tax_id(&e.service_name) {
+// Lines never part of the EGP/USD split, whatever their code or tax id
+// (Nafeza, Form 4/6 and the commercial invoice).
+fn import_split_excluded_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    if n.contains("nafeza") || n.contains("commercial") {
         return true;
     }
-    matches!(import_code_letter(&e.service_name), Some(c) if c <= 'D')
+    let b = n.as_bytes();
+    let mut i = 0usize;
+    while i + 4 <= b.len() {
+        if &b[i..i + 4] == b"form" {
+            let mut j = i + 4;
+            while j < b.len() && b[j].is_ascii_whitespace() { j += 1; }
+            if j < b.len() && (b[j] == b'4' || b[j] == b'6') {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+// The hidden stored tax id is only trusted when the entry is actually attached to
+// a pool invoice; otherwise it may have been captured from the wrong match.
+fn import_entry_has_tax_id(e: &ImportEntry) -> bool {
+    if has_nine_digit_after_tax_id(&e.service_name) {
+        return true;
+    }
+    let attached = !e.attached_invoice.is_empty() || !e.attached_uuid.is_empty();
+    attached && has_nine_digit_run(&e.seller_tax_id)
+}
+
+// Mirror of the app rule: an A–D provider code wins; Nafeza / Commercial /
+// Form 4-6 are always excluded; otherwise the line is included only when it
+// carries a 9-digit tax id.
+fn import_split_included(e: &ImportEntry) -> bool {
+    if e.exclude_split { return false; }
+    if matches!(import_code_letter(&e.service_name), Some(c) if c <= 'D') {
+        return true;
+    }
+    if import_split_excluded_name(&e.service_name) {
+        return false;
+    }
+    import_entry_has_tax_id(e)
 }
 
 pub fn export_invoice_summary(
@@ -1060,4 +1095,46 @@ pub fn export_history_registry(rows: &[HistoryExportRow], path: &str) -> Result<
 
     workbook.save(path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod import_split_tests {
+    use super::import_split_included;
+    use crate::models::ImportEntry;
+
+    fn entry(name: &str, seller_tax_id: &str, attached_invoice: &str) -> ImportEntry {
+        ImportEntry {
+            service_name: name.into(),
+            amount: "100".into(),
+            rate: "".into(),
+            free_wht: false,
+            wht_rate: "0%".into(),
+            vat_rate: "0%".into(),
+            temp_labour: false,
+            exclude_split: false,
+            attached_invoice: attached_invoice.into(),
+            seller_tax_id: seller_tax_id.into(),
+            attached_uuid: "".into(),
+        }
+    }
+
+    #[test]
+    fn commercial_nafeza_form_are_excluded_even_with_tax_id() {
+        // The bug: a commercial-invoice line must never feed the USD total.
+        assert!(!import_split_included(&entry("Commercial kpi inv:0241 ADT", "616256493", "25573853707")));
+        assert!(!import_split_included(&entry("Nafeza Paper", "616256493", "")));
+        assert!(!import_split_included(&entry("Form 4 or 6", "616256493", "25573853707")));
+    }
+
+    #[test]
+    fn coded_lines_and_real_tax_ids_are_included() {
+        assert!(import_split_included(&entry("A1 - Transport", "", "")));
+        assert!(import_split_included(&entry("D2 services", "", "")));
+        assert!(!import_split_included(&entry("E1 services", "", "")));
+        // 9-digit tax id spelled out in the service name.
+        assert!(import_split_included(&entry("FOLK MARITIME TAX ID: 200059238", "", "")));
+        // Hidden seller_tax_id counts only when the entry is attached to a pool invoice.
+        assert!(!import_split_included(&entry("Random service", "616256493", "")));
+        assert!(import_split_included(&entry("Random service", "616256493", "25573853707")));
+    }
 }
