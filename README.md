@@ -12,13 +12,13 @@ Built with **Tauri 2 + React + TypeScript + Rust**, with a local SQLite store an
 
 | Bank settlement audit | Import shipping audit |
 | --- | --- |
-| ![Bank settlement audit](docs/app/bank.png) | ![Import shipping audit](docs/app/import.png) |
+| ![Bank settlement audit](docs/screens/bank.png) | ![Import shipping audit](docs/screens/import.png) |
 
 | Suppliers | Invoice Pool |
 | --- | --- |
-| ![Suppliers](docs/app/suppliers.png) | ![Invoice Pool](docs/app/pool.png) |
+| ![Suppliers](docs/screens/suppliers.png) | ![Invoice Pool](docs/screens/pool.png) |
 
-![History Browser](docs/app/history.png)
+![History Browser](docs/screens/history.png)
 
 ---
 
