@@ -10,7 +10,7 @@ Built with **Tauri 2 + React + TypeScript + Rust**, with a local SQLite store an
 
 ## Screenshots
 
-| Bank settlement voucher | Import (ETA) voucher |
+| Bank settlement audit | Import shipping audit |
 | --- | --- |
 | ![Bank settlement audit](docs/app/bank.png) | ![Import shipping audit](docs/app/import.png) |
 
