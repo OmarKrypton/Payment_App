@@ -24,7 +24,7 @@ Built with **Tauri 2 + React + TypeScript + Rust**, with a local SQLite store an
 
 ## Core features
 
-### 1. Bank settlement vouchers
+### 1. Bank settlement audit
 A guided, numbered settlement sheet (cards 1–12) that computes the amount payable to a supplier:
 
 - Supplier settlement (invoices incl. VAT), advance payments and ending balance.
@@ -35,7 +35,7 @@ A guided, numbered settlement sheet (cards 1–12) that computes the amount paya
 
 Every figure recalculates live in the Rust backend, so the form, the summary and the exports can never drift apart.
 
-### 2. Import (ETA) vouchers
+### 2. Import shipping audit
 A dedicated import sheet for customs/ETA paperwork:
 
 - Invoice & cost cards (foreign cost, domestic cost, Nafeza paper, …).
