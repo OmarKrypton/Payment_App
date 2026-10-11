@@ -1052,6 +1052,9 @@ function App() {
   const [deSyncing, setDeSyncing] = useState(false);
   const [deFiles, setDeFiles] = useState<string[]>([]);
   const [deShowFiles, setDeShowFiles] = useState(false);
+  const [deFilesPos, setDeFilesPos] = useState<{ top: number; right: number } | null>(null);
+  const deFilesBtnRef = useRef<HTMLButtonElement>(null);
+  const deFilesMenuRef = useRef<HTMLDivElement>(null);
   const [deRefresh, setDeRefresh] = useState(0);
   const [showPool, setShowPool] = useState(false);
   const [poolList, setPoolList] = useState<any[]>([]);
@@ -2495,19 +2498,9 @@ function App() {
             </div>
             <div className="entries-head-actions">
               <div className="entries-files">
-                <button className="hc-btn" onClick={() => setDeShowFiles(v => !v)} disabled={deFiles.length === 0}>
+                <button ref={deFilesBtnRef} className="hc-btn" onClick={() => setDeShowFiles(v => !v)} disabled={deFiles.length === 0}>
                   {t("文件", "Files")} ({deFiles.length})
                 </button>
-                {deShowFiles && deFiles.length > 0 && (
-                  <div className="entries-files-menu">
-                    {deFiles.map(f => (
-                      <div key={f} className="entries-file-row">
-                        <span className="entries-file-name" title={f}>{f}</span>
-                        <button className="entries-file-del" title={t("删除该文件的分录", "Remove this file's entries")} onClick={() => removeDailyEntryFile(f)}>✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
               <button className="hc-btn pri" onClick={importDailyEntries} disabled={deImporting}>
                 {deImporting ? t("提取中…", "Extracting…") : `＋ ${t("上传 PDF", "Upload PDF")}`}
@@ -2642,6 +2635,17 @@ function App() {
             </button>
           )}
         </div>
+        {deShowFiles && deFiles.length > 0 && deFilesPos && createPortal(
+          <div className="entries-files-menu" ref={deFilesMenuRef} style={{ top: deFilesPos.top, right: deFilesPos.right }}>
+            {deFiles.map(f => (
+              <div key={f} className="entries-file-row">
+                <span className="entries-file-name" title={f}>{f}</span>
+                <button className="entries-file-del" title={t("删除该文件的分录", "Remove this file's entries")} onClick={() => removeDailyEntryFile(f)}>✕</button>
+              </div>
+            ))}
+          </div>,
+          document.body
+        )}
       </div>
     );
   };
@@ -3681,7 +3685,9 @@ function App() {
     return () => clearTimeout(id);
   }, [tab, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries]);
 
-  // On first open, pull the shared store from the cloud.
+  // On first open, sync both ways with the shared cloud store: pull remote
+  // entries locally, and push any local entries the cloud doesn't have yet
+  // (e.g. ones imported while signed out of the account).
   const dePulledRef = useRef(false);
   useEffect(() => {
     if (tab !== "entries" || !authUser || dePulledRef.current) return;
@@ -3692,15 +3698,50 @@ function App() {
         const remote: any[] = await listDailyEntriesRemote();
         if (remote.length) {
           await invoke("sync_daily_entries_from_remote", { rows: remote });
-          setDeRefresh(v => v + 1);
         }
+        const remoteKeys = new Set<string>(remote.map((r: any) => r.entry_key));
+        const local: any[] = await invoke("daily_entries_for_sync");
+        const missing = local.filter((r: any) => r.entry_key && !remoteKeys.has(r.entry_key));
+        if (missing.length) {
+          await upsertDailyEntriesRemote(missing);
+        }
+        if (remote.length || missing.length) setDeRefresh(v => v + 1);
       } catch (e) {
-        console.error("daily entries pull failed", e);
+        console.error("daily entries sync failed", e);
       } finally {
         setDeSyncing(false);
       }
     })();
   }, [tab, authUser]);
+
+  // Position the "Files" dropdown as a fixed portal and close it on outside
+  // click / Escape, so it isn't hidden behind the sticky toolbar.
+  useEffect(() => {
+    if (!deShowFiles) return;
+    const measure = () => {
+      const b = deFilesBtnRef.current;
+      if (!b) return;
+      const r = b.getBoundingClientRect();
+      setDeFilesPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    };
+    measure();
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (deFilesBtnRef.current?.contains(target) || deFilesMenuRef.current?.contains(target)) return;
+      setDeShowFiles(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDeShowFiles(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [deShowFiles]);
 
   const importDailyEntries = async () => {
     const path = await open({ filters: [{ name: "PDF", extensions: ["pdf"] }], multiple: false });
