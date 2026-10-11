@@ -71,19 +71,23 @@ pub fn set_tool_override(tool: &str, path: &str) -> Result<(), String> {
 // ── Bundled tools (shipped with the Windows build) ───────────────────────────
 static BUNDLED_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
 
-/// Called once at startup with the folder holding the tools bundled with the
-/// app (Windows). Also points Tesseract at the bundled language data.
+/// Called once at startup with the app's resource directory. Also points
+/// Tesseract at the bundled language data when present.
 pub fn set_bundled_dir(dir: std::path::PathBuf) {
-    let tessdata = dir.join("tesseract").join("tessdata");
-    if tessdata.is_dir() {
-        std::env::set_var("TESSDATA_PREFIX", &tessdata);
+    // Point Tesseract at the bundled language data when present.
+    let candidates = [
+        dir.join("bundled").join("win").join("tesseract").join("tessdata"),
+        dir.join("tesseract").join("tessdata"),
+    ];
+    if let Some(td) = candidates.iter().find(|p| p.is_dir()) {
+        std::env::set_var("TESSDATA_PREFIX", td);
     }
     let _ = BUNDLED_DIR.set(dir);
 }
 
 fn bundled_tool(program: &str) -> Option<String> {
-    let base = BUNDLED_DIR.get()?;
-    if !base.is_dir() {
+    let root = BUNDLED_DIR.get()?;
+    if !root.is_dir() {
         return None;
     }
     let exe = if cfg!(target_os = "windows") {
@@ -91,26 +95,19 @@ fn bundled_tool(program: &str) -> Option<String> {
     } else {
         program.to_string()
     };
-    let direct = [
-        base.join("poppler").join("bin").join(&exe),
-        base.join("poppler").join(&exe),
-        base.join("tesseract").join(&exe),
-        base.join(&exe),
-    ];
-    for c in direct {
-        if c.is_file() {
-            return Some(c.to_string_lossy().to_string());
-        }
-    }
-    for sub in ["poppler", "tesseract"] {
-        let d = base.join(sub);
-        if d.is_dir() {
-            if let Some(f) = find_file_recursive(&d, &exe, 4) {
-                return Some(f);
+    // Known layout: <resource_dir>/bundled/win/{poppler/bin,tesseract}/<exe>
+    let win = root.join("bundled").join("win");
+    for base in [win, root.clone()] {
+        for sub in ["poppler/bin", "poppler", "tesseract", ""] {
+            let c = if sub.is_empty() { base.join(&exe) } else { base.join(sub).join(&exe) };
+            if c.is_file() {
+                return Some(c.to_string_lossy().to_string());
             }
         }
     }
-    None
+    // Fallback: bounded search of the whole resource tree, so it works no
+    // matter how the bundler arranged the files.
+    find_file_recursive(root, &exe, 6)
 }
 
 fn find_file_recursive(dir: &Path, name: &str, depth: u32) -> Option<String> {
