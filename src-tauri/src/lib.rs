@@ -482,6 +482,9 @@ pub fn run() {
             let app_dir = app.path().app_data_dir().expect("no app data dir");
             std::fs::create_dir_all(&app_dir).expect("failed to create app data dir");
             importer::set_tools_dir(app_dir.clone());
+            if let Ok(res) = app.path().resource_dir() {
+                importer::set_bundled_dir(res.join("bundled").join("win"));
+            }
             let db_path = app_dir.join("history.db");
             let conn = history::init_db(&db_path).expect("failed to init db");
             let state = app.state::<DbState>();

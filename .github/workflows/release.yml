@@ -60,6 +60,59 @@ jobs:
 
       - run: npm ci
 
+      # Populate the tools that ship inside the Windows installer so users do
+      # not need to install Poppler/Tesseract themselves. The app discovers
+      # these under <resource_dir>/bundled/win (see src-tauri/tauri.windows.conf.json).
+      - name: Bundle PDF/OCR tools (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dest = "src-tauri/bundled/win"
+          New-Item -ItemType Directory -Force -Path "$dest/poppler" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$dest/tesseract" | Out-Null
+
+          Write-Host "== Poppler (pdftotext, pdftoppm) =="
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; "User-Agent" = "vouchify-build" }
+          $rel = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/oschwartz10612/poppler-windows/releases/latest"
+          $asset = $rel.assets | Where-Object { $_.name -like "Release-*.zip" } | Select-Object -First 1
+          if (-not $asset) { throw "No Poppler release zip found" }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile poppler.zip
+          Expand-Archive poppler.zip -DestinationPath poppler_tmp -Force
+          $bin = Get-ChildItem poppler_tmp -Recurse -Directory -Filter bin |
+            Where-Object { $_.Parent.Name -eq "Library" } | Select-Object -First 1
+          if (-not $bin) { $bin = Get-ChildItem poppler_tmp -Recurse -Directory -Filter bin | Select-Object -First 1 }
+          if (-not $bin) { throw "Poppler bin folder not found" }
+          Copy-Item "$($bin.Parent.FullName)\*" "$dest/poppler" -Recurse -Force
+          try {
+            $copying = Get-ChildItem poppler_tmp -Recurse -Filter COPYING | Select-Object -First 1
+            if ($copying) { Copy-Item $copying.FullName "$dest/poppler/COPYING.txt" -Force }
+          } catch {}
+
+          Write-Host "== Tesseract =="
+          choco install tesseract --no-progress -y
+          $tess = Get-ChildItem "C:\Program Files" -Recurse -Filter tesseract.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $tess) { throw "tesseract.exe not found after install" }
+          $tessDir = $tess.DirectoryName
+          Copy-Item "$tessDir\*" "$dest/tesseract" -Recurse -Force
+
+          Write-Host "== Tesseract language data (OCR uses chi_sim+eng) =="
+          $td = "$dest/tesseract/tessdata"
+          New-Item -ItemType Directory -Force -Path $td | Out-Null
+          foreach ($lang in @("chi_sim")) {
+            $out = "$td/$lang.traineddata"
+            if (-not (Test-Path $out)) {
+              Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$lang.traineddata" -OutFile $out
+            }
+          }
+
+          Write-Host "== Result =="
+          $sum = (Get-ChildItem -Recurse "$dest" -File | Measure-Object -Property Length -Sum).Sum
+          Write-Host ("bundled size: {0:N1} MB" -f ($sum / 1MB))
+          Get-ChildItem "$dest" | Select-Object Name
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

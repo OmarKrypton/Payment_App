@@ -39,3 +39,7 @@ old-py/
 *.deb
 *.rpm
 *.AppImage
+
+# Bundled third-party tools (downloaded during the Windows release build)
+src-tauri/bundled/win/poppler/
+src-tauri/bundled/win/tesseract/

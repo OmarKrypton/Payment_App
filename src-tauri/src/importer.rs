@@ -68,6 +68,77 @@ pub fn set_tool_override(tool: &str, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Bundled tools (shipped with the Windows build) ───────────────────────────
+static BUNDLED_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// Called once at startup with the folder holding the tools bundled with the
+/// app (Windows). Also points Tesseract at the bundled language data.
+pub fn set_bundled_dir(dir: std::path::PathBuf) {
+    let tessdata = dir.join("tesseract").join("tessdata");
+    if tessdata.is_dir() {
+        std::env::set_var("TESSDATA_PREFIX", &tessdata);
+    }
+    let _ = BUNDLED_DIR.set(dir);
+}
+
+fn bundled_tool(program: &str) -> Option<String> {
+    let base = BUNDLED_DIR.get()?;
+    if !base.is_dir() {
+        return None;
+    }
+    let exe = if cfg!(target_os = "windows") {
+        format!("{program}.exe")
+    } else {
+        program.to_string()
+    };
+    let direct = [
+        base.join("poppler").join("bin").join(&exe),
+        base.join("poppler").join(&exe),
+        base.join("tesseract").join(&exe),
+        base.join(&exe),
+    ];
+    for c in direct {
+        if c.is_file() {
+            return Some(c.to_string_lossy().to_string());
+        }
+    }
+    for sub in ["poppler", "tesseract"] {
+        let d = base.join(sub);
+        if d.is_dir() {
+            if let Some(f) = find_file_recursive(&d, &exe, 4) {
+                return Some(f);
+            }
+        }
+    }
+    None
+}
+
+fn find_file_recursive(dir: &Path, name: &str, depth: u32) -> Option<String> {
+    if depth == 0 {
+        return None;
+    }
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut dirs = Vec::new();
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            dirs.push(p);
+        } else if p
+            .file_name()
+            .map(|n| n.eq_ignore_ascii_case(name))
+            .unwrap_or(false)
+        {
+            return Some(p.to_string_lossy().to_string());
+        }
+    }
+    for d in dirs {
+        if let Some(f) = find_file_recursive(&d, name, depth - 1) {
+            return Some(f);
+        }
+    }
+    None
+}
+
 #[derive(serde::Serialize)]
 pub struct ToolStatus {
     pub tool: String,
@@ -1172,15 +1243,19 @@ fn find_tool(program: &str) -> String {
             return p;
         }
     }
-    // 2) Env override, e.g. VOUCHIFY_PDFTOTEXT=C:\poppler\bin\pdftotext.exe
+    // 2) Tools bundled with the app (Windows build).
+    if let Some(p) = bundled_tool(program) {
+        return p;
+    }
+    // 3) Env override, e.g. VOUCHIFY_PDFTOTEXT=C:\poppler\bin\pdftotext.exe
     if let Some(p) = env_override(program) {
         return p;
     }
-    // 3) On PATH.
+    // 4) On PATH.
     if silent_cmd(program).arg("--version").output().is_ok() {
         return program.to_string();
     }
-    // 4) Common install locations (Windows).
+    // 5) Common install locations (Windows).
     #[cfg(target_os = "windows")]
     {
         if let Some(found) = find_tool_windows(program) {
@@ -1303,14 +1378,18 @@ fn check_tool(tool: &str) -> bool {
 
 fn check_required_tools() -> Result<(), String> {
     let mut missing = Vec::new();
-    if !check_tool("pdftotext") { missing.push("pdftotext (install poppler-utils)"); }
-    if !check_tool("pdftoppm") { missing.push("pdftoppm (install poppler-utils)"); }
-    if !check_tool("tesseract") { missing.push("tesseract (install tesseract-ocr)"); }
-    if !check_tool("magick") && !check_tool("convert") { missing.push("ImageMagick (install imagemagick)"); }
+    if !check_tool("pdftotext") { missing.push("pdftotext"); }
+    if !check_tool("pdftoppm") { missing.push("pdftoppm"); }
+    if !check_tool("tesseract") { missing.push("tesseract"); }
+    // ImageMagick is optional: preprocessing falls back to the raw image.
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(format!("Missing required tools:\n  {}\n\nInstall them and ensure they are on your PATH, then restart the application.", missing.join("\n  ")))
+        Err(format!(
+            "Missing required PDF/OCR tools: {}\n\nThese ship with the Windows build; if you see this, \
+             open Settings → PDF tools and locate them, or reinstall the app.",
+            missing.join(", ")
+        ))
     }
 }
 

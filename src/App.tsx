@@ -3627,8 +3627,8 @@ function App() {
       const msg = String(e?.message || e);
       if (/pdftotext|poppler/i.test(msg)) {
         showAlert(t(
-          "未找到 PDF 解析工具 (pdftotext)。请在“设置 → PDF 工具”中定位 pdftotext.exe，或先安装 Poppler for Windows，然后重试。",
-          "pdftotext was not found. Open Settings → PDF tools to locate pdftotext.exe, or install Poppler for Windows, then try again."
+          "未找到 PDF 解析工具 (pdftotext)。Windows 版已内置该工具——请在“设置 → PDF 工具”中定位 pdftotext.exe，或重新安装应用后重试。",
+          "pdftotext was not found. It ships with the Windows build — open Settings → PDF tools to locate pdftotext.exe, or reinstall the app, then try again."
         ));
         setShowSettings(true);
         setShowTools(true);
@@ -4832,7 +4832,7 @@ function App() {
                   ))}
                   {toolStatus.length === 0 && <div className="acct-tools-empty">{t("检查中…", "Checking…")}</div>}
                   <div className="acct-tools-hint">
-                    {t("日报 PDF 解析需要 Poppler (pdftotext)。", "Daily Entries PDF parsing needs Poppler (pdftotext).")}
+                    {t("Windows 版已内置这些工具；若显示未找到，请在此手动定位。", "These ship with the Windows build; if any show “not found”, locate them here.")}
                   </div>
                 </div>
               )}
