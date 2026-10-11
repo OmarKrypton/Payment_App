@@ -965,7 +965,8 @@ function App() {
   const [deLoading, setDeLoading] = useState(false);
   const [deSearch, setDeSearch] = useState("");
   const [deSearchIn, setDeSearchIn] = useState("all");
-  const [deFilter, setDeFilter] = useState<"all" | "paid" | "multipage">("all");
+  const [deDateFrom, setDeDateFrom] = useState("");
+  const [deDateTo, setDeDateTo] = useState("");
   const [deExpanded, setDeExpanded] = useState<Record<string, boolean>>({});
   const [deImporting, setDeImporting] = useState(false);
   const [deImportInfo, setDeImportInfo] = useState<any>(null);
@@ -2391,6 +2392,15 @@ function App() {
   // ── Daily Entries tab ──────────────────────────────────────────────────────
   const DailyEntriesTab = () => {
     const fmtMoney = (n: number) => (n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // Wrap every occurrence of the search text so the matched part is visible.
+    const q = deSearch.trim();
+    const hl = (text: any) => {
+      const s = String(text ?? "");
+      if (!q) return s;
+      const esc = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const parts = s.split(new RegExp(`(${esc})`, "ig"));
+      return parts.map((p, i) => (i % 2 === 1 ? <mark key={i} className="de-hl">{p}</mark> : p));
+    };
     return (
       <div className="entries-tab">
         <div className="entries-header suppliers-header">
@@ -2431,8 +2441,6 @@ function App() {
             <span className="entries-stat ok">{t("借方", "Debit")} <b>{fmtMoney(deStats.debit)}</b></span>
             <span className="entries-stat warn">{t("贷方", "Credit")} <b>{fmtMoney(deStats.credit)}</b></span>
             <span className="entries-stat">{t("页数", "Pages")} <b>{deStats.pages}</b></span>
-            <span className="entries-stat">{t("跨页合并", "Multi-page merged")} <b>{deStats.multipage}</b></span>
-            <span className={`entries-stat${deStats.paid_before ? " bad" : ""}`}>{t("重复付款", "Paid before")} <b>{deStats.paid_before}</b></span>
           </div>
         </div>
 
@@ -2459,10 +2467,13 @@ function App() {
               { value: "narration", label: t("摘要", "Narration") },
             ]}
           />
-          <div className="entries-seg">
-            <button className={deFilter === "all" ? "active" : ""} onClick={() => setDeFilter("all")}>{t("全部", "All")} <b>{deStats.total}</b></button>
-            <button className={deFilter === "paid" ? "active" : ""} onClick={() => setDeFilter("paid")}>{t("重复付款", "Paid before")} <b>{deStats.paid_before}</b></button>
-            <button className={deFilter === "multipage" ? "active" : ""} onClick={() => setDeFilter("multipage")}>{t("跨页", "Multi-page")} <b>{deStats.multipage}</b></button>
+          <div className="entries-dates">
+            <GlassDate value={deDateFrom} onChange={setDeDateFrom} placeholder={t("起始日期", "From date")} />
+            <span className="entries-dates-sep">–</span>
+            <GlassDate value={deDateTo} onChange={setDeDateTo} placeholder={t("结束日期", "To date")} />
+            {(deDateFrom || deDateTo) && (
+              <button className="entries-dates-clear" title={t("清除日期", "Clear dates")} onClick={() => { setDeDateFrom(""); setDeDateTo(""); }}>✕</button>
+            )}
           </div>
         </div>
 
@@ -2471,7 +2482,6 @@ function App() {
             <span className="entries-result-ico">✓</span>
             <span>{t("已提取", "Extracted")} <b>{deImportInfo.entries}</b> {t("份凭证", "documents")} · <b>{deImportInfo.lines}</b> {t("行", "lines")} · <b>{deImportInfo.pages}</b> {t("页", "pages")}</span>
             {deImportInfo.multipage > 0 && <span className="entries-chip mp">{deImportInfo.multipage} {t("跨页合并", "multi-page merged")}</span>}
-            {deImportInfo.duplicates > 0 && <span className="entries-chip bad">{deImportInfo.duplicates} {t("重复付款", "paid before")}</span>}
             <button className="entries-result-x" onClick={() => setDeImportInfo(null)}>✕</button>
           </div>
         )}
@@ -2494,32 +2504,26 @@ function App() {
           {deEntries.map((e: any) => {
             const open = !!deExpanded[e.entry_key];
             return (
-              <div key={e.entry_key} className={`hc-item entries-item${e.paid_before ? " dup" : ""}${e.pages > 1 ? " mp" : ""}`}>
+              <div key={e.entry_key} className="hc-item entries-item">
                 <span className="hc-bar" />
                 <div className="entries-row1" onClick={() => setDeExpanded(prev => ({ ...prev, [e.entry_key]: !prev[e.entry_key] }))}>
                   <span className={`entries-caret${open ? " open" : ""}`}><IconChevronRight size={15} /></span>
-                  <span className="entries-doc">{t("凭证", "Doc")} <span>{t("号", "No.")}</span> {e.doc_no}{e.serial && e.serial !== "1" ? `/${e.serial}` : ""}</span>
+                  <span className="entries-doc">{t("凭证", "Doc")} <span>{t("号", "No.")}</span> {hl(e.doc_no)}{e.serial && e.serial !== "1" ? <>/{hl(e.serial)}</> : ""}</span>
                   {e.journal && <span className="entries-jrn">{(e.journal_no ? `${e.journal_no} · ` : "") + e.journal}</span>}
-                  {e.pages > 1 && <span className="entries-pages">{e.pages} {t("页合并", "pages merged")}</span>}
-                  {e.paid_before && <span className="entries-paid">⚠ {t("重复付款", "Paid before")}</span>}
                   <span className="entries-date">{e.doc_date}</span>
                 </div>
                 <div className="entries-meta">
                   {e.branch && <span>{t("分支", "Branch")} <b>{e.branch}</b></span>}
                   {e.doc_source && <span>{t("来源", "Source")} <b>{e.doc_source}</b></span>}
-                  {e.local_amt && <span>{t("本地金额", "Local Amt")} <b>{e.local_amt}</b></span>}
-                  {e.source_file && <span className="entries-src">{e.source_file}{e.source_page ? ` · p${e.source_page}` : ""}</span>}
-                  <span className="entries-sum">{t("合计", "Total")} <b>{e.total_value || e.local_amt}</b></span>
+                  {e.local_amt && <span>{t("本地金额", "Local Amt")} <b>{hl(e.local_amt)}</b></span>}
+                  {e.source_file && <span className="entries-src">{hl(e.source_file)}{e.source_page ? ` · p${e.source_page}` : ""}</span>}
+                  <span className="entries-sum">{t("合计", "Total")} <b>{hl(e.total_value || e.local_amt)}</b></span>
                 </div>
-                {e.paid_before && (
-                  <div className="entries-alert">
-                    <span className="entries-alert-ico">⚠</span>
-                    <span>
-                      {t("发票", "Invoice")} <b>{(e.paid_before_refs || []).join(", ")}</b>
-                      {e.paid_before_in && e.paid_before_in[0] ? <> {t("已于", "was already paid in")} <b>{t("凭证", "Doc")} {e.paid_before_in[0].doc_no}</b>{e.paid_before_in[0].doc_date ? ` (${e.paid_before_in[0].doc_date})` : ""}</> : null}
-                    </span>
-                  </div>
-                )}
+                <div className="entries-totals">
+                  <span className="entries-totals-item"><span className="k">{t("借方合计", "Debit total")}</span><b className="dr">{fmtMoney(e.debit_total)}</b></span>
+                  <span className="entries-totals-item"><span className="k">{t("贷方合计", "Credit total")}</span><b className="cr">{fmtMoney(e.credit_total)}</b></span>
+                  <span className={`entries-balance${e.balanced ? " ok" : " bad"}`}>{e.balanced ? `✓ ${t("借贷平衡", "Debits = Credits")}` : `⚠ ${t("借贷不平衡", "Debits ≠ Credits")}`}</span>
+                </div>
                 {open && (
                   <div className="entries-lines">
                     <table className="entries-table">
@@ -2533,14 +2537,21 @@ function App() {
                       <tbody>
                         {(e.lines || []).map((l: any, i: number) => (
                           <tr key={i}>
-                            <td className="acc">{l.account_no}</td>
-                            <td className="accname">{l.account}{l.currency && l.currency !== "Local Curr" ? ` · ${l.currency}` : ""}</td>
-                            <td className="narr">{l.narration}</td>
-                            <td className="num dr">{l.debit || "—"}</td>
-                            <td className="num cr">{l.credit || "—"}</td>
+                            <td className="acc">{hl(l.account_no)}</td>
+                            <td className="accname">{hl(l.account)}{l.currency && l.currency !== "Local Curr" ? ` · ${l.currency}` : ""}</td>
+                            <td className="narr">{hl(l.narration)}</td>
+                            <td className="num dr">{l.debit ? hl(l.debit) : "—"}</td>
+                            <td className="num cr">{l.credit ? hl(l.credit) : "—"}</td>
                           </tr>
                         ))}
                       </tbody>
+                      <tfoot>
+                        <tr>
+                          <td className="tot-label" colSpan={3}>{t("本凭证合计", "Document totals")}</td>
+                          <td className="num dr">{fmtMoney(e.debit_total)}</td>
+                          <td className="num cr">{fmtMoney(e.credit_total)}</td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 )}
@@ -3558,10 +3569,10 @@ function App() {
   };
 
   // ── Daily Entries: load / import / sync ────────────────────────────────────
-  const loadDailyEntries = useCallback(async (search: string, searchIn: string, filter: string, limit: number) => {
+  const loadDailyEntries = useCallback(async (search: string, searchIn: string, dateFrom: string, dateTo: string, limit: number) => {
     setDeLoading(true);
     try {
-      const res: any = await invoke("list_daily_entries", { search, searchIn, filter, offset: 0, limit });
+      const res: any = await invoke("list_daily_entries", { search, searchIn, dateFrom, dateTo, offset: 0, limit });
       setDeEntries(res?.entries || []);
       setDeTotal(res?.total ?? 0);
       setDeStats(res?.stats || { total: 0, debit: 0, credit: 0, pages: 0, multipage: 0, paid_before: 0, files: 0, lines: 0 });
@@ -3570,6 +3581,14 @@ function App() {
         const merged = new Set<string>([...prev, ...names]);
         return Array.from(merged).sort();
       });
+      // While searching, expand the results so the matched text is visible.
+      if (search.trim()) {
+        setDeExpanded(prev => {
+          const next = { ...prev };
+          for (const e of (res?.entries || [])) next[e.entry_key] = true;
+          return next;
+        });
+      }
     } catch (e: any) {
       showAlert(`${t("加载日报失败", "Failed to load daily entries")}: ${e?.message || e}`);
     } finally {
@@ -3580,9 +3599,9 @@ function App() {
   // Reload (debounced) whenever the tab is opened or a query/filter changes.
   useEffect(() => {
     if (tab !== "entries") return;
-    const id = setTimeout(() => { loadDailyEntries(deSearch, deSearchIn, deFilter, deLimit); }, 200);
+    const id = setTimeout(() => { loadDailyEntries(deSearch, deSearchIn, deDateFrom, deDateTo, deLimit); }, 200);
     return () => clearTimeout(id);
-  }, [tab, deSearch, deSearchIn, deFilter, deLimit, deRefresh, loadDailyEntries]);
+  }, [tab, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries]);
 
   // On first open, pull the shared store from the cloud.
   const dePulledRef = useRef(false);

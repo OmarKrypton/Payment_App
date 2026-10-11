@@ -657,6 +657,10 @@ pub struct DailyEntryRecord {
     pub invoice_refs: Vec<String>,
     pub from_documents: Vec<String>,
     pub lines: Vec<DailyEntryLine>,
+    /// Sum of this document's Debit / Credit columns (they should be equal).
+    pub debit_total: f64,
+    pub credit_total: f64,
+    pub balanced: bool,
     pub paid_before: bool,
     pub paid_before_refs: Vec<String>,
     pub paid_before_in: Vec<PaidBeforeRef>,
@@ -700,6 +704,9 @@ pub fn load_all(conn: &Connection) -> Result<Vec<DailyEntryRecord>, String> {
             // already-imported entries without needing a re-upload.
             let invoice_refs = invoice_refs_from_lines(&lines);
             let from_documents = from_documents_from_lines(&lines);
+            let debit_total: f64 = lines.iter().map(|l| num(&l.debit)).sum();
+            let credit_total: f64 = lines.iter().map(|l| num(&l.credit)).sum();
+            let balanced = (debit_total - credit_total).abs() < 0.01;
             Ok(DailyEntryRecord {
                 id: r.get(0)?,
                 entry_key: r.get(1)?,
@@ -719,6 +726,9 @@ pub fn load_all(conn: &Connection) -> Result<Vec<DailyEntryRecord>, String> {
                 invoice_refs,
                 from_documents,
                 lines,
+                debit_total,
+                credit_total,
+                balanced,
                 ..Default::default()
             })
         })
@@ -776,6 +786,27 @@ fn date_sort_key(d: &str) -> String {
         format!("{}{}{}", parts[2], parts[1], parts[0])
     } else {
         d.to_string()
+    }
+}
+
+/// Convert a report `DD-MM-YYYY` date to `YYYY-MM-DD` for range comparisons.
+fn ymd(d: &str) -> Option<String> {
+    let parts: Vec<&str> = d.split('-').collect();
+    if parts.len() == 3 && parts[0].len() == 2 && parts[1].len() == 2 && parts[2].len() == 4 {
+        Some(format!("{}-{}-{}", parts[2], parts[1], parts[0]))
+    } else {
+        None
+    }
+}
+
+fn matches_date_range(doc_date: &str, from: &str, to: &str) -> bool {
+    if from.is_empty() && to.is_empty() {
+        return true;
+    }
+    match ymd(doc_date) {
+        Some(d) => (from.is_empty() || d.as_str() >= from) && (to.is_empty() || d.as_str() <= to),
+        // Unparseable dates are kept rather than silently dropped.
+        None => true,
     }
 }
 
@@ -845,7 +876,8 @@ pub fn list(
     conn: &Connection,
     search: &str,
     search_in: &str,
-    filter: &str,
+    date_from: &str,
+    date_to: &str,
     offset: usize,
     limit: usize,
 ) -> Result<DailyEntriesList, String> {
@@ -853,12 +885,8 @@ pub fn list(
     let stats = stats_of(&all);
     let filtered: Vec<DailyEntryRecord> = all
         .into_iter()
-        .filter(|e| match filter {
-            "paid" => e.paid_before,
-            "multipage" => e.pages > 1,
-            _ => true,
-        })
         .filter(|e| matches_search(e, search.trim(), search_in))
+        .filter(|e| matches_date_range(&e.doc_date, date_from, date_to))
         .collect();
     let total = filtered.len();
     let entries: Vec<DailyEntryRecord> = if limit == 0 {

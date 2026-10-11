@@ -353,13 +353,14 @@ fn list_daily_entries(
     state: tauri::State<'_, DbState>,
     search: String,
     search_in: String,
-    filter: String,
+    date_from: String,
+    date_to: String,
     offset: usize,
     limit: usize,
 ) -> Result<entries::DailyEntriesList, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
-    entries::list(conn, &search, &search_in, &filter, offset, limit)
+    entries::list(conn, &search, &search_in, &date_from, &date_to, offset, limit)
 }
 
 #[tauri::command]
