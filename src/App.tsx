@@ -936,6 +936,8 @@ function App() {
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showTools, setShowTools] = useState(false);
+  const [toolStatus, setToolStatus] = useState<any[]>([]);
   const [bankSection, setBankSection] = useState("sec-info");
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -3622,7 +3624,18 @@ function App() {
       }
       setDeRefresh(v => v + 1);
     } catch (e: any) {
-      showAlert(`${t("导入失败", "Import failed")}: ${e?.message || e}`);
+      const msg = String(e?.message || e);
+      if (/pdftotext|poppler/i.test(msg)) {
+        showAlert(t(
+          "未找到 PDF 解析工具 (pdftotext)。请在“设置 → PDF 工具”中定位 pdftotext.exe，或先安装 Poppler for Windows，然后重试。",
+          "pdftotext was not found. Open Settings → PDF tools to locate pdftotext.exe, or install Poppler for Windows, then try again."
+        ));
+        setShowSettings(true);
+        setShowTools(true);
+        loadToolStatus();
+      } else {
+        showAlert(`${t("导入失败", "Import failed")}: ${msg}`);
+      }
     } finally {
       setDeImporting(false);
     }
@@ -3636,6 +3649,25 @@ function App() {
       setDeRefresh(v => v + 1);
     } catch (e: any) {
       showAlert(`${t("删除失败", "Delete failed")}: ${e?.message || e}`);
+    }
+  };
+
+  // ── External PDF tools (Poppler / Tesseract) ───────────────────────────────
+  const loadToolStatus = useCallback(async () => {
+    try {
+      setToolStatus(await invoke<any[]>("get_pdf_tools"));
+    } catch {}
+  }, []);
+
+  const locateTool = async (tool: string) => {
+    const picked = await open({ multiple: false });
+    if (!picked || Array.isArray(picked)) return;
+    try {
+      await invoke("set_pdf_tool_path", { tool, path: picked });
+      await loadToolStatus();
+      showAlert(`${t("已保存路径", "Path saved")}: ${tool}`);
+    } catch (e: any) {
+      showAlert(`${t("保存失败", "Save failed")}: ${e?.message || e}`);
     }
   };
 
@@ -4784,6 +4816,26 @@ function App() {
                 <span>{t("语言", "Language")}</span>
                 <span className="acct-setval">{lang === "zh" ? "English" : "中文"}</span>
               </button>
+              <button className="acct-setrow" onClick={() => { setShowTools(v => !v); if (!showTools) loadToolStatus(); }}>
+                <span>{t("PDF 工具", "PDF tools")}</span>
+                <IconChevronRight size={13} style={{ transform: showTools ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }} />
+              </button>
+              {showTools && (
+                <div className="acct-tools">
+                  {toolStatus.map(ts => (
+                    <div key={ts.tool} className="acct-toolrow">
+                      <span className={`tool-dot${ts.found ? " ok" : ""}`} />
+                      <span className="tool-name">{ts.tool}</span>
+                      <span className="tool-path" title={ts.path || ""}>{ts.found ? (ts.path || t("已找到", "found")) : t("未找到", "not found")}</span>
+                      <button className="tool-locate" onClick={() => locateTool(ts.tool)}>{t("定位", "Locate")}</button>
+                    </div>
+                  ))}
+                  {toolStatus.length === 0 && <div className="acct-tools-empty">{t("检查中…", "Checking…")}</div>}
+                  <div className="acct-tools-hint">
+                    {t("日报 PDF 解析需要 Poppler (pdftotext)。", "Daily Entries PDF parsing needs Poppler (pdftotext).")}
+                  </div>
+                </div>
+              )}
               <div className="acct-setrow static">
                 <span>{t("版本", "Version")}</span>
                 <span className="acct-setval">{appVersion ? `v${appVersion}` : ""}</span>

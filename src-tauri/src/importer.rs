@@ -2,10 +2,109 @@ use std::process::Command;
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::models::{FormData, InvoiceData, OcrFieldInfo};
 
 pub type ProgressFn = Box<dyn Fn(&str, &str) + Send>;
+
+// ── External tool discovery ──────────────────────────────────────────────────
+// The app relies on Poppler (pdftotext/pdftoppm) and Tesseract being installed.
+// Remember a user-chosen path (via Settings → PDF tools) so installs that are
+// not on PATH still work, and search the common Windows install locations.
+static TOOLS_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// Called once at startup with the app data directory (where tools.json lives).
+pub fn set_tools_dir(dir: std::path::PathBuf) {
+    let _ = TOOLS_DIR.set(dir);
+    // Load the saved overrides now that the directory is known.
+    let _ = overrides();
+}
+
+fn tools_file() -> Option<std::path::PathBuf> {
+    TOOLS_DIR.get().map(|d| d.join("tools.json"))
+}
+
+// Cached copy of tools.json so the hot paths (create_command is called per OCR
+// page) don't hit the disk on every invocation.
+static OVERRIDES: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn overrides() -> &'static std::sync::Mutex<HashMap<String, String>> {
+    OVERRIDES.get_or_init(|| {
+        let map = tools_file()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        std::sync::Mutex::new(map)
+    })
+}
+
+pub fn tool_override(tool: &str) -> Option<String> {
+    let map = overrides().lock().ok()?;
+    let v = map.get(tool)?.trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+pub fn set_tool_override(tool: &str, path: &str) -> Result<(), String> {
+    let dir = TOOLS_DIR.get().ok_or("App data directory not ready")?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let p = path.trim();
+    let mut map = {
+        let guard = overrides().lock().map_err(|_| "tools lock poisoned".to_string())?;
+        guard.clone()
+    };
+    if p.is_empty() {
+        map.remove(tool);
+    } else {
+        map.insert(tool.to_string(), p.to_string());
+    }
+    let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("tools.json"), json).map_err(|e| e.to_string())?;
+    *overrides().lock().map_err(|_| "tools lock poisoned".to_string())? = map;
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct ToolStatus {
+    pub tool: String,
+    pub found: bool,
+    pub path: String,
+}
+
+pub fn tool_status() -> Vec<ToolStatus> {
+    ["pdftotext", "pdftoppm", "tesseract"]
+        .iter()
+        .map(|t| {
+            let resolved = find_tool(t);
+            let on_path = resolved == *t;
+            let runs = silent_cmd(&resolved)
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let found = runs || (!on_path && Path::new(&resolved).exists());
+            ToolStatus {
+                tool: t.to_string(),
+                found,
+                path: resolved,
+            }
+        })
+        .collect()
+}
+
+fn env_override(program: &str) -> Option<String> {
+    let key = format!("VOUCHIFY_{}", program.to_uppercase());
+    let v = std::env::var(key).ok()?.trim().to_string();
+    if !v.is_empty() && Path::new(&v).exists() {
+        Some(v)
+    } else {
+        None
+    }
+}
 
 /// Remove spaces between CJK characters introduced by tesseract output,
 /// and clean up obvious OCR spacing artifacts.
@@ -717,7 +816,12 @@ pub fn extract_layout_text(file_path: &str) -> Result<String, String> {
     let output = create_command("pdftotext")
         .args(["-layout", file_path, "-"])
         .output()
-        .map_err(|e| format!("pdftotext could not be started (install poppler-utils): {e}"))?;
+        .map_err(|e| {
+            format!(
+                "pdftotext could not be started ({e}). Poppler is required for Daily Entries — \
+                 install Poppler for Windows, then use Settings → PDF tools to locate pdftotext.exe."
+            )
+        })?;
     if !output.status.success() {
         return Err(format!(
             "pdftotext failed (status {:?}). The PDF may be corrupt or password-protected.",
@@ -1062,63 +1166,106 @@ fn silent_cmd(program: &str) -> Command {
 }
 
 fn find_tool(program: &str) -> String {
+    // 1) User-chosen path (Settings → PDF tools), if it still exists.
+    if let Some(p) = tool_override(program) {
+        if Path::new(&p).exists() {
+            return p;
+        }
+    }
+    // 2) Env override, e.g. VOUCHIFY_PDFTOTEXT=C:\poppler\bin\pdftotext.exe
+    if let Some(p) = env_override(program) {
+        return p;
+    }
+    // 3) On PATH.
     if silent_cmd(program).arg("--version").output().is_ok() {
         return program.to_string();
     }
+    // 4) Common install locations (Windows).
     #[cfg(target_os = "windows")]
     {
-        let candidates: &[&str] = match program {
-            "tesseract" => &[
-                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-                r"C:\Program Files\Tesseract-OCR\TesseractOCR\tesseract.exe",
-            ],
-            "pdftotext" | "pdftoppm" => &[],
-            "magick" | "convert" => &[
-                r"C:\Program Files\ImageMagick\magick.exe",
-                r"C:\Program Files\ImageMagick\convert.exe",
-            ],
-            _ => &[],
-        };
-        for c in candidates {
-            if std::path::Path::new(c).exists() {
-                return c.to_string();
-            }
+        if let Some(found) = find_tool_windows(program) {
+            return found;
         }
-        // Search winget package dirs for poppler tools
-        if matches!(program, "pdftotext" | "pdftoppm") {
-            if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-                let winget_root = format!(r"{}\Microsoft\WinGet\Packages", local_app_data);
-                if let Ok(entries) = std::fs::read_dir(&winget_root) {
-                    for entry in entries.flatten() {
-                        if entry.file_name().to_string_lossy().contains("poppler") {
-                            let exe_name = format!("{}.exe", program);
-                            if let Ok(found) = find_in_dir(entry.path(), &exe_name) {
-                                return found;
-                            }
-                        }
-                    }
+    }
+    program.to_string()
+}
+
+/// Search the usual Windows install locations for a tool (Poppler via winget,
+/// Scoop, Chocolatey, or a manual extract; Tesseract; ImageMagick). Only
+/// descends into directories whose name mentions the tool, so it stays fast.
+#[cfg(target_os = "windows")]
+fn find_tool_windows(program: &str) -> Option<String> {
+    let exe = format!("{}.exe", program);
+
+    // Exact, well-known files first.
+    let exact: Vec<&str> = match program {
+        "tesseract" => vec![
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files\Tesseract-OCR\TesseractOCR\tesseract.exe",
+        ],
+        "magick" | "convert" => vec![
+            r"C:\Program Files\ImageMagick\magick.exe",
+            r"C:\Program Files\ImageMagick\convert.exe",
+            r"C:\Program Files (x86)\ImageMagick\magick.exe",
+            r"C:\Program Files (x86)\ImageMagick\convert.exe",
+        ],
+        _ => vec![],
+    };
+    for c in exact {
+        if Path::new(c).exists() {
+            return Some(c.to_string());
+        }
+    }
+
+    let needle = match program {
+        "pdftotext" | "pdftoppm" => "poppler",
+        "tesseract" => "tesseract",
+        _ => return None,
+    };
+
+    let mut roots: Vec<std::path::PathBuf> = vec![
+        r"C:\Program Files".into(),
+        r"C:\Program Files (x86)".into(),
+        r"C:\".into(),
+    ];
+    if let Ok(v) = std::env::var("LOCALAPPDATA") {
+        roots.push(v.clone().into());
+        roots.push(format!(r"{v}\Programs").into());
+        roots.push(format!(r"{v}\Microsoft\WinGet\Packages").into());
+    }
+    if let Ok(v) = std::env::var("USERPROFILE") {
+        roots.push(format!(r"{v}\scoop\apps").into());
+    }
+    if let Ok(v) = std::env::var("PROGRAMDATA") {
+        roots.push(format!(r"{v}\chocolatey\bin").into());
+        roots.push(format!(r"{v}\chocolatey\lib").into());
+    }
+
+    for root in roots {
+        if !root.exists() {
+            continue;
+        }
+        let direct = root.join(&exe);
+        if direct.exists() {
+            return Some(direct.to_string_lossy().to_string());
+        }
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if !p.is_dir() {
+                    continue;
                 }
-            }
-        }
-        // Search for ImageMagick in versioned directories
-        if matches!(program, "magick" | "convert") {
-            let exe_name = format!("{}.exe", program);
-            for prog_files in &[r"C:\Program Files", r"C:\Program Files (x86)"] {
-                if let Ok(entries) = std::fs::read_dir(prog_files) {
-                    for entry in entries.flatten() {
-                        if entry.file_name().to_string_lossy().starts_with("ImageMagick") {
-                            let candidate = entry.path().join(&exe_name);
-                            if candidate.exists() {
-                                return candidate.to_string_lossy().to_string();
-                            }
-                        }
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name.contains(needle) {
+                    if let Ok(found) = find_in_dir(p, &exe) {
+                        return Some(found);
                     }
                 }
             }
         }
     }
-    program.to_string()
+    None
 }
 
 #[cfg(target_os = "windows")]

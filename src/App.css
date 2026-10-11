@@ -3072,3 +3072,15 @@ body {
   animation: entries-spin 0.8s linear infinite;
 }
 @keyframes entries-spin { to { transform: rotate(360deg); } }
+
+/* ── Settings: PDF tools locator ── */
+.acct-tools { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 6px; }
+.acct-tools-empty { font-size: 10.5px; color: rgba(255,255,255,0.4); padding: 4px 0; }
+.acct-tools-hint { font-size: 9.5px; color: rgba(255,255,255,0.35); line-height: 1.4; padding: 2px 0 0; }
+.acct-toolrow { display: flex; align-items: center; gap: 7px; }
+.tool-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--red); box-shadow: 0 0 4px var(--red); }
+.tool-dot.ok { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.tool-name { font-family: var(--font-mono); font-size: 10.5px; color: rgba(255,255,255,0.75); flex: none; }
+.tool-path { flex: 1; min-width: 0; font-size: 9.5px; color: rgba(255,255,255,0.4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.tool-locate { flex: none; font-size: 9.5px; padding: 3px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.72); cursor: pointer; }
+.tool-locate:hover { background: rgba(255,255,255,0.1); color: #fff; }

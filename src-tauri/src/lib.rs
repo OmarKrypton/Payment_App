@@ -390,6 +390,16 @@ fn clear_daily_entries(state: tauri::State<'_, DbState>) -> Result<(), String> {
     entries::clear_all(conn)
 }
 
+#[tauri::command]
+fn get_pdf_tools() -> Vec<importer::ToolStatus> {
+    importer::tool_status()
+}
+
+#[tauri::command]
+fn set_pdf_tool_path(tool: String, path: String) -> Result<(), String> {
+    importer::set_tool_override(&tool, &path)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct StartImportPayload {
     #[serde(rename = "filePath")]
@@ -471,6 +481,7 @@ pub fn run() {
 
             let app_dir = app.path().app_data_dir().expect("no app data dir");
             std::fs::create_dir_all(&app_dir).expect("failed to create app data dir");
+            importer::set_tools_dir(app_dir.clone());
             let db_path = app_dir.join("history.db");
             let conn = history::init_db(&db_path).expect("failed to init db");
             let state = app.state::<DbState>();
@@ -527,6 +538,8 @@ pub fn run() {
             sync_daily_entries_from_remote,
             delete_daily_entry_file,
             clear_daily_entries,
+            get_pdf_tools,
+            set_pdf_tool_path,
             native_update::check_native_update,
             native_update::install_native_update,
             native_update::update_source,
