@@ -98,9 +98,33 @@ fn re_amount_exact() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"^-?[\d,]+\.\d{2}$").unwrap())
 }
-fn re_invoice() -> &'static Regex {
+/// Matches an invoice marker: `inv.`, `inv`, `inv no.`, `inv#`, `invoice no`,
+/// `invoice#`, optionally followed by `:`.
+fn re_invoice_marker() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(?i)inv\.?\s*(\d+)\s*/\s*(\d{2,4})").unwrap())
+    R.get_or_init(|| Regex::new(r"(?i)\binv(?:oice)?\.?[ \t]*(?:no\.?|#)?[ \t]*:?[ \t]*").unwrap())
+}
+/// The invoice token(s) immediately after a marker: `1864` or `2/2021` or
+/// `2-2026`, plus any `+ 1865 + 1815` continuations.
+fn re_invoice_run() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(r"^[ \t]*([0-9][0-9A-Za-z]*(?:[-/][0-9A-Za-z]+)*(?:[ \t]*\+[ \t]*[0-9][0-9A-Za-z]*(?:[-/][0-9A-Za-z]+)*)*)")
+            .unwrap()
+    })
+}
+
+/// Normalize an invoice token so equivalent forms collapse: `2-2026` and
+/// `2/2026` are the same invoice.
+fn normalize_invoice(t: &str) -> String {
+    let t = t.trim();
+    if let Some((a, b)) = t.split_once('-') {
+        let year = b.len() == 4 && (b.starts_with("19") || b.starts_with("20"));
+        if year && !a.is_empty() && a.chars().all(|c| c.is_ascii_digit()) && b.chars().all(|c| c.is_ascii_digit()) {
+            return format!("{}/{}", a, b);
+        }
+    }
+    t.to_uppercase()
 }
 fn re_from_doc() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -389,31 +413,36 @@ fn parse_daily_entries(text: &str) -> Vec<ParsedEntry> {
     entries
 }
 
-fn split_pipe(s: &str) -> Vec<String> {
-    s.split('|').filter(|p| !p.is_empty()).map(|p| p.to_string()).collect()
-}
-
 fn join_refs(items: &[String]) -> String {
     items.join("|")
 }
 
-/// Invoice references (e.g. `2/2021`) mentioned anywhere in an entry's narration.
-fn invoice_refs_of(e: &ParsedEntry) -> Vec<String> {
+/// Invoice references mentioned anywhere in narration lines. Supports the
+/// `inv.N/YYYY` form as well as `INV NO :1864`, `INV NO.2-2026`, `INV#7712` and
+/// `... + 1865 + 1815` continuations.
+fn invoice_refs_from_lines(lines: &[DailyEntryLine]) -> Vec<String> {
     let mut seen = Vec::new();
-    for l in &e.lines {
-        for cap in re_invoice().captures_iter(&l.narration) {
-            let r = format!("{}/{}", &cap[1], &cap[2]);
-            if !seen.contains(&r) {
-                seen.push(r);
+    for l in lines {
+        for m in re_invoice_marker().find_iter(&l.narration) {
+            let tail = &l.narration[m.end()..];
+            let Some(cap) = re_invoice_run().captures(tail) else { continue };
+            for tok in cap[1].split('+') {
+                let r = normalize_invoice(tok);
+                if r.is_empty() {
+                    continue;
+                }
+                if !seen.contains(&r) {
+                    seen.push(r);
+                }
             }
         }
     }
     seen
 }
 
-fn from_documents_of(e: &ParsedEntry) -> Vec<String> {
+fn from_documents_from_lines(lines: &[DailyEntryLine]) -> Vec<String> {
     let mut seen = Vec::new();
-    for l in &e.lines {
+    for l in lines {
         for cap in re_from_doc().captures_iter(&l.narration) {
             let r = cap[1].to_uppercase();
             if !seen.contains(&r) {
@@ -422,6 +451,14 @@ fn from_documents_of(e: &ParsedEntry) -> Vec<String> {
         }
     }
     seen
+}
+
+fn invoice_refs_of(e: &ParsedEntry) -> Vec<String> {
+    invoice_refs_from_lines(&e.lines)
+}
+
+fn from_documents_of(e: &ParsedEntry) -> Vec<String> {
+    from_documents_from_lines(&e.lines)
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────
@@ -659,8 +696,10 @@ pub fn load_all(conn: &Connection) -> Result<Vec<DailyEntryRecord>, String> {
         .query_map([], |r| {
             let lines_json: String = r.get(17)?;
             let lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
-            let invoice_refs: String = r.get(15).unwrap_or_default();
-            let from_documents: String = r.get(16).unwrap_or_default();
+            // Recompute refs from the lines so an upgraded detector applies to
+            // already-imported entries without needing a re-upload.
+            let invoice_refs = invoice_refs_from_lines(&lines);
+            let from_documents = from_documents_from_lines(&lines);
             Ok(DailyEntryRecord {
                 id: r.get(0)?,
                 entry_key: r.get(1)?,
@@ -677,8 +716,8 @@ pub fn load_all(conn: &Connection) -> Result<Vec<DailyEntryRecord>, String> {
                 contain_currency: r.get(12)?,
                 local_amt: r.get(13)?,
                 total_value: r.get(14)?,
-                invoice_refs: split_pipe(&invoice_refs),
-                from_documents: split_pipe(&from_documents),
+                invoice_refs,
+                from_documents,
                 lines,
                 ..Default::default()
             })
@@ -841,6 +880,8 @@ pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
+            let lines_json: String = r.get(16)?;
+            let lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
             Ok(DailyEntrySyncRow {
                 entry_key: r.get(0)?,
                 source_file: r.get(1)?,
@@ -856,9 +897,9 @@ pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {
                 contain_currency: r.get(11)?,
                 local_amt: r.get(12)?,
                 total_value: r.get(13)?,
-                invoice_refs: r.get(14)?,
-                from_documents: r.get(15)?,
-                lines_json: r.get(16)?,
+                invoice_refs: join_refs(&invoice_refs_from_lines(&lines)),
+                from_documents: join_refs(&from_documents_from_lines(&lines)),
+                lines_json,
                 updated_at: r.get(17)?,
             })
         })
@@ -1002,6 +1043,27 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
             checked,
             entries.iter().filter(|e| e.pages > 1).count()
         );
+    }
+
+    #[test]
+    fn parses_invoice_reference_forms() {
+        let mut e = ParsedEntry::default();
+        for narr in [
+            "adt00-20210102001 inv.2/2021 3%wht",
+            "ADT0020260302070 - LECTRO - INV NO :1864 + 1865 + 1815 + 1816",
+            "ADT0020260201023 - INV NO.2-2026 - Guide Group",
+            "INV#7712 KPI",
+            "INVOICE NO 590 - Drison",
+            "INVOICE NOT RECEIVED - ADT0020260302070",
+        ] {
+            e.lines.push(DailyEntryLine { narration: narr.to_string(), ..Default::default() });
+        }
+        let refs = invoice_refs_of(&e);
+        for expected in ["2/2021", "1864", "1865", "1815", "1816", "2/2026", "7712", "590"] {
+            assert!(refs.contains(&expected.to_string()), "missing {expected}; got {refs:?}");
+        }
+        // "INVOICE NOT RECEIVED" must not yield a bogus reference.
+        assert_eq!(refs.len(), 8, "unexpected refs: {refs:?}");
     }
 
     #[test]
