@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -710,24 +711,103 @@ function GlassSelect({ value, options, onChange, allLabel, searchable, searchPla
   );
 }
 
-// Glass date control: the styled field shows a readable date and opens the
-// native date picker (showPicker) via a transparent overlaid input.
+// Glass date control: a styled field that toggles a glass calendar popover.
+// (The native picker can't be closed programmatically, so we render our own.)
 function GlassDate({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
-  const ref = useRef<HTMLInputElement>(null);
-  const label = value ? new Date(value + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
-  const openPicker = () => {
-    const el = ref.current;
-    if (!el) return;
-    const anyEl = el as any;
-    try { if (typeof anyEl.showPicker === "function") { anyEl.showPicker(); return; } } catch {}
-    el.focus();
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const toIso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const selected = value ? new Date(value + "T00:00:00") : null;
+  const today = new Date();
+  const [view, setView] = useState(() => {
+    const d = selected ?? today;
+    return { y: d.getFullYear(), m: d.getMonth() };
+  });
+  const label = selected ? selected.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+
+  const place = useCallback(() => {
+    const b = btnRef.current;
+    if (!b) return;
+    const r = b.getBoundingClientRect();
+    const width = 252;
+    let left = r.left;
+    if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
+    if (left < 8) left = 8;
+    setPos({ top: r.bottom + 6, left });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target) || popRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, place]);
+
+  const toggle = () => {
+    if (open) { setOpen(false); return; }
+    const d = selected ?? new Date();
+    setView({ y: d.getFullYear(), m: d.getMonth() });
+    place();
+    setOpen(true);
   };
+
+  const firstDay = new Date(view.y, view.m, 1).getDay();
+  const daysInMonth = new Date(view.y, view.m + 1, 0).getDate();
+  const todayIso = toIso(today);
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const monthName = new Date(view.y, view.m, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const prevMonth = () => setView(v => v.m === 0 ? { y: v.y - 1, m: 11 } : { y: v.y, m: v.m - 1 });
+  const nextMonth = () => setView(v => v.m === 11 ? { y: v.y + 1, m: 0 } : { y: v.y, m: v.m + 1 });
+
   return (
-    <button type="button" className="date-field" onClick={openPicker}>
-      <svg className="cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-      <span>{label || placeholder}</span>
-      <input ref={ref} type="date" className="date-native" value={value} onChange={e => onChange(e.target.value)} tabIndex={-1} />
-    </button>
+    <span className="date-field-wrap">
+      <button ref={btnRef} type="button" className={`date-field${open ? " open" : ""}`} onClick={toggle}>
+        <svg className="cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+        <span>{label || placeholder}</span>
+      </button>
+      {open && createPortal(
+        <div className="cal-pop" ref={popRef} style={{ position: "fixed", top: pos.top, left: pos.left }}>
+          <div className="cal-head">
+            <button type="button" className="cal-nav" onClick={prevMonth}>‹</button>
+            <span className="cal-title">{monthName}</span>
+            <button type="button" className="cal-nav" onClick={nextMonth}>›</button>
+          </div>
+          <div className="cal-grid">
+            {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <span key={i} className="cal-dow">{d}</span>)}
+            {cells.map((d, i) => d === null ? <span key={"e" + i} /> : (() => {
+              const iso = toIso(new Date(view.y, view.m, d));
+              return (
+                <button type="button" key={i} className={`cal-day${iso === value ? " sel" : ""}${iso === todayIso ? " today" : ""}`}
+                  onClick={() => { onChange(iso); setOpen(false); }}>{d}</button>
+              );
+            })())}
+          </div>
+          <div className="cal-foot">
+            <button type="button" className="cal-quick" onClick={() => { onChange(todayIso); setOpen(false); }}>Today</button>
+            {value && <button type="button" className="cal-quick" onClick={() => { onChange(""); setOpen(false); }}>Clear</button>}
+          </div>
+        </div>,
+        document.body
+      )}
+    </span>
   );
 }
 
@@ -936,8 +1016,6 @@ function App() {
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showTools, setShowTools] = useState(false);
-  const [toolStatus, setToolStatus] = useState<any[]>([]);
   const [bankSection, setBankSection] = useState("sec-info");
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -2536,7 +2614,7 @@ function App() {
                       </tr></thead>
                       <tbody>
                         {(e.lines || []).map((l: any, i: number) => (
-                          <tr key={i}>
+                          <tr key={i} className={String(l.account_no || "").trim() === "220504" ? "wht-row" : undefined}>
                             <td className="acc">{hl(l.account_no)}</td>
                             <td className="accname">{hl(l.account)}{l.currency && l.currency !== "Local Curr" ? ` · ${l.currency}` : ""}</td>
                             <td className="narr">{hl(l.narration)}</td>
@@ -3646,12 +3724,9 @@ function App() {
       const msg = String(e?.message || e);
       if (/pdftotext|poppler/i.test(msg)) {
         showAlert(t(
-          "未找到 PDF 解析工具 (pdftotext)。Windows 版已内置该工具——请在“设置 → PDF 工具”中定位 pdftotext.exe，或重新安装应用后重试。",
-          "pdftotext was not found. It ships with the Windows build — open Settings → PDF tools to locate pdftotext.exe, or reinstall the app, then try again."
+          "未找到 PDF 解析工具 (pdftotext)。该工具随 Windows 版一起安装——请重新安装应用后重试。",
+          "pdftotext was not found. It is installed with the Windows build — please reinstall the app and try again."
         ));
-        setShowSettings(true);
-        setShowTools(true);
-        loadToolStatus();
       } else {
         showAlert(`${t("导入失败", "Import failed")}: ${msg}`);
       }
@@ -3668,25 +3743,6 @@ function App() {
       setDeRefresh(v => v + 1);
     } catch (e: any) {
       showAlert(`${t("删除失败", "Delete failed")}: ${e?.message || e}`);
-    }
-  };
-
-  // ── External PDF tools (Poppler / Tesseract) ───────────────────────────────
-  const loadToolStatus = useCallback(async () => {
-    try {
-      setToolStatus(await invoke<any[]>("get_pdf_tools"));
-    } catch {}
-  }, []);
-
-  const locateTool = async (tool: string) => {
-    const picked = await open({ multiple: false });
-    if (!picked || Array.isArray(picked)) return;
-    try {
-      await invoke("set_pdf_tool_path", { tool, path: picked });
-      await loadToolStatus();
-      showAlert(`${t("已保存路径", "Path saved")}: ${tool}`);
-    } catch (e: any) {
-      showAlert(`${t("保存失败", "Save failed")}: ${e?.message || e}`);
     }
   };
 
@@ -4835,26 +4891,6 @@ function App() {
                 <span>{t("语言", "Language")}</span>
                 <span className="acct-setval">{lang === "zh" ? "English" : "中文"}</span>
               </button>
-              <button className="acct-setrow" onClick={() => { setShowTools(v => !v); if (!showTools) loadToolStatus(); }}>
-                <span>{t("PDF 工具", "PDF tools")}</span>
-                <IconChevronRight size={13} style={{ transform: showTools ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }} />
-              </button>
-              {showTools && (
-                <div className="acct-tools">
-                  {toolStatus.map(ts => (
-                    <div key={ts.tool} className="acct-toolrow">
-                      <span className={`tool-dot${ts.found ? " ok" : ""}`} />
-                      <span className="tool-name">{ts.tool}</span>
-                      <span className="tool-path" title={ts.path || ""}>{ts.found ? (ts.path || t("已找到", "found")) : t("未找到", "not found")}</span>
-                      <button className="tool-locate" onClick={() => locateTool(ts.tool)}>{t("定位", "Locate")}</button>
-                    </div>
-                  ))}
-                  {toolStatus.length === 0 && <div className="acct-tools-empty">{t("检查中…", "Checking…")}</div>}
-                  <div className="acct-tools-hint">
-                    {t("Windows 版已内置这些工具；若显示未找到，请在此手动定位。", "These ship with the Windows build; if any show “not found”, locate them here.")}
-                  </div>
-                </div>
-              )}
               <div className="acct-setrow static">
                 <span>{t("版本", "Version")}</span>
                 <span className="acct-setval">{appVersion ? `v${appVersion}` : ""}</span>
