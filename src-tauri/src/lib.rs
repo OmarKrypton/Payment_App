@@ -1,5 +1,6 @@
 mod calc;
 mod config;
+mod entries;
 mod eta_xml;
 mod excel;
 mod history;
@@ -338,6 +339,57 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, ids: Vec<i64>, form_json
     Ok(results)
 }
 
+// ── Daily Entries ────────────────────────────────────────────────────────────
+
+#[tauri::command(async)]
+fn import_daily_entries(state: tauri::State<'_, DbState>, file_path: String) -> Result<entries::DailyEntriesImportResult, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::import_file(conn, &file_path)
+}
+
+#[tauri::command(async)]
+fn list_daily_entries(
+    state: tauri::State<'_, DbState>,
+    search: String,
+    search_in: String,
+    filter: String,
+    offset: usize,
+    limit: usize,
+) -> Result<entries::DailyEntriesList, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::list(conn, &search, &search_in, &filter, offset, limit)
+}
+
+#[tauri::command]
+fn daily_entries_for_sync(state: tauri::State<'_, DbState>) -> Result<Vec<entries::DailyEntrySyncRow>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::for_sync(conn)
+}
+
+#[tauri::command]
+fn sync_daily_entries_from_remote(state: tauri::State<'_, DbState>, rows: Vec<entries::DailyEntrySyncRow>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::sync_from_remote(conn, &rows)
+}
+
+#[tauri::command]
+fn delete_daily_entry_file(state: tauri::State<'_, DbState>, source_file: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::delete_source(conn, &source_file)
+}
+
+#[tauri::command]
+fn clear_daily_entries(state: tauri::State<'_, DbState>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::clear_all(conn)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct StartImportPayload {
     #[serde(rename = "filePath")]
@@ -469,6 +521,12 @@ pub fn run() {
             reject_pool_delete,
             sync_pool_from_remote,
             validate_from_pool,
+            import_daily_entries,
+            list_daily_entries,
+            daily_entries_for_sync,
+            sync_daily_entries_from_remote,
+            delete_daily_entry_file,
+            clear_daily_entries,
             native_update::check_native_update,
             native_update::install_native_update,
             native_update::update_source,

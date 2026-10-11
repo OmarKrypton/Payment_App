@@ -709,6 +709,28 @@ fn try_pdftotext(file_path: &str) -> Option<String> {
     if best.is_empty() { None } else { Some(best) }
 }
 
+/// Extract the whole PDF as layout-preserving plain text. Used by the Daily
+/// Entries importer, which relies on the fixed column alignment of the report.
+/// Unlike the OCR path this does not require CJK characters, so it also works
+/// for pure-ASCII accounting exports.
+pub fn extract_layout_text(file_path: &str) -> Result<String, String> {
+    let output = create_command("pdftotext")
+        .args(["-layout", file_path, "-"])
+        .output()
+        .map_err(|e| format!("pdftotext could not be started (install poppler-utils): {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "pdftotext failed (status {:?}). The PDF may be corrupt or password-protected.",
+            output.status.code()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    if text.trim().is_empty() {
+        return Err("No text could be extracted from the PDF. Scanned PDFs are not supported for Daily Entries.".into());
+    }
+    Ok(text)
+}
+
 fn try_pdftotext_all(file_path: &str) -> Option<String> {
     let mut best = String::new();
     for flag in &["-layout", "-raw", "-table"] {

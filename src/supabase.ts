@@ -481,3 +481,64 @@ export async function deleteManualSupplierRemote(taxId: string): Promise<void> {
   const { error } = await supabase.from("manual_suppliers").delete().eq("tax_id", taxId);
   if (error) throw error;
 }
+
+// ── Daily Entries (journal documents extracted from Daily Entries PDFs) ─────
+export interface DailyEntrySyncRow {
+  entry_key: string;
+  source_file: string;
+  source_page: number;
+  pages: number;
+  doc_no: string;
+  serial: string;
+  doc_date: string;
+  journal_no: string;
+  journal: string;
+  branch: string;
+  doc_source: string;
+  contain_currency: string;
+  local_amt: string;
+  total_value: string;
+  invoice_refs: string;
+  from_documents: string;
+  lines_json: string;
+  updated_at: string;
+}
+
+export async function upsertDailyEntriesRemote(rows: DailyEntrySyncRow[]): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (rows.length === 0) return;
+  const PAGE = 50;
+  for (let i = 0; i < rows.length; i += PAGE) {
+    const chunk = rows.slice(i, i + PAGE).map((r) => ({ ...r, user_id: session.user.id }));
+    const { error } = await supabase
+      .from("daily_entries")
+      .upsert(chunk, { onConflict: "entry_key" });
+    if (error) throw error;
+  }
+}
+
+export async function listDailyEntriesRemote(): Promise<DailyEntrySyncRow[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const COLS =
+    "entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal, branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents, lines_json, updated_at";
+  const build = (from: number, to: number) =>
+    supabase
+      .from("daily_entries")
+      .select(COLS)
+      .order("doc_date", { ascending: true })
+      .range(from, to)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        return data;
+      });
+  return fetchAllPooled(build, 500);
+}
+
+export async function deleteDailyEntriesRemote(sourceFile: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { error } = await supabase.from("daily_entries").delete().eq("source_file", sourceFile);
+  if (error) throw error;
+}

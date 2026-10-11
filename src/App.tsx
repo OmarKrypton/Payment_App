@@ -5,8 +5,8 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote } from "./supabase";
-import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings } from "./icons";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemote, upsertDailyEntriesRemote, deleteDailyEntriesRemote } from "./supabase";
+import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
 interface OcrFieldInfo {
@@ -908,7 +908,7 @@ const invoiceMatchesPoolRow = (inv: any, p: any): boolean => {
 };
 
 function App() {
-  const [tab, setTab] = useState<"bank" | "import" | "suppliers">("bank");
+  const [tab, setTab] = useState<"bank" | "import" | "suppliers" | "entries">("bank");
   const [lang, setLang] = useState<"zh" | "en">("en");
   const [appVersion, setAppVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -956,6 +956,22 @@ function App() {
   const [historySort, setHistorySort] = useState<"newest" | "oldest" | "label">("newest");
   const [etaResult, setEtaResult] = useState<any[] | null>(null);
   const [showEtaResult, setShowEtaResult] = useState(false);
+  // ── Daily Entries (journal documents from Daily Entries PDF reports) ──
+  const [deEntries, setDeEntries] = useState<any[]>([]);
+  const [deTotal, setDeTotal] = useState(0);
+  const [deStats, setDeStats] = useState<any>({ total: 0, debit: 0, credit: 0, pages: 0, multipage: 0, paid_before: 0, files: 0, lines: 0 });
+  const [deLoading, setDeLoading] = useState(false);
+  const [deSearch, setDeSearch] = useState("");
+  const [deSearchIn, setDeSearchIn] = useState("all");
+  const [deFilter, setDeFilter] = useState<"all" | "paid" | "multipage">("all");
+  const [deExpanded, setDeExpanded] = useState<Record<string, boolean>>({});
+  const [deImporting, setDeImporting] = useState(false);
+  const [deImportInfo, setDeImportInfo] = useState<any>(null);
+  const [deLimit, setDeLimit] = useState(150);
+  const [deSyncing, setDeSyncing] = useState(false);
+  const [deFiles, setDeFiles] = useState<string[]>([]);
+  const [deShowFiles, setDeShowFiles] = useState(false);
+  const [deRefresh, setDeRefresh] = useState(0);
   const [showPool, setShowPool] = useState(false);
   const [poolList, setPoolList] = useState<any[]>([]);
   const [poolLoading, setPoolLoading] = useState(false);
@@ -2370,8 +2386,176 @@ function App() {
     );
   };
 
-  const draftLabel = (n: number | null | undefined): string => n ? `Draft ${n}` : "Draft";
+  // ── Daily Entries tab ──────────────────────────────────────────────────────
+  const DailyEntriesTab = () => {
+    const fmtMoney = (n: number) => (n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (
+      <div className="entries-tab">
+        <div className="entries-header suppliers-header">
+          <div className="entries-title-row">
+            <div className="entries-glyph"><IconLedger size={20} /></div>
+            <div className="entries-title-text">
+              <h2>{t("日报分录", "Daily Entries")}</h2>
+              <p>
+                {deStats.total > 0
+                  ? t(`${deStats.files} 个文件 · ${deStats.total} 份凭证 · ${deStats.lines} 行`, `${deStats.files} file(s) · ${deStats.total} documents · ${deStats.lines} lines`)
+                  : t("上传日报 PDF 以提取分录", "Upload a Daily Entries PDF to extract documents")}
+                {deSyncing ? t(" · 同步中…", " · syncing…") : ""}
+              </p>
+            </div>
+            <div className="entries-head-actions">
+              <div className="entries-files">
+                <button className="hc-btn" onClick={() => setDeShowFiles(v => !v)} disabled={deFiles.length === 0}>
+                  {t("文件", "Files")} ({deFiles.length})
+                </button>
+                {deShowFiles && deFiles.length > 0 && (
+                  <div className="entries-files-menu">
+                    {deFiles.map(f => (
+                      <div key={f} className="entries-file-row">
+                        <span className="entries-file-name" title={f}>{f}</span>
+                        <button className="entries-file-del" title={t("删除该文件的分录", "Remove this file's entries")} onClick={() => removeDailyEntryFile(f)}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button className="hc-btn pri" onClick={importDailyEntries} disabled={deImporting}>
+                {deImporting ? t("提取中…", "Extracting…") : `＋ ${t("上传 PDF", "Upload PDF")}`}
+              </button>
+            </div>
+          </div>
+          <div className="entries-stats">
+            <span className="entries-stat">{t("凭证", "Documents")} <b>{deStats.total}</b></span>
+            <span className="entries-stat ok">{t("借方", "Debit")} <b>{fmtMoney(deStats.debit)}</b></span>
+            <span className="entries-stat warn">{t("贷方", "Credit")} <b>{fmtMoney(deStats.credit)}</b></span>
+            <span className="entries-stat">{t("页数", "Pages")} <b>{deStats.pages}</b></span>
+            <span className="entries-stat">{t("跨页合并", "Multi-page merged")} <b>{deStats.multipage}</b></span>
+            <span className={`entries-stat${deStats.paid_before ? " bad" : ""}`}>{t("重复付款", "Paid before")} <b>{deStats.paid_before}</b></span>
+          </div>
+        </div>
 
+        <div className="entries-toolbar">
+          <div className="entries-search">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.2-3.2" /></svg>
+            <input
+              className="field-input"
+              placeholder={t("搜索 凭证号、科目号、科目名称、金额或摘要…", "Search Doc. No, Account No, Account name, value or narration…")}
+              value={deSearch}
+              onChange={e => setDeSearch(e.target.value)}
+            />
+          </div>
+          <GlassSelect
+            className="entries-searchin"
+            value={deSearchIn}
+            onChange={setDeSearchIn}
+            options={[
+              { value: "all", label: t("全部字段", "All fields") },
+              { value: "doc", label: t("凭证号", "Doc. No") },
+              { value: "account_no", label: t("科目号", "Account No") },
+              { value: "account", label: t("科目名称", "Account name") },
+              { value: "value", label: t("金额 (借/贷)", "Value (debit / credit)") },
+              { value: "narration", label: t("摘要", "Narration") },
+            ]}
+          />
+          <div className="entries-seg">
+            <button className={deFilter === "all" ? "active" : ""} onClick={() => setDeFilter("all")}>{t("全部", "All")} <b>{deStats.total}</b></button>
+            <button className={deFilter === "paid" ? "active" : ""} onClick={() => setDeFilter("paid")}>{t("重复付款", "Paid before")} <b>{deStats.paid_before}</b></button>
+            <button className={deFilter === "multipage" ? "active" : ""} onClick={() => setDeFilter("multipage")}>{t("跨页", "Multi-page")} <b>{deStats.multipage}</b></button>
+          </div>
+        </div>
+
+        {deImportInfo && (
+          <div className="entries-result">
+            <span className="entries-result-ico">✓</span>
+            <span>{t("已提取", "Extracted")} <b>{deImportInfo.entries}</b> {t("份凭证", "documents")} · <b>{deImportInfo.lines}</b> {t("行", "lines")} · <b>{deImportInfo.pages}</b> {t("页", "pages")}</span>
+            {deImportInfo.multipage > 0 && <span className="entries-chip mp">{deImportInfo.multipage} {t("跨页合并", "multi-page merged")}</span>}
+            {deImportInfo.duplicates > 0 && <span className="entries-chip bad">{deImportInfo.duplicates} {t("重复付款", "paid before")}</span>}
+            <button className="entries-result-x" onClick={() => setDeImportInfo(null)}>✕</button>
+          </div>
+        )}
+
+        <div className="entries-list" style={deLoading ? { opacity: 0.55 } : {}}>
+          {deImporting && (
+            <div className="entries-empty">
+              <div className="entries-spinner" />
+              <div>{t("正在解析 PDF 并合并跨页凭证…", "Parsing the PDF and merging multi-page documents…")}</div>
+              <div className="entries-empty-sub">{t("大型报表可能需要几十秒", "Large reports can take a while")}</div>
+            </div>
+          )}
+          {!deImporting && deEntries.length === 0 && (
+            <div className="entries-empty">
+              <div className="entries-empty-ico"><IconLedger size={30} /></div>
+              <div>{deStats.total === 0 ? t("暂无日报分录", "No daily entries yet") : t("未找到匹配结果", "No matching documents")}</div>
+              <div className="entries-empty-sub">{deStats.total === 0 ? t("上传日报 PDF 开始", "Upload a Daily Entries PDF to begin") : t("试试其他搜索条件", "Try a different search")}</div>
+            </div>
+          )}
+          {deEntries.map((e: any) => {
+            const open = !!deExpanded[e.entry_key];
+            return (
+              <div key={e.entry_key} className={`hc-item entries-item${e.paid_before ? " dup" : ""}${e.pages > 1 ? " mp" : ""}`}>
+                <span className="hc-bar" />
+                <div className="entries-row1" onClick={() => setDeExpanded(prev => ({ ...prev, [e.entry_key]: !prev[e.entry_key] }))}>
+                  <span className={`entries-caret${open ? " open" : ""}`}><IconChevronRight size={15} /></span>
+                  <span className="entries-doc">{t("凭证", "Doc")} <span>{t("号", "No.")}</span> {e.doc_no}{e.serial && e.serial !== "1" ? `/${e.serial}` : ""}</span>
+                  {e.journal && <span className="entries-jrn">{(e.journal_no ? `${e.journal_no} · ` : "") + e.journal}</span>}
+                  {e.pages > 1 && <span className="entries-pages">{e.pages} {t("页合并", "pages merged")}</span>}
+                  {e.paid_before && <span className="entries-paid">⚠ {t("重复付款", "Paid before")}</span>}
+                  <span className="entries-date">{e.doc_date}</span>
+                </div>
+                <div className="entries-meta">
+                  {e.branch && <span>{t("分支", "Branch")} <b>{e.branch}</b></span>}
+                  {e.doc_source && <span>{t("来源", "Source")} <b>{e.doc_source}</b></span>}
+                  {e.local_amt && <span>{t("本地金额", "Local Amt")} <b>{e.local_amt}</b></span>}
+                  {e.source_file && <span className="entries-src">{e.source_file}{e.source_page ? ` · p${e.source_page}` : ""}</span>}
+                  <span className="entries-sum">{t("合计", "Total")} <b>{e.total_value || e.local_amt}</b></span>
+                </div>
+                {e.paid_before && (
+                  <div className="entries-alert">
+                    <span className="entries-alert-ico">⚠</span>
+                    <span>
+                      {t("发票", "Invoice")} <b>{(e.paid_before_refs || []).join(", ")}</b>
+                      {e.paid_before_in && e.paid_before_in[0] ? <> {t("已于", "was already paid in")} <b>{t("凭证", "Doc")} {e.paid_before_in[0].doc_no}</b>{e.paid_before_in[0].doc_date ? ` (${e.paid_before_in[0].doc_date})` : ""}</> : null}
+                    </span>
+                  </div>
+                )}
+                {open && (
+                  <div className="entries-lines">
+                    <table className="entries-table">
+                      <thead><tr>
+                        <th>{t("科目号", "Account No")}</th>
+                        <th>{t("科目", "Account")}</th>
+                        <th>{t("摘要", "Narration")}</th>
+                        <th className="num">{t("借方", "Debit")}</th>
+                        <th className="num">{t("贷方", "Credit")}</th>
+                      </tr></thead>
+                      <tbody>
+                        {(e.lines || []).map((l: any, i: number) => (
+                          <tr key={i}>
+                            <td className="acc">{l.account_no}</td>
+                            <td className="accname">{l.account}{l.currency && l.currency !== "Local Curr" ? ` · ${l.currency}` : ""}</td>
+                            <td className="narr">{l.narration}</td>
+                            <td className="num dr">{l.debit || "—"}</td>
+                            <td className="num cr">{l.credit || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {!deImporting && deEntries.length > 0 && deEntries.length < deTotal && (
+            <button className="hc-btn entries-more" onClick={() => setDeLimit(l => l + 150)}>
+              {t("显示更多", "Show more")} ({deEntries.length}/{deTotal})
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const draftLabel = (n: number | null | undefined): string => n ? `Draft ${n}` : "Draft";
   const snapshotDraftNo = (parsed: any): number | null => {
     const n = parsed?.draft_no;
     return (typeof n === "number" && Number.isFinite(n) && n >= 1) ? n : null;
@@ -3369,6 +3553,90 @@ function App() {
     setPoolTab("all");
     setPoolSelected(new Set());
     loadPool();
+  };
+
+  // ── Daily Entries: load / import / sync ────────────────────────────────────
+  const loadDailyEntries = useCallback(async (search: string, searchIn: string, filter: string, limit: number) => {
+    setDeLoading(true);
+    try {
+      const res: any = await invoke("list_daily_entries", { search, searchIn, filter, offset: 0, limit });
+      setDeEntries(res?.entries || []);
+      setDeTotal(res?.total ?? 0);
+      setDeStats(res?.stats || { total: 0, debit: 0, credit: 0, pages: 0, multipage: 0, paid_before: 0, files: 0, lines: 0 });
+      const names: string[] = (res?.entries || []).map((e: any) => e.source_file).filter(Boolean);
+      setDeFiles(prev => {
+        const merged = new Set<string>([...prev, ...names]);
+        return Array.from(merged).sort();
+      });
+    } catch (e: any) {
+      showAlert(`${t("加载日报失败", "Failed to load daily entries")}: ${e?.message || e}`);
+    } finally {
+      setDeLoading(false);
+    }
+  }, [showAlert, t]);
+
+  // Reload (debounced) whenever the tab is opened or a query/filter changes.
+  useEffect(() => {
+    if (tab !== "entries") return;
+    const id = setTimeout(() => { loadDailyEntries(deSearch, deSearchIn, deFilter, deLimit); }, 200);
+    return () => clearTimeout(id);
+  }, [tab, deSearch, deSearchIn, deFilter, deLimit, deRefresh, loadDailyEntries]);
+
+  // On first open, pull the shared store from the cloud.
+  const dePulledRef = useRef(false);
+  useEffect(() => {
+    if (tab !== "entries" || !authUser || dePulledRef.current) return;
+    dePulledRef.current = true;
+    (async () => {
+      setDeSyncing(true);
+      try {
+        const remote: any[] = await listDailyEntriesRemote();
+        if (remote.length) {
+          await invoke("sync_daily_entries_from_remote", { rows: remote });
+          setDeRefresh(v => v + 1);
+        }
+      } catch (e) {
+        console.error("daily entries pull failed", e);
+      } finally {
+        setDeSyncing(false);
+      }
+    })();
+  }, [tab, authUser]);
+
+  const importDailyEntries = async () => {
+    const path = await open({ filters: [{ name: "PDF", extensions: ["pdf"] }], multiple: false });
+    if (!path || Array.isArray(path)) return;
+    setDeImporting(true);
+    setDeImportInfo(null);
+    try {
+      const info: any = await invoke("import_daily_entries", { filePath: path });
+      setDeImportInfo(info);
+      setDeFiles(prev => Array.from(new Set([...prev, info?.source_file].filter(Boolean))).sort());
+      if (authUser) {
+        try {
+          const local: any[] = await invoke("daily_entries_for_sync");
+          await upsertDailyEntriesRemote(local.filter((r: any) => r.source_file === info?.source_file));
+        } catch (e) {
+          console.error("daily entries push failed", e);
+        }
+      }
+      setDeRefresh(v => v + 1);
+    } catch (e: any) {
+      showAlert(`${t("导入失败", "Import failed")}: ${e?.message || e}`);
+    } finally {
+      setDeImporting(false);
+    }
+  };
+
+  const removeDailyEntryFile = async (file: string) => {
+    try {
+      await invoke("delete_daily_entry_file", { sourceFile: file });
+      if (authUser) { try { await deleteDailyEntriesRemote(file); } catch {} }
+      setDeFiles(prev => prev.filter(f => f !== file));
+      setDeRefresh(v => v + 1);
+    } catch (e: any) {
+      showAlert(`${t("删除失败", "Delete failed")}: ${e?.message || e}`);
+    }
   };
 
   // Load suppliers data whenever the Suppliers tab is opened.
@@ -4422,6 +4690,11 @@ function App() {
 
         {/* Views */}
         <div className="sidebar-section-label">{t("视图", "Views")}</div>
+        <button className={`navitem${tab === "entries" ? " active" : ""}`} data-tip={sidebarCollapsed ? t("日报分录", "Daily Entries") : undefined} onClick={() => setTab("entries")}>
+          <span className="sb-tile"><IconLedger size={15} /></span>
+          <span className="navlabel">{t("日报分录", "Daily Entries")}</span>
+          {deStats.total > 0 && <span className="navbadge">{deStats.total}</span>}
+        </button>
         <button className={`navitem${tab === "suppliers" ? " active" : ""}`} data-tip={sidebarCollapsed ? t("供应商", "Suppliers") : undefined} onClick={() => setTab("suppliers")}>
           <span className="sb-tile"><IconUsers size={15} /></span>
           <span className="navlabel">{t("供应商", "Suppliers")}</span>
@@ -4619,8 +4892,10 @@ function App() {
             <div id="sec-imp-checklist" className="bank-anchor">{AuditChecklistCard()}</div>
             {AuditNotesDecisionCard()}
           </>
-        ) : (
+        ) : tab === "suppliers" ? (
           SuppliersTab()
+        ) : (
+          DailyEntriesTab()
         )}
       </main>
 

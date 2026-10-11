@@ -103,6 +103,14 @@ export function IconLayers({ size = defaults.size, color = defaults.color, style
   </svg>;
 }
 
+export function IconLedger({ size = defaults.size, color = defaults.color, style }: IconProps) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={style}>
+    <path d="M5 3h11a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V5a2 2 0 0 1 2-2z"/>
+    <path d="M8 7h6"/>
+    <path d="M8 10.5h6"/>
+  </svg>;
+}
+
 export function IconUpload({ size = defaults.size, color = defaults.color, style }: IconProps) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={style}>
     <path d="M12 16V4"/>

@@ -110,6 +110,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     // rows that are the same document as another (they used to multiply when a
     // file without an embedded uuid was re-imported).
     normalize_synthetic_uuids(conn)?;
+    crate::entries::init_schema(conn)?;
     Ok(())
 }
 
