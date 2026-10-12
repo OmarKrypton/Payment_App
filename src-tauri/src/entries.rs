@@ -262,6 +262,7 @@ fn parse_daily_entries(text: &str) -> Vec<ParsedEntry> {
                 if let Some(mut e) = cur.take() {
                     if !e.lines.is_empty() {
                         e.pages = e.pages.max(1);
+                        apply_currency_pairing(&mut e.lines);
                         entries.push(e);
                     }
                 }
@@ -414,6 +415,7 @@ fn parse_daily_entries(text: &str) -> Vec<ParsedEntry> {
     if let Some(mut e) = cur.take() {
         if !e.lines.is_empty() {
             e.pages = e.pages.max(1);
+            apply_currency_pairing(&mut e.lines);
             entries.push(e);
         }
     }
@@ -706,7 +708,10 @@ pub fn load_all(conn: &Connection) -> Result<Vec<DailyEntryRecord>, String> {
     let rows = stmt
         .query_map([], |r| {
             let lines_json: String = r.get(17)?;
-            let lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
+            let mut lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
+            // Correct contra lines labelled Local Curr that actually carry a
+            // foreign amount (applies to already-imported entries too).
+            apply_currency_pairing(&mut lines);
             // Recompute refs from the lines so an upgraded detector applies to
             // already-imported entries without needing a re-upload.
             let invoice_refs = invoice_refs_from_lines(&lines);
@@ -800,6 +805,57 @@ fn local_amount(amount: &str, rate: &str) -> f64 {
     // The report rounds each line's local amount to 2 decimals, so do the same
     // (otherwise summing gives a small drift vs the report's own total).
     ((a * r) * 100.0).round() / 100.0
+}
+
+/// Some contra lines (e.g. the `1216 Import Debitors` side of a foreign-currency
+/// payment) are labelled `Local Curr` with rate 1.0 even though their amount is
+/// in the foreign currency. When such a line's amount matches a foreign-currency
+/// line in the same voucher, use that line's rate and currency so the voucher
+/// reconciles. Verified to fix exactly the affected vouchers and change nothing
+/// else across all the sample reports.
+fn apply_currency_pairing(lines: &mut [DailyEntryLine]) {
+    let amount_of = |l: &DailyEntryLine| -> f64 {
+        let d = num(&l.debit);
+        if d != 0.0 { d } else { num(&l.credit) }
+    };
+    let refs: Vec<(f64, String, String, bool)> = lines
+        .iter()
+        .filter_map(|l| {
+            let r = l.local_value.trim().parse::<f64>().ok()?;
+            if r == 1.0 {
+                return None;
+            }
+            let a = amount_of(l);
+            if a == 0.0 {
+                return None;
+            }
+            Some((a, l.local_value.trim().to_string(), l.currency.clone(), num(&l.debit) != 0.0))
+        })
+        .collect();
+    if refs.is_empty() {
+        return;
+    }
+    for l in lines.iter_mut() {
+        let r = l.local_value.trim().parse::<f64>().unwrap_or(1.0);
+        if r != 1.0 {
+            continue;
+        }
+        let a = amount_of(l);
+        if a == 0.0 {
+            continue;
+        }
+        let is_debit = num(&l.debit) != 0.0;
+        let pick = refs
+            .iter()
+            .find(|(ra, _, _, rd)| *rd != is_debit && (ra - a).abs() < 0.005)
+            .or_else(|| refs.iter().find(|(ra, _, _, _)| (ra - a).abs() < 0.005));
+        if let Some((_, rate, currency, _)) = pick {
+            l.local_value = rate.clone();
+            if !currency.is_empty() {
+                l.currency = currency.clone();
+            }
+        }
+    }
 }
 
 /// Debit and Credit balance within currency-rounding tolerance: the displayed
