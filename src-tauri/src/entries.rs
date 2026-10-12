@@ -929,8 +929,41 @@ pub fn list(
     Ok(DailyEntriesList { entries, total, stats })
 }
 
-pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {
-    let mut stmt = conn
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyEntryFileInfo {
+    pub source_file: String,
+    pub documents: usize,
+    pub pages: i64,
+    pub debit: f64,
+    pub credit: f64,
+    pub balanced: bool,
+}
+
+/// Distinct list of the files that have been imported, with per-file totals.
+pub fn list_files(conn: &Connection) -> Result<Vec<DailyEntryFileInfo>, String> {
+    let all = load_all(conn)?;
+    let mut map: std::collections::BTreeMap<String, DailyEntryFileInfo> = std::collections::BTreeMap::new();
+    for e in &all {
+        let f = map.entry(e.source_file.clone()).or_insert_with(|| DailyEntryFileInfo {
+            source_file: e.source_file.clone(),
+            documents: 0,
+            pages: 0,
+            debit: 0.0,
+            credit: 0.0,
+            balanced: true,
+        });
+        f.documents += 1;
+        f.pages += e.pages;
+        f.debit += e.debit_total;
+        f.credit += e.credit_total;
+    }
+    for f in map.values_mut() {
+        f.balanced = is_balanced(f.debit, f.credit);
+    }
+    Ok(map.into_values().collect())
+}
+
+pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {    let mut stmt = conn
         .prepare(
             "SELECT entry_key, source_file, source_page, pages, doc_no, serial, doc_date,
                     journal_no, journal, branch, doc_source, contain_currency, local_amt,
@@ -1085,10 +1118,20 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
         assert!(!entries.is_empty(), "no entries parsed");
         let mut checked = 0;
         let mut bad: Vec<String> = Vec::new();
+        let mut sum_d = 0.0f64;
+        let mut sum_c = 0.0f64;
+        let mut sum_pages = 0i64;
+        let mut multipage = 0usize;
         for e in &entries {
             assert!(!e.lines.is_empty(), "entry {} has no lines", e.doc_no);
             let d: f64 = e.lines.iter().map(|l| local_amount(&l.debit, &l.local_value)).sum();
             let c: f64 = e.lines.iter().map(|l| local_amount(&l.credit, &l.local_value)).sum();
+            sum_d += d;
+            sum_c += c;
+            sum_pages += e.pages;
+            if e.pages > 1 {
+                multipage += 1;
+            }
             if !is_balanced(d, c) {
                 bad.push(format!("{} {}: {:.2} vs {:.2}", e.doc_no, e.doc_date, d, c));
             }
@@ -1100,7 +1143,10 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
         // A handful of source vouchers are genuinely unbalanced (e.g. missing an
         // FX adjustment line); fail only if this looks like a parser regression.
         assert!(bad.len() * 200 <= checked, "too many unbalanced entries: {}", bad.len());
-        println!("parsed {} entries ({} checked in local currency)", entries.len(), checked);
+        println!(
+            "TOTALS docs={} pages={} multipage={} debit={:.2} credit={:.2}",
+            entries.len(), sum_pages, multipage, sum_d, sum_c
+        );
     }
 
     #[test]

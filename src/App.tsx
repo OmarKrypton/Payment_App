@@ -1050,7 +1050,7 @@ function App() {
   const [deImportInfo, setDeImportInfo] = useState<any>(null);
   const [deLimit, setDeLimit] = useState(150);
   const [deSyncing, setDeSyncing] = useState(false);
-  const [deFiles, setDeFiles] = useState<string[]>([]);
+  const [deFiles, setDeFiles] = useState<any[]>([]);
   const [deShowFiles, setDeShowFiles] = useState(false);
   const [deFilesPos, setDeFilesPos] = useState<{ top: number; right: number } | null>(null);
   const deFilesBtnRef = useRef<HTMLButtonElement>(null);
@@ -2637,10 +2637,16 @@ function App() {
         </div>
         {deShowFiles && deFiles.length > 0 && deFilesPos && createPortal(
           <div className="entries-files-menu" ref={deFilesMenuRef} style={{ top: deFilesPos.top, right: deFilesPos.right }}>
-            {deFiles.map(f => (
-              <div key={f} className="entries-file-row">
-                <span className="entries-file-name" title={f}>{f}</span>
-                <button className="entries-file-del" title={t("删除该文件的分录", "Remove this file's entries")} onClick={() => removeDailyEntryFile(f)}>✕</button>
+            {deFiles.map((f: any) => (
+              <div key={f.source_file} className="entries-file-row">
+                <div className="entries-file-main">
+                  <span className="entries-file-name" title={f.source_file}>{f.source_file}</span>
+                  <span className="entries-file-meta">
+                    {f.documents} {t("份凭证", "docs")} · {t("借", "Dr")} <b className="dr">{(f.debit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> · {t("贷", "Cr")} <b className="cr">{(f.credit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
+                    {f.balanced ? <span className="entries-file-ok"> ✓</span> : <span className="entries-file-warn"> ⚠</span>}
+                  </span>
+                </div>
+                <button className="entries-file-del" title={t("删除该文件的分录", "Remove this file's entries")} onClick={() => removeDailyEntryFile(f.source_file)}>✕</button>
               </div>
             ))}
           </div>,
@@ -3658,11 +3664,6 @@ function App() {
       setDeEntries(res?.entries || []);
       setDeTotal(res?.total ?? 0);
       setDeStats(res?.stats || { total: 0, debit: 0, credit: 0, pages: 0, multipage: 0, paid_before: 0, files: 0, lines: 0 });
-      const names: string[] = (res?.entries || []).map((e: any) => e.source_file).filter(Boolean);
-      setDeFiles(prev => {
-        const merged = new Set<string>([...prev, ...names]);
-        return Array.from(merged).sort();
-      });
       // While searching, expand the results so the matched text is visible.
       if (search.trim()) {
         setDeExpanded(prev => {
@@ -3678,12 +3679,25 @@ function App() {
     }
   }, [showAlert, t]);
 
+  // The distinct list of imported files (with per-file totals) — queried
+  // directly so it includes every file, not just those on the first page.
+  const loadDeFiles = useCallback(async () => {
+    try {
+      setDeFiles(await invoke<any[]>("list_daily_entry_files"));
+    } catch (e) {
+      console.error("list_daily_entry_files failed", e);
+    }
+  }, []);
+
   // Reload (debounced) whenever the tab is opened or a query/filter changes.
   useEffect(() => {
     if (tab !== "entries") return;
-    const id = setTimeout(() => { loadDailyEntries(deSearch, deSearchIn, deDateFrom, deDateTo, deLimit); }, 200);
+    const id = setTimeout(() => {
+      loadDailyEntries(deSearch, deSearchIn, deDateFrom, deDateTo, deLimit);
+      loadDeFiles();
+    }, 200);
     return () => clearTimeout(id);
-  }, [tab, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries]);
+  }, [tab, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries, loadDeFiles]);
 
   // On first open, sync both ways with the shared cloud store: pull remote
   // entries locally, and push any local entries the cloud doesn't have yet
@@ -3751,7 +3765,7 @@ function App() {
     try {
       const info: any = await invoke("import_daily_entries", { filePath: path });
       setDeImportInfo(info);
-      setDeFiles(prev => Array.from(new Set([...prev, info?.source_file].filter(Boolean))).sort());
+      await loadDeFiles();
       if (authUser) {
         try {
           const local: any[] = await invoke("daily_entries_for_sync");
@@ -3780,7 +3794,7 @@ function App() {
     try {
       await invoke("delete_daily_entry_file", { sourceFile: file });
       if (authUser) { try { await deleteDailyEntriesRemote(file); } catch {} }
-      setDeFiles(prev => prev.filter(f => f !== file));
+      await loadDeFiles();
       setDeRefresh(v => v + 1);
     } catch (e: any) {
       showAlert(`${t("删除失败", "Delete failed")}: ${e?.message || e}`);
