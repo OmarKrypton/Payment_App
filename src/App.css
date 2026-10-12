@@ -3134,6 +3134,8 @@ mark.de-hl {
 .entries-table tbody tr:last-child td { border-bottom: none; }
 .entries-table tfoot td { padding: 6px 8px; border-top: 2px solid rgba(15,23,42,0.12); font-family: var(--font-mono); font-weight: 700; }
 .entries-table tfoot td.tot-label { text-align: right; font-family: var(--font); font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.entries-table .rate { font-family: var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
+.entries-table tfoot tr.fx-row td { background: rgba(245, 158, 11, 0.14); color: #b45309; }
 .entries-table .acc { font-family: var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
 .entries-table .accname { color: var(--text-primary); font-weight: 550; }
 .entries-table .narr { color: var(--text-muted); font-size: 10.5px; line-height: 1.45; }

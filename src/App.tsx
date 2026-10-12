@@ -2601,6 +2601,7 @@ function App() {
                       <thead><tr>
                         <th>{t("科目号", "Account No")}</th>
                         <th>{t("科目", "Account")}</th>
+                        <th className="num">{t("汇率", "Rate")}</th>
                         <th>{t("摘要", "Narration")}</th>
                         <th className="num">{t("借方", "Debit")}</th>
                         <th className="num">{t("贷方", "Credit")}</th>
@@ -2610,6 +2611,7 @@ function App() {
                           <tr key={i} className={String(l.account_no || "").trim() === "220504" ? "wht-row" : undefined}>
                             <td className="acc">{hl(l.account_no)}</td>
                             <td className="accname">{hl(l.account)}{l.currency && l.currency !== "Local Curr" ? ` · ${l.currency}` : ""}</td>
+                            <td className="num rate">{l.local_value || "1.0"}</td>
                             <td className="narr">{hl(l.narration)}</td>
                             <td className="num dr">{l.debit ? hl(l.debit) : "—"}</td>
                             <td className="num cr">{l.credit ? hl(l.credit) : "—"}</td>
@@ -2617,11 +2619,27 @@ function App() {
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr>
-                          <td className="tot-label" colSpan={3}>{t("本凭证合计", "Document totals")}</td>
-                          <td className="num dr">{fmtMoney(e.debit_total)}</td>
-                          <td className="num cr">{fmtMoney(e.credit_total)}</td>
-                        </tr>
+                        {(() => {
+                          const fx = (e.debit_total || 0) - (e.credit_total || 0);
+                          const hasFx = Math.abs(fx) > 1.0;
+                          const target = hasFx ? Math.max(e.debit_total || 0, e.credit_total || 0) : 0;
+                          return (
+                            <>
+                              {hasFx && (
+                                <tr className="fx-row">
+                                  <td className="tot-label" colSpan={4}>{t("汇兑调整", "FX adjustment")}</td>
+                                  <td className="num dr">{fx < 0 ? fmtMoney(-fx) : ""}</td>
+                                  <td className="num cr">{fx > 0 ? fmtMoney(fx) : ""}</td>
+                                </tr>
+                              )}
+                              <tr>
+                                <td className="tot-label" colSpan={4}>{t("本凭证合计", "Document totals")}</td>
+                                <td className="num dr">{fmtMoney(hasFx ? target : (e.debit_total || 0))}</td>
+                                <td className="num cr">{fmtMoney(hasFx ? target : (e.credit_total || 0))}</td>
+                              </tr>
+                            </>
+                          );
+                        })()}
                       </tfoot>
                     </table>
                   </div>
