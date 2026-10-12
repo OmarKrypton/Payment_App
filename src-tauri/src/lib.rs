@@ -378,6 +378,13 @@ fn list_daily_entry_files(state: tauri::State<'_, DbState>) -> Result<Vec<entrie
 }
 
 #[tauri::command]
+fn update_daily_entry_lines(state: tauri::State<'_, DbState>, entry_key: String, lines_json: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::update_lines(conn, &entry_key, &lines_json)
+}
+
+#[tauri::command]
 fn sync_daily_entries_from_remote(state: tauri::State<'_, DbState>, rows: Vec<entries::DailyEntrySyncRow>) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -547,6 +554,7 @@ pub fn run() {
             list_daily_entries,
             daily_entries_for_sync,
             list_daily_entry_files,
+            update_daily_entry_lines,
             sync_daily_entries_from_remote,
             delete_daily_entry_file,
             clear_daily_entries,

@@ -985,9 +985,24 @@ pub fn list(
     Ok(DailyEntriesList { entries, total, stats })
 }
 
+/// Persist an edited set of lines for one entry (used when the user corrects a
+/// rate or an amount).
+pub fn update_lines(conn: &Connection, entry_key: &str, lines_json: &str) -> Result<(), String> {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let n = conn
+        .execute(
+            "UPDATE daily_entries SET lines_json = ?1, updated_at = ?2 WHERE entry_key = ?3",
+            params![lines_json, now, entry_key],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("Entry not found".into());
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
-pub struct DailyEntryFileInfo {
-    pub source_file: String,
+pub struct DailyEntryFileInfo {    pub source_file: String,
     pub documents: usize,
     pub pages: i64,
     pub debit: f64,
@@ -996,8 +1011,7 @@ pub struct DailyEntryFileInfo {
 }
 
 /// Distinct list of the files that have been imported, with per-file totals.
-pub fn list_files(conn: &Connection) -> Result<Vec<DailyEntryFileInfo>, String> {
-    let all = load_all(conn)?;
+pub fn list_files(conn: &Connection) -> Result<Vec<DailyEntryFileInfo>, String> {    let all = load_all(conn)?;
     let mut map: std::collections::BTreeMap<String, DailyEntryFileInfo> = std::collections::BTreeMap::new();
     for e in &all {
         let f = map.entry(e.source_file.clone()).or_insert_with(|| DailyEntryFileInfo {

@@ -3135,6 +3135,17 @@ mark.de-hl {
 .entries-table tfoot td { padding: 6px 8px; border-top: 2px solid rgba(15,23,42,0.12); font-family: var(--font-mono); font-weight: 700; }
 .entries-table tfoot td.tot-label { text-align: right; font-family: var(--font); font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
 .entries-table .rate { font-family: var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
+.entries-table .cell-input {
+  width: 100%; box-sizing: border-box;
+  border: 1px solid transparent; background: transparent;
+  font-family: var(--font-mono); font-size: 11px; color: inherit;
+  text-align: right; padding: 2px 4px; border-radius: 6px; outline: none;
+}
+.entries-table .cell-input:hover { border-color: rgba(148, 163, 184, 0.5); background: rgba(255, 255, 255, 0.65); }
+.entries-table .cell-input:focus { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12); }
+.entries-table .cell-input.rate { color: var(--text-secondary); }
+.entries-table .cell-input.dr { color: var(--green); font-weight: 650; }
+.entries-table .cell-input.cr { color: #b45309; font-weight: 650; }
 .entries-table tfoot tr.fx-row td { background: rgba(245, 158, 11, 0.14); color: #b45309; }
 .entries-table .acc { font-family: var(--font-mono); color: var(--text-secondary); white-space: nowrap; }
 .entries-table .accname { color: var(--text-primary); font-weight: 550; }

@@ -2611,35 +2611,31 @@ function App() {
                           <tr key={i} className={String(l.account_no || "").trim() === "220504" ? "wht-row" : undefined}>
                             <td className="acc">{hl(l.account_no)}</td>
                             <td className="accname">{hl(l.account)}{l.currency && l.currency !== "Local Curr" ? ` · ${l.currency}` : ""}</td>
-                            <td className="num rate">{l.local_value || "1.0"}</td>
+                            <td className="num rate">
+                              <input className="cell-input rate" inputMode="decimal" value={l.local_value ?? ""}
+                                onChange={ev => editEntryLine(e.entry_key, i, "local_value", ev.target.value)}
+                                onBlur={() => saveEntryLines(e.entry_key, e.lines)} />
+                            </td>
                             <td className="narr">{hl(l.narration)}</td>
-                            <td className="num dr">{l.debit ? hl(l.debit) : "—"}</td>
-                            <td className="num cr">{l.credit ? hl(l.credit) : "—"}</td>
+                            <td className="num dr">
+                              <input className="cell-input num dr" inputMode="decimal" value={l.debit ?? ""}
+                                onChange={ev => editEntryLine(e.entry_key, i, "debit", ev.target.value)}
+                                onBlur={() => saveEntryLines(e.entry_key, e.lines)} />
+                            </td>
+                            <td className="num cr">
+                              <input className="cell-input num cr" inputMode="decimal" value={l.credit ?? ""}
+                                onChange={ev => editEntryLine(e.entry_key, i, "credit", ev.target.value)}
+                                onBlur={() => saveEntryLines(e.entry_key, e.lines)} />
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
-                        {(() => {
-                          const fx = (e.debit_total || 0) - (e.credit_total || 0);
-                          const hasFx = Math.abs(fx) > 1.0;
-                          const target = hasFx ? Math.max(e.debit_total || 0, e.credit_total || 0) : 0;
-                          return (
-                            <>
-                              {hasFx && (
-                                <tr className="fx-row">
-                                  <td className="tot-label" colSpan={4}>{t("汇兑调整", "FX adjustment")}</td>
-                                  <td className="num dr">{fx < 0 ? fmtMoney(-fx) : ""}</td>
-                                  <td className="num cr">{fx > 0 ? fmtMoney(fx) : ""}</td>
-                                </tr>
-                              )}
-                              <tr>
-                                <td className="tot-label" colSpan={4}>{t("本凭证合计", "Document totals")}</td>
-                                <td className="num dr">{fmtMoney(hasFx ? target : (e.debit_total || 0))}</td>
-                                <td className="num cr">{fmtMoney(hasFx ? target : (e.credit_total || 0))}</td>
-                              </tr>
-                            </>
-                          );
-                        })()}
+                        <tr>
+                          <td className="tot-label" colSpan={4}>{t("本凭证合计", "Document totals")}</td>
+                          <td className="num dr">{fmtMoney(e.debit_total || 0)}</td>
+                          <td className="num cr">{fmtMoney(e.credit_total || 0)}</td>
+                        </tr>
                       </tfoot>
                     </table>
                   </div>
@@ -3816,6 +3812,50 @@ function App() {
       setDeRefresh(v => v + 1);
     } catch (e: any) {
       showAlert(`${t("删除失败", "Delete failed")}: ${e?.message || e}`);
+    }
+  };
+
+  // ── Inline editing: only the Rate / Debit / Credit cells are editable ──────
+  const numOf = (v: any) => parseFloat(String(v ?? "").replace(/,/g, "")) || 0;
+  const lineLocal = (amount: any, rate: any) => {
+    const a = numOf(amount);
+    if (!a) return 0;
+    let r = parseFloat(String(rate ?? "").trim());
+    if (!isFinite(r) || r === 0) r = 1;
+    return Math.round(a * r * 100) / 100;
+  };
+  const recomputeEntry = (entry: any) => {
+    let d = 0, c = 0;
+    for (const l of entry.lines || []) {
+      d += lineLocal(l.debit, l.local_value);
+      c += lineLocal(l.credit, l.local_value);
+    }
+    entry.debit_total = d;
+    entry.credit_total = c;
+    const tol = Math.max(1, Math.max(Math.abs(d), Math.abs(c)) * 2e-6);
+    entry.balanced = Math.abs(d - c) <= tol;
+    return entry;
+  };
+  const editEntryLine = (entryKey: string, idx: number, field: "debit" | "credit" | "local_value", val: string) => {
+    setDeEntries(prev => prev.map((e: any) => {
+      if (e.entry_key !== entryKey) return e;
+      const lines = e.lines.map((l: any, i: number) => (i === idx ? { ...l, [field]: val } : l));
+      return recomputeEntry({ ...e, lines });
+    }));
+  };
+  const saveEntryLines = async (entryKey: string, lines: any[]) => {
+    try {
+      await invoke("update_daily_entry_lines", { entryKey, linesJson: JSON.stringify(lines) });
+      if (authUser) {
+        try {
+          const local: any[] = await invoke("daily_entries_for_sync");
+          const row = local.find((r: any) => r.entry_key === entryKey);
+          if (row) await upsertDailyEntriesRemote([row]);
+        } catch {}
+      }
+      setDeRefresh(v => v + 1);
+    } catch (e: any) {
+      showAlert(`${t("保存失败", "Save failed")}: ${e?.message || e}`);
     }
   };
 
