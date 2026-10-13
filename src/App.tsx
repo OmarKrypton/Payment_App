@@ -2553,6 +2553,8 @@ function App() {
             <span className="entries-result-ico">✓</span>
             <span>{t("已提取", "Extracted")} <b>{deImportInfo.entries}</b> {t("份凭证", "documents")} · <b>{deImportInfo.lines}</b> {t("行", "lines")} · <b>{deImportInfo.pages}</b> {t("页", "pages")}</span>
             {deImportInfo.multipage > 0 && <span className="entries-chip mp">{deImportInfo.multipage} {t("跨页合并", "multi-page merged")}</span>}
+            {deImportInfo.skipped > 0 && <span className="entries-chip">{deImportInfo.skipped} {t("重复/旧文件已跳过", "duplicate/older skipped")}</span>}
+            {deImportInfo.report_date && <span className="entries-chip">{t("报表日期", "Report date")} {deImportInfo.report_date}</span>}
             <button className="entries-result-x" onClick={() => setDeImportInfo(null)}>✕</button>
           </div>
         )}

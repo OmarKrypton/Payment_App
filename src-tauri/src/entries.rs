@@ -9,7 +9,7 @@
 //! header appears.
 
 use regex::Regex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -492,6 +492,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             invoice_refs TEXT DEFAULT '',
             from_documents TEXT DEFAULT '',
             lines_json TEXT DEFAULT '[]',
+            report_date TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )",
@@ -502,6 +503,32 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_doc ON daily_entries(doc_no)", [])
         .map_err(|e| e.to_string())?;
+    // Migration: add report_date and rebuild entry_key on document identity
+    // (Doc. No + serial + Doc. Date) so the same voucher from overlapping
+    // reports isn't counted twice. Existing rows keep one copy each.
+    let cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(daily_entries)")
+        .map_err(|e| e.to_string())?
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    if !cols.iter().any(|c| c == "report_date") {
+        conn.execute("ALTER TABLE daily_entries ADD COLUMN report_date TEXT DEFAULT ''", [])
+            .map_err(|e| e.to_string())?;
+        // Collapse duplicates, then rewrite the key (old key was source|doc|serial|date).
+        conn.execute(
+            "DELETE FROM daily_entries WHERE id NOT IN (
+                 SELECT MAX(id) FROM daily_entries GROUP BY doc_no, serial, doc_date)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE daily_entries SET entry_key = doc_no || '|' || serial || '|' || doc_date",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -542,16 +569,40 @@ pub struct DailyEntrySyncRow {
     #[serde(default)]
     pub lines_json: String,
     #[serde(default)]
+    pub report_date: String,
+    #[serde(default)]
     pub updated_at: String,
 }
 
-fn entry_key_for(source_file: &str, e: &ParsedEntry) -> String {
-    format!("{}|{}|{}|{}", source_file, e.doc_no, e.serial, e.doc_date)
+/// Identity of a voucher: the same document can appear in more than one report
+/// (overlapping date ranges), so dedupe on Doc. No + serial + Doc. Date rather
+/// than on the source file.
+fn entry_key_for(e: &ParsedEntry) -> String {
+    format!("{}|{}|{}", e.doc_no, e.serial, e.doc_date)
 }
 
-fn insert_entry(conn: &Connection, source_file: &str, e: &ParsedEntry) -> Result<(), String> {
+/// Report generation date from the page header (`Date : DD-MM-YYYY`). Used so
+/// the newest report replaces an older one for the same document.
+fn parse_report_date(text: &str) -> String {
+    static R: OnceLock<Regex> = OnceLock::new();
+    let re = R.get_or_init(|| Regex::new(r"Date\s*:\s*(\d{2}-\d{2}-\d{4})").unwrap());
+    re.captures(text)
+        .map(|c| c[1].to_string())
+        .unwrap_or_default()
+}
+
+/// True when `new_report` is at least as new as `old_report` (an empty old date
+/// counts as older, and equal dates mean a re-upload of the same report).
+fn report_at_least_as_new(new_report: &str, old_report: &str) -> bool {
+    if old_report.trim().is_empty() {
+        return true;
+    }
+    date_sort_key(new_report) >= date_sort_key(old_report)
+}
+
+fn insert_entry(conn: &Connection, source_file: &str, report_date: &str, e: &ParsedEntry) -> Result<(), String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let key = entry_key_for(source_file, e);
+    let key = entry_key_for(e);
     let lines_json = serde_json::to_string(&e.lines).unwrap_or_else(|_| "[]".into());
     let refs = join_refs(&invoice_refs_of(e));
     let docs = join_refs(&from_documents_of(e));
@@ -559,13 +610,13 @@ fn insert_entry(conn: &Connection, source_file: &str, e: &ParsedEntry) -> Result
         "INSERT OR REPLACE INTO daily_entries
             (entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal,
              branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents,
-             lines_json, created_at, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,
-                 COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?18), ?18)",
+             lines_json, report_date, created_at, updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,
+                 COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?19), ?19)",
         params![
             key, source_file, e.source_page, e.pages, e.doc_no, e.serial, e.doc_date,
             e.journal_no, e.journal, e.branch, e.doc_source, e.contain_currency,
-            e.local_amt, e.total_value, refs, docs, lines_json, now
+            e.local_amt, e.total_value, refs, docs, lines_json, report_date, now
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -581,6 +632,8 @@ pub struct DailyEntriesImportResult {
     pub multipage: usize,
     pub invoice_refs: usize,
     pub duplicates: usize,
+    pub skipped: usize,
+    pub report_date: String,
 }
 
 pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImportResult, String> {
@@ -589,18 +642,44 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| file_path.to_string());
     let text = crate::importer::extract_layout_text(file_path)?;
+    let report_date = parse_report_date(&text);
     let parsed = parse_daily_entries(&text);
     if parsed.is_empty() {
         return Err("No daily-entry documents were found in this PDF. Is it a Daily Entries report?".into());
     }
 
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    // Re-uploading this same file: drop the documents currently attributed to it.
     tx.execute("DELETE FROM daily_entries WHERE source_file = ?1", params![base])
         .map_err(|e| e.to_string())?;
     let mut lines = 0usize;
     let mut refs = 0usize;
+    let mut inserted = 0usize;
+    let mut skipped = 0usize;
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for e in &parsed {
-        insert_entry(&tx, &base, e)?;
+        let key = entry_key_for(e);
+        // Same document twice within one report: last one wins.
+        if !seen.insert(key.clone()) {
+            // fall through to replace
+        }
+        // If another (newer) report already has this document, keep it.
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT report_date FROM daily_entries WHERE entry_key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(old) = existing {
+            if !report_at_least_as_new(&report_date, &old) {
+                skipped += 1;
+                continue;
+            }
+        }
+        insert_entry(&tx, &base, &report_date, e)?;
+        inserted += 1;
         lines += e.lines.len();
         refs += invoice_refs_of(e).len();
     }
@@ -615,12 +694,14 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
 
     Ok(DailyEntriesImportResult {
         source_file: base,
-        entries: parsed.len(),
+        entries: inserted,
         lines,
         pages,
         multipage: parsed.iter().filter(|e| e.pages > 1).count(),
         invoice_refs: refs,
         duplicates,
+        skipped,
+        report_date,
     })
 }
 
@@ -1033,11 +1114,12 @@ pub fn list_files(conn: &Connection) -> Result<Vec<DailyEntryFileInfo>, String> 
     Ok(map.into_values().collect())
 }
 
-pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {    let mut stmt = conn
+pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {
+    let mut stmt = conn
         .prepare(
             "SELECT entry_key, source_file, source_page, pages, doc_no, serial, doc_date,
                     journal_no, journal, branch, doc_source, contain_currency, local_amt,
-                    total_value, invoice_refs, from_documents, lines_json, updated_at
+                    total_value, invoice_refs, from_documents, lines_json, report_date, updated_at
              FROM daily_entries",
         )
         .map_err(|e| e.to_string())?;
@@ -1063,7 +1145,8 @@ pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {  
                 invoice_refs: join_refs(&invoice_refs_from_lines(&lines)),
                 from_documents: join_refs(&from_documents_from_lines(&lines)),
                 lines_json,
-                updated_at: r.get(17)?,
+                report_date: r.get(17)?,
+                updated_at: r.get(18)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1074,17 +1157,20 @@ pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for r in rows {
+        // Recompute the key from the document identity so rows pushed by an
+        // older app version (keyed by source file) collapse onto one entry.
+        let key = format!("{}|{}|{}", r.doc_no, r.serial, r.doc_date);
         tx.execute(
             "INSERT OR REPLACE INTO daily_entries
                 (entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no,
                  journal, branch, doc_source, contain_currency, local_amt, total_value,
-                 invoice_refs, from_documents, lines_json, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,
-                     COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?18), ?18)",
+                 invoice_refs, from_documents, lines_json, report_date, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,
+                     COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?19), ?19)",
             params![
-                r.entry_key, r.source_file, r.source_page, r.pages, r.doc_no, r.serial, r.doc_date,
+                key, r.source_file, r.source_page, r.pages, r.doc_no, r.serial, r.doc_date,
                 r.journal_no, r.journal, r.branch, r.doc_source, r.contain_currency, r.local_amt,
-                r.total_value, r.invoice_refs, r.from_documents, r.lines_json, now
+                r.total_value, r.invoice_refs, r.from_documents, r.lines_json, r.report_date, now
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1220,6 +1306,30 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
     }
 
     #[test]
+    fn report_date_precedence() {
+        assert!(report_at_least_as_new("02-01-2026", "01-01-2026"));
+        assert!(!report_at_least_as_new("01-01-2026", "02-01-2026"));
+        assert!(report_at_least_as_new("01-01-2026", ""));
+        assert!(report_at_least_as_new("01-01-2026", "01-01-2026"));
+    }
+
+    #[test]
+    fn dedupes_same_document_across_files() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let entries = parse_daily_entries(SAMPLE);
+        for e in &entries {
+            insert_entry(&conn, "a.pdf", "01-01-2026", e).unwrap();
+        }
+        for e in &entries {
+            insert_entry(&conn, "b.pdf", "02-01-2026", e).unwrap();
+        }
+        let all = load_all(&conn).unwrap();
+        assert_eq!(all.len(), 2, "the same documents must not be duplicated");
+        assert!(all.iter().all(|e| e.source_file == "b.pdf"), "newest report should win");
+    }
+
+    #[test]
     fn parses_invoice_reference_forms() {
         let mut e = ParsedEntry::default();
         for narr in [
@@ -1248,7 +1358,7 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
         let text = SAMPLE.replace("adt00-20210101003", "adt00-20210101003 inv.2/2021");
         let entries = parse_daily_entries(&text);
         for e in &entries {
-            insert_entry(&conn, "file.pdf", e).unwrap();
+            insert_entry(&conn, "file.pdf", "30-06-2026", e).unwrap();
         }
         let all = load_all(&conn).unwrap();
         let paid: Vec<&DailyEntryRecord> = all.iter().filter(|e| e.paid_before).collect();
