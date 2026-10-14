@@ -493,19 +493,29 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             from_documents TEXT DEFAULT '',
             lines_json TEXT DEFAULT '[]',
             report_date TEXT DEFAULT '',
+            debit_total REAL DEFAULT 0,
+            credit_total REAL DEFAULT 0,
+            balanced INTEGER DEFAULT 1,
+            line_count INTEGER DEFAULT 0,
+            date_key TEXT DEFAULT '',
+            s_doc TEXT DEFAULT '',
+            s_account_no TEXT DEFAULT '',
+            s_account TEXT DEFAULT '',
+            s_value TEXT DEFAULT '',
+            s_narration TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )",
         [],
     )
     .map_err(|e| e.to_string())?;
+    conn.execute("CREATE TABLE IF NOT EXISTS daily_meta (k TEXT PRIMARY KEY, v TEXT)", [])
+        .map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_source ON daily_entries(source_file)", [])
         .map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_doc ON daily_entries(doc_no)", [])
         .map_err(|e| e.to_string())?;
-    // Migration: add report_date and rebuild entry_key on document identity
-    // (Doc. No + serial + Doc. Date) so the same voucher from overlapping
-    // reports isn't counted twice. Existing rows keep one copy each.
+    // Column list (used by several migrations below).
     let cols: Vec<String> = conn
         .prepare("PRAGMA table_info(daily_entries)")
         .map_err(|e| e.to_string())?
@@ -513,10 +523,13 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
+    // Migration (v0.3.152): add report_date and rebuild entry_key on document
+    // identity (Doc. No + serial + Doc. Date) so the same voucher from
+    // overlapping reports isn't counted twice.
     if !cols.iter().any(|c| c == "report_date") {
         conn.execute("ALTER TABLE daily_entries ADD COLUMN report_date TEXT DEFAULT ''", [])
             .map_err(|e| e.to_string())?;
-        // Collapse duplicates, then rewrite the key (old key was source|doc|serial|date).
         conn.execute(
             "DELETE FROM daily_entries WHERE id NOT IN (
                  SELECT MAX(id) FROM daily_entries GROUP BY doc_no, serial, doc_date)",
@@ -529,6 +542,179 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     }
+
+    // Migration (v0.3.154): persist computed fields + a search index so listing
+    // no longer JSON-parses every row. Backfill once for existing rows.
+    let derived_cols = [
+        ("debit_total", "REAL DEFAULT 0"),
+        ("credit_total", "REAL DEFAULT 0"),
+        ("balanced", "INTEGER DEFAULT 1"),
+        ("line_count", "INTEGER DEFAULT 0"),
+        ("date_key", "TEXT DEFAULT ''"),
+        ("s_doc", "TEXT DEFAULT ''"),
+        ("s_account_no", "TEXT DEFAULT ''"),
+        ("s_account", "TEXT DEFAULT ''"),
+        ("s_value", "TEXT DEFAULT ''"),
+        ("s_narration", "TEXT DEFAULT ''"),
+    ];
+    let mut added = false;
+    for (name, decl) in derived_cols {
+        if !cols.iter().any(|c| c == name) {
+            conn.execute(&format!("ALTER TABLE daily_entries ADD COLUMN {} {}", name, decl), [])
+                .map_err(|e| e.to_string())?;
+            added = true;
+        }
+    }
+    if added {
+        // Defer the (one-time) backfill to the first Daily Entries query so app
+        // startup isn't blocked; ensure_backfilled() runs it off the main thread.
+        conn.execute("INSERT OR REPLACE INTO daily_meta (k, v) VALUES ('backfill_pending', '1')", [])
+            .map_err(|e| e.to_string())?;
+    }
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_datekey ON daily_entries(date_key)", [])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Run the deferred derived-column backfill once (guarded by a marker row).
+fn ensure_backfilled(conn: &Connection) -> Result<(), String> {
+    let pending: Option<String> = conn
+        .query_row("SELECT v FROM daily_meta WHERE k = 'backfill_pending'", [], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if pending.as_deref() == Some("1") {
+        backfill_derived(conn)?;
+        conn.execute("DELETE FROM daily_meta WHERE k = 'backfill_pending'", [])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Compute the stored (derived) columns for one entry and return them.
+struct Derived {
+    debit_total: f64,
+    credit_total: f64,
+    balanced: i64,
+    line_count: i64,
+    date_key: String,
+    s_doc: String,
+    s_account_no: String,
+    s_account: String,
+    s_value: String,
+    s_narration: String,
+}
+
+fn compute_derived(source_file: &str, doc_no: &str, serial: &str, doc_date: &str, lines: &[DailyEntryLine]) -> Derived {
+    let debit_total: f64 = lines.iter().map(|l| local_amount(&l.debit, &l.local_value)).sum();
+    let credit_total: f64 = lines.iter().map(|l| local_amount(&l.credit, &l.local_value)).sum();
+    let mut s_account_no = String::new();
+    let mut s_account = String::new();
+    let mut s_value = String::new();
+    let mut s_narration = String::new();
+    for l in lines {
+        s_account_no.push_str(&l.account_no);
+        s_account_no.push(' ');
+        s_account.push_str(&l.account);
+        s_account.push(' ');
+        // Both the formatted ("154,396.00") and un-comma'd ("154396.00") forms.
+        s_value.push_str(&l.debit);
+        s_value.push(' ');
+        s_value.push_str(&l.credit);
+        s_value.push(' ');
+        s_value.push_str(&l.debit.replace(',', ""));
+        s_value.push(' ');
+        s_value.push_str(&l.credit.replace(',', ""));
+        s_value.push(' ');
+        s_narration.push_str(&l.narration);
+        s_narration.push(' ');
+        s_narration.push_str(&l.from_document);
+        s_narration.push(' ');
+    }
+    for r in invoice_refs_from_lines(lines) {
+        s_narration.push_str(&r);
+        s_narration.push(' ');
+    }
+    for r in from_documents_from_lines(lines) {
+        s_narration.push_str(&r);
+        s_narration.push(' ');
+    }
+    Derived {
+        debit_total,
+        credit_total,
+        balanced: if is_balanced(debit_total, credit_total) { 1 } else { 0 },
+        line_count: lines.len() as i64,
+        date_key: date_sort_key(doc_date),
+        s_doc: format!("{} {} {} {}", doc_no, serial, source_file, doc_date).to_lowercase(),
+        s_account_no: s_account_no.to_lowercase(),
+        s_account: s_account.to_lowercase(),
+        s_value: s_value.to_lowercase(),
+        s_narration: s_narration.to_lowercase(),
+    }
+}
+
+fn derived_params(d: &Derived) -> [rusqlite::types::Value; 10] {
+    use rusqlite::types::Value;
+    [
+        Value::Real(d.debit_total),
+        Value::Real(d.credit_total),
+        Value::Integer(d.balanced),
+        Value::Integer(d.line_count),
+        Value::Text(d.date_key.clone()),
+        Value::Text(d.s_doc.clone()),
+        Value::Text(d.s_account_no.clone()),
+        Value::Text(d.s_account.clone()),
+        Value::Text(d.s_value.clone()),
+        Value::Text(d.s_narration.clone()),
+    ]
+}
+
+/// One-time backfill of the derived/index columns by parsing every stored entry.
+fn backfill_derived(conn: &Connection) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut rows: Vec<(i64, String, String, String, String, String)> = Vec::new();
+    {
+        let mut stmt = tx
+            .prepare("SELECT id, source_file, doc_no, serial, doc_date, lines_json FROM daily_entries")
+            .map_err(|e| e.to_string())?;
+        let iter = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for r in iter {
+            rows.push(r.map_err(|e| e.to_string())?);
+        }
+    }
+    for (id, source_file, doc_no, serial, doc_date, lines_json) in rows {
+        let mut lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
+        // Ensure older rows carry the currency-pairing correction and store it.
+        let changed = apply_currency_pairing(&mut lines);
+        let d = compute_derived(&source_file, &doc_no, &serial, &doc_date, &lines);
+        if changed {
+            let lj = serde_json::to_string(&lines).unwrap_or(lines_json);
+            tx.execute(
+                "UPDATE daily_entries SET debit_total=?1, credit_total=?2, balanced=?3, line_count=?4,
+                     date_key=?5, s_doc=?6, s_account_no=?7, s_account=?8, s_value=?9, s_narration=?10,
+                     lines_json=?11 WHERE id=?12",
+                rusqlite::params_from_iter(derived_params(&d).into_iter().chain([
+                    rusqlite::types::Value::Text(lj),
+                    rusqlite::types::Value::Integer(id),
+                ])),
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            tx.execute(
+                "UPDATE daily_entries SET debit_total=?1, credit_total=?2, balanced=?3, line_count=?4,
+                     date_key=?5, s_doc=?6, s_account_no=?7, s_account=?8, s_value=?9, s_narration=?10
+                 WHERE id=?11",
+                rusqlite::params_from_iter(derived_params(&d).into_iter().chain([
+                    rusqlite::types::Value::Integer(id),
+                ])),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -606,18 +792,41 @@ fn insert_entry(conn: &Connection, source_file: &str, report_date: &str, e: &Par
     let lines_json = serde_json::to_string(&e.lines).unwrap_or_else(|_| "[]".into());
     let refs = join_refs(&invoice_refs_of(e));
     let docs = join_refs(&from_documents_of(e));
+    let d = compute_derived(source_file, &e.doc_no, &e.serial, &e.doc_date, &e.lines);
+    let mut args: Vec<rusqlite::types::Value> = vec![
+        rusqlite::types::Value::Text(key),
+        rusqlite::types::Value::Text(source_file.to_string()),
+        rusqlite::types::Value::Integer(e.source_page),
+        rusqlite::types::Value::Integer(e.pages),
+        rusqlite::types::Value::Text(e.doc_no.clone()),
+        rusqlite::types::Value::Text(e.serial.clone()),
+        rusqlite::types::Value::Text(e.doc_date.clone()),
+        rusqlite::types::Value::Text(e.journal_no.clone()),
+        rusqlite::types::Value::Text(e.journal.clone()),
+        rusqlite::types::Value::Text(e.branch.clone()),
+        rusqlite::types::Value::Text(e.doc_source.clone()),
+        rusqlite::types::Value::Text(e.contain_currency.clone()),
+        rusqlite::types::Value::Text(e.local_amt.clone()),
+        rusqlite::types::Value::Text(e.total_value.clone()),
+        rusqlite::types::Value::Text(refs),
+        rusqlite::types::Value::Text(docs),
+        rusqlite::types::Value::Text(lines_json),
+        rusqlite::types::Value::Text(report_date.to_string()),
+    ];
+    args.extend(derived_params(&d));
+    args.push(rusqlite::types::Value::Text(now.clone()));
+    args.push(rusqlite::types::Value::Text(now));
     conn.execute(
         "INSERT OR REPLACE INTO daily_entries
             (entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal,
              branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents,
-             lines_json, report_date, created_at, updated_at)
+             lines_json, report_date,
+             debit_total, credit_total, balanced, line_count, date_key, s_doc, s_account_no, s_account, s_value, s_narration,
+             created_at, updated_at)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,
-                 COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?19), ?19)",
-        params![
-            key, source_file, e.source_page, e.pages, e.doc_no, e.serial, e.doc_date,
-            e.journal_no, e.journal, e.branch, e.doc_source, e.contain_currency,
-            e.local_amt, e.total_value, refs, docs, lines_json, report_date, now
-        ],
+                 ?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,
+                 COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?29), ?30)",
+        rusqlite::params_from_iter(args),
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -685,11 +894,6 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
     }
     tx.commit().map_err(|e| e.to_string())?;
 
-    let all = load_all(conn)?;
-    let duplicates = all
-        .iter()
-        .filter(|e| e.source_file == base && e.paid_before)
-        .count();
     let pages: i64 = parsed.iter().map(|e| e.pages).sum();
 
     Ok(DailyEntriesImportResult {
@@ -699,7 +903,7 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
         pages,
         multipage: parsed.iter().filter(|e| e.pages > 1).count(),
         invoice_refs: refs,
-        duplicates,
+        duplicates: 0,
         skipped,
         report_date,
     })
@@ -776,6 +980,9 @@ pub struct DailyEntriesList {
 }
 
 /// Load every entry, compute invoice duplicates, and return them ordered by date.
+/// Load every entry with computed fields (used by tests; the UI list now reads
+/// the persisted/derived columns directly).
+#[allow(dead_code)]
 pub fn load_all(conn: &Connection) -> Result<Vec<DailyEntryRecord>, String> {
     let mut stmt = conn
         .prepare(
@@ -894,7 +1101,7 @@ fn local_amount(amount: &str, rate: &str) -> f64 {
 /// line in the same voucher, use that line's rate and currency so the voucher
 /// reconciles. Verified to fix exactly the affected vouchers and change nothing
 /// else across all the sample reports.
-fn apply_currency_pairing(lines: &mut [DailyEntryLine]) {
+fn apply_currency_pairing(lines: &mut [DailyEntryLine]) -> bool {
     let amount_of = |l: &DailyEntryLine| -> f64 {
         let d = num(&l.debit);
         if d != 0.0 { d } else { num(&l.credit) }
@@ -914,8 +1121,9 @@ fn apply_currency_pairing(lines: &mut [DailyEntryLine]) {
         })
         .collect();
     if refs.is_empty() {
-        return;
+        return false;
     }
+    let mut changed = false;
     for l in lines.iter_mut() {
         let r = l.local_value.trim().parse::<f64>().unwrap_or(1.0);
         if r != 1.0 {
@@ -935,8 +1143,10 @@ fn apply_currency_pairing(lines: &mut [DailyEntryLine]) {
             if !currency.is_empty() {
                 l.currency = currency.clone();
             }
+            changed = true;
         }
     }
+    changed
 }
 
 /// Debit and Credit balance within currency-rounding tolerance: the displayed
@@ -958,87 +1168,32 @@ fn date_sort_key(d: &str) -> String {
     }
 }
 
-/// Convert a report `DD-MM-YYYY` date to `YYYY-MM-DD` for range comparisons.
-fn ymd(d: &str) -> Option<String> {
-    let parts: Vec<&str> = d.split('-').collect();
-    if parts.len() == 3 && parts[0].len() == 2 && parts[1].len() == 2 && parts[2].len() == 4 {
-        Some(format!("{}-{}-{}", parts[2], parts[1], parts[0]))
-    } else {
-        None
-    }
+/// Split a `|`-joined column back into items (invoice refs / from-documents).
+fn split_refs(s: &str) -> Vec<String> {
+    s.split('|').filter(|p| !p.is_empty()).map(|p| p.to_string()).collect()
 }
 
-fn matches_date_range(doc_date: &str, from: &str, to: &str) -> bool {
-    if from.is_empty() && to.is_empty() {
-        return true;
-    }
-    match ymd(doc_date) {
-        Some(d) => (from.is_empty() || d.as_str() >= from) && (to.is_empty() || d.as_str() <= to),
-        // Unparseable dates are kept rather than silently dropped.
-        None => true,
-    }
-}
-
-fn stats_of(entries: &[DailyEntryRecord]) -> DailyEntriesStats {
-    let mut st = DailyEntriesStats { total: entries.len(), ..Default::default() };
-    let mut files: Vec<&str> = Vec::new();
-    for e in entries {
-        st.pages += e.pages;
-        if e.pages > 1 {
-            st.multipage += 1;
-        }
-        if e.paid_before {
-            st.paid_before += 1;
-        }
-        st.lines += e.lines.len();
-        if !files.contains(&e.source_file.as_str()) {
-            files.push(&e.source_file);
-        }
-        for l in &e.lines {
-            st.debit += local_amount(&l.debit, &l.local_value);
-            st.credit += local_amount(&l.credit, &l.local_value);
-        }
-    }
-    st.files = files.len();
-    st
-}
-
-fn matches_search(e: &DailyEntryRecord, q: &str, search_in: &str) -> bool {
-    if q.is_empty() {
-        return true;
-    }
-    let ql = q.to_lowercase();
-    let qdigits: String = ql.chars().filter(|c| c.is_ascii_digit()).collect();
-    let doc_hit = || {
-        e.doc_no.to_lowercase().contains(&ql)
-            || e.serial.to_lowercase().contains(&ql)
-            || e.source_file.to_lowercase().contains(&ql)
-            || e.doc_date.contains(&ql)
-    };
-    let account_no_hit = || e.lines.iter().any(|l| l.account_no.to_lowercase().contains(&ql));
-    let account_hit = || e.lines.iter().any(|l| l.account.to_lowercase().contains(&ql));
-    let value_hit = || {
-        e.lines.iter().any(|l| {
-            l.debit.to_lowercase().contains(&ql)
-                || l.credit.to_lowercase().contains(&ql)
-                || (!qdigits.is_empty()
-                    && (l.debit.replace(',', "").contains(&qdigits)
-                        || l.credit.replace(',', "").contains(&qdigits)))
-        })
-    };
-    let narration_hit = || {
-        e.lines.iter().any(|l| l.narration.to_lowercase().contains(&ql))
-            || e.from_documents.iter().any(|d| d.to_lowercase().contains(&ql))
-            || e.invoice_refs.iter().any(|d| d.to_lowercase().contains(&ql))
-    };
-    match search_in {
-        "doc" => doc_hit(),
-        "account_no" => account_no_hit(),
-        "account" => account_hit(),
-        "value" => value_hit(),
-        "narration" => narration_hit(),
-        _ => doc_hit() || account_no_hit() || account_hit() || value_hit() || narration_hit(),
-    }
+fn stats_from_db(conn: &Connection) -> Result<DailyEntriesStats, String> {
+    conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(debit_total),0), COALESCE(SUM(credit_total),0),
+                COALESCE(SUM(pages),0), COALESCE(SUM(CASE WHEN pages>1 THEN 1 ELSE 0 END),0),
+                COALESCE(SUM(line_count),0), COUNT(DISTINCT source_file)
+         FROM daily_entries",
+        [],
+        |r| {
+            Ok(DailyEntriesStats {
+                total: r.get::<_, i64>(0)? as usize,
+                debit: r.get(1)?,
+                credit: r.get(2)?,
+                pages: r.get(3)?,
+                multipage: r.get::<_, i64>(4)? as usize,
+                paid_before: 0,
+                lines: r.get::<_, i64>(5)? as usize,
+                files: r.get::<_, i64>(6)? as usize,
+            })
+        },
+    )
+    .map_err(|e| e.to_string())
 }
 
 pub fn list(
@@ -1050,40 +1205,132 @@ pub fn list(
     offset: usize,
     limit: usize,
 ) -> Result<DailyEntriesList, String> {
-    let all = load_all(conn)?;
-    let stats = stats_of(&all);
-    let filtered: Vec<DailyEntryRecord> = all
-        .into_iter()
-        .filter(|e| matches_search(e, search.trim(), search_in))
-        .filter(|e| matches_date_range(&e.doc_date, date_from, date_to))
-        .collect();
-    let total = filtered.len();
-    let entries: Vec<DailyEntryRecord> = if limit == 0 {
-        filtered
+    ensure_backfilled(conn)?;
+    let stats = stats_from_db(conn)?;
+    let q = search.trim().to_lowercase();
+    let mut clauses: Vec<String> = Vec::new();
+    let mut args: Vec<rusqlite::types::Value> = Vec::new();
+    if !q.is_empty() {
+        let like = format!("%{}%", q);
+        let cols: Vec<&str> = match search_in {
+            "doc" => vec!["s_doc"],
+            "account_no" => vec!["s_account_no"],
+            "account" => vec!["s_account"],
+            "value" => vec!["s_value"],
+            "narration" => vec!["s_narration"],
+            _ => vec!["s_doc", "s_account_no", "s_account", "s_value", "s_narration"],
+        };
+        let ors: Vec<String> = cols.iter().map(|c| format!("{} LIKE ?", c)).collect();
+        clauses.push(format!("({})", ors.join(" OR ")));
+        for _ in &cols {
+            args.push(rusqlite::types::Value::Text(like.clone()));
+        }
+    }
+    if !date_from.is_empty() {
+        clauses.push("date_key >= ?".into());
+        args.push(rusqlite::types::Value::Text(date_from.replace('-', "")));
+    }
+    if !date_to.is_empty() {
+        clauses.push("date_key <= ?".into());
+        args.push(rusqlite::types::Value::Text(date_to.replace('-', "")));
+    }
+    let where_sql = if clauses.is_empty() {
+        String::new()
     } else {
-        filtered.into_iter().skip(offset).take(limit).collect()
+        format!("WHERE {}", clauses.join(" AND "))
     };
-    Ok(DailyEntriesList { entries, total, stats })
+    let total: i64 = conn
+        .query_row(
+            &format!("SELECT COUNT(*) FROM daily_entries {}", where_sql),
+            rusqlite::params_from_iter(args.iter()),
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut page_args = args;
+    page_args.push(rusqlite::types::Value::Integer(if limit == 0 { i64::MAX } else { limit as i64 }));
+    page_args.push(rusqlite::types::Value::Integer(offset as i64));
+    let sql = format!(
+        "SELECT id, entry_key, source_file, source_page, pages, doc_no, serial, doc_date,
+                journal_no, journal, branch, doc_source, contain_currency, local_amt,
+                total_value, invoice_refs, from_documents, lines_json,
+                debit_total, credit_total, balanced
+         FROM daily_entries {} ORDER BY date_key ASC, source_file ASC, doc_no ASC, serial ASC LIMIT ? OFFSET ?",
+        where_sql
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(page_args.iter()), |r| {
+            let lines_json: String = r.get(17)?;
+            let lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
+            let refs: String = r.get(15).unwrap_or_default();
+            let docs: String = r.get(16).unwrap_or_default();
+            Ok(DailyEntryRecord {
+                id: r.get(0)?,
+                entry_key: r.get(1)?,
+                source_file: r.get(2)?,
+                source_page: r.get(3)?,
+                pages: r.get(4)?,
+                doc_no: r.get(5)?,
+                serial: r.get(6)?,
+                doc_date: r.get(7)?,
+                journal_no: r.get(8)?,
+                journal: r.get(9)?,
+                branch: r.get(10)?,
+                doc_source: r.get(11)?,
+                contain_currency: r.get(12)?,
+                local_amt: r.get(13)?,
+                total_value: r.get(14)?,
+                invoice_refs: split_refs(&refs),
+                from_documents: split_refs(&docs),
+                lines,
+                debit_total: r.get(18)?,
+                credit_total: r.get(19)?,
+                balanced: r.get::<_, i64>(20)? != 0,
+                ..Default::default()
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let entries: Vec<DailyEntryRecord> = rows.filter_map(|r| r.ok()).collect();
+    Ok(DailyEntriesList { entries, total: total as usize, stats })
 }
 
 /// Persist an edited set of lines for one entry (used when the user corrects a
 /// rate or an amount).
 pub fn update_lines(conn: &Connection, entry_key: &str, lines_json: &str) -> Result<(), String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let n = conn
-        .execute(
-            "UPDATE daily_entries SET lines_json = ?1, updated_at = ?2 WHERE entry_key = ?3",
-            params![lines_json, now, entry_key],
+    // Recompute the stored (derived) columns from the edited lines. Pairing is
+    // NOT re-applied here so the user's edit is authoritative.
+    let (source_file, doc_no, serial, doc_date): (String, String, String, String) = conn
+        .query_row(
+            "SELECT source_file, doc_no, serial, doc_date FROM daily_entries WHERE entry_key = ?1",
+            params![entry_key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
-        .map_err(|e| e.to_string())?;
-    if n == 0 {
-        return Err("Entry not found".into());
-    }
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Entry not found".to_string())?;
+    let lines: Vec<DailyEntryLine> = serde_json::from_str(lines_json).unwrap_or_default();
+    let d = compute_derived(&source_file, &doc_no, &serial, &doc_date, &lines);
+    let mut args: Vec<rusqlite::types::Value> = vec![
+        rusqlite::types::Value::Text(lines_json.to_string()),
+    ];
+    args.extend(derived_params(&d));
+    args.push(rusqlite::types::Value::Text(now));
+    args.push(rusqlite::types::Value::Text(entry_key.to_string()));
+    conn.execute(
+        "UPDATE daily_entries SET lines_json=?1, debit_total=?2, credit_total=?3, balanced=?4,
+             line_count=?5, date_key=?6, s_doc=?7, s_account_no=?8, s_account=?9, s_value=?10,
+             s_narration=?11, updated_at=?12 WHERE entry_key=?13",
+        rusqlite::params_from_iter(args),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DailyEntryFileInfo {    pub source_file: String,
+pub struct DailyEntryFileInfo {
+    pub source_file: String,
     pub documents: usize,
     pub pages: i64,
     pub debit: f64,
@@ -1092,26 +1339,30 @@ pub struct DailyEntryFileInfo {    pub source_file: String,
 }
 
 /// Distinct list of the files that have been imported, with per-file totals.
-pub fn list_files(conn: &Connection) -> Result<Vec<DailyEntryFileInfo>, String> {    let all = load_all(conn)?;
-    let mut map: std::collections::BTreeMap<String, DailyEntryFileInfo> = std::collections::BTreeMap::new();
-    for e in &all {
-        let f = map.entry(e.source_file.clone()).or_insert_with(|| DailyEntryFileInfo {
-            source_file: e.source_file.clone(),
-            documents: 0,
-            pages: 0,
-            debit: 0.0,
-            credit: 0.0,
-            balanced: true,
-        });
-        f.documents += 1;
-        f.pages += e.pages;
-        f.debit += e.debit_total;
-        f.credit += e.credit_total;
-    }
-    for f in map.values_mut() {
-        f.balanced = is_balanced(f.debit, f.credit);
-    }
-    Ok(map.into_values().collect())
+pub fn list_files(conn: &Connection) -> Result<Vec<DailyEntryFileInfo>, String> {
+    ensure_backfilled(conn)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT source_file, COUNT(*), COALESCE(SUM(pages),0),
+                    COALESCE(SUM(debit_total),0), COALESCE(SUM(credit_total),0)
+             FROM daily_entries GROUP BY source_file ORDER BY source_file",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            let debit: f64 = r.get(3)?;
+            let credit: f64 = r.get(4)?;
+            Ok(DailyEntryFileInfo {
+                source_file: r.get(0)?,
+                documents: r.get::<_, i64>(1)? as usize,
+                pages: r.get(2)?,
+                debit,
+                credit,
+                balanced: is_balanced(debit, credit),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {
@@ -1160,18 +1411,50 @@ pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result
         // Recompute the key from the document identity so rows pushed by an
         // older app version (keyed by source file) collapse onto one entry.
         let key = format!("{}|{}|{}", r.doc_no, r.serial, r.doc_date);
+        // Recompute the stored/derived columns (a row pulled from an older
+        // app version may not carry them). Pairing is applied so remote rows
+        // stored before that fix still reconcile.
+        let mut lines: Vec<DailyEntryLine> = serde_json::from_str(&r.lines_json).unwrap_or_default();
+        let pairing_changed = apply_currency_pairing(&mut lines);
+        let d = compute_derived(&r.source_file, &r.doc_no, &r.serial, &r.doc_date, &lines);
+        let lines_json = if pairing_changed {
+            serde_json::to_string(&lines).unwrap_or_else(|_| r.lines_json.clone())
+        } else {
+            r.lines_json.clone()
+        };
+        let mut args: Vec<rusqlite::types::Value> = vec![
+            rusqlite::types::Value::Text(key),
+            rusqlite::types::Value::Text(r.source_file.clone()),
+            rusqlite::types::Value::Integer(r.source_page),
+            rusqlite::types::Value::Integer(r.pages),
+            rusqlite::types::Value::Text(r.doc_no.clone()),
+            rusqlite::types::Value::Text(r.serial.clone()),
+            rusqlite::types::Value::Text(r.doc_date.clone()),
+            rusqlite::types::Value::Text(r.journal_no.clone()),
+            rusqlite::types::Value::Text(r.journal.clone()),
+            rusqlite::types::Value::Text(r.branch.clone()),
+            rusqlite::types::Value::Text(r.doc_source.clone()),
+            rusqlite::types::Value::Text(r.contain_currency.clone()),
+            rusqlite::types::Value::Text(r.local_amt.clone()),
+            rusqlite::types::Value::Text(r.total_value.clone()),
+            rusqlite::types::Value::Text(r.invoice_refs.clone()),
+            rusqlite::types::Value::Text(r.from_documents.clone()),
+            rusqlite::types::Value::Text(lines_json),
+            rusqlite::types::Value::Text(r.report_date.clone()),
+        ];
+        args.extend(derived_params(&d));
+        args.push(rusqlite::types::Value::Text(now.clone()));
         tx.execute(
             "INSERT OR REPLACE INTO daily_entries
                 (entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no,
                  journal, branch, doc_source, contain_currency, local_amt, total_value,
-                 invoice_refs, from_documents, lines_json, report_date, created_at, updated_at)
+                 invoice_refs, from_documents, lines_json, report_date,
+                 debit_total, credit_total, balanced, line_count, date_key, s_doc, s_account_no, s_account, s_value, s_narration,
+                 created_at, updated_at)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,
-                     COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?19), ?19)",
-            params![
-                key, r.source_file, r.source_page, r.pages, r.doc_no, r.serial, r.doc_date,
-                r.journal_no, r.journal, r.branch, r.doc_source, r.contain_currency, r.local_amt,
-                r.total_value, r.invoice_refs, r.from_documents, r.lines_json, r.report_date, now
-            ],
+                     ?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,
+                     COALESCE((SELECT created_at FROM daily_entries WHERE entry_key=?1), ?29), ?30)",
+            rusqlite::params_from_iter(args),
         )
         .map_err(|e| e.to_string())?;
     }
@@ -1327,6 +1610,52 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
         let all = load_all(&conn).unwrap();
         assert_eq!(all.len(), 2, "the same documents must not be duplicated");
         assert!(all.iter().all(|e| e.source_file == "b.pdf"), "newest report should win");
+    }
+
+    #[test]
+    fn migrate_and_list_real_db() {
+        let Ok(path) = std::env::var("VOUCHIFY_ENTRIES_DB") else {
+            eprintln!("skipped: VOUCHIFY_ENTRIES_DB not set");
+            return;
+        };
+        let conn = Connection::open(&path).unwrap();
+        let t0 = std::time::Instant::now();
+        init_schema(&conn).unwrap();
+        let migrate = t0.elapsed();
+        let t1 = std::time::Instant::now();
+        let files = list_files(&conn).unwrap();
+        let files_t = t1.elapsed();
+        let t2 = std::time::Instant::now();
+        let stats = stats_from_db(&conn).unwrap();
+        let stats_t = t2.elapsed();
+        let t3 = std::time::Instant::now();
+        let page = list(&conn, "", "all", "", "", 0, 150).unwrap();
+        let list_t = t3.elapsed();
+        let t4 = std::time::Instant::now();
+        let searched = list(&conn, "220504", "all", "", "", 0, 150).unwrap();
+        let search_t = t4.elapsed();
+        // Profile the backfill pieces (parse vs compute).
+        let mut t_parse = std::time::Duration::ZERO;
+        let mut t_comp = std::time::Duration::ZERO;
+        {
+            let mut stmt = conn.prepare("SELECT source_file, doc_no, serial, doc_date, lines_json FROM daily_entries").unwrap();
+            let iter = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?))).unwrap();
+            for row in iter {
+                let (sf, dn, se, dd, lj) = row.unwrap();
+                let a = std::time::Instant::now();
+                let mut lines: Vec<DailyEntryLine> = serde_json::from_str(&lj).unwrap_or_default();
+                t_parse += a.elapsed();
+                let b = std::time::Instant::now();
+                apply_currency_pairing(&mut lines);
+                let _ = compute_derived(&sf, &dn, &se, &dd, &lines);
+                t_comp += b.elapsed();
+            }
+        }
+        println!(
+            "migrate={:?} files({})={:?} stats({} docs, {:.2} Dr)={:?} list({}/{})={:?} search(220504 -> {})={:?} | parse={:?} compute={:?}",
+            migrate, files.len(), files_t, stats.total, stats.debit, stats_t,
+            page.entries.len(), page.total, list_t, searched.total, search_t, t_parse, t_comp
+        );
     }
 
     #[test]

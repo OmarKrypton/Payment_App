@@ -43,7 +43,7 @@ fn compute_retention(val_1b: String, ret_rate: String) -> f64 {
     (base * rate / 100.0 * 100.0).round() / 100.0
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_history(state: tauri::State<'_, DbState>, search: String) -> Result<Vec<HistoryEntry>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -217,25 +217,32 @@ fn import_to_pool(app: tauri::AppHandle, state: tauri::State<'_, DbState>, file_
     Ok(PoolImportResult { imported, failed })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_invoice_pool(state: tauri::State<'_, DbState>) -> Result<Vec<history::PoolInvoice>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     history::list_pool(conn)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_invoice_pool_summary(state: tauri::State<'_, DbState>) -> Result<Vec<history::PoolInvoiceSummary>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     history::list_pool_summary(conn)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_invoice_pool_detail(state: tauri::State<'_, DbState>) -> Result<Vec<history::PoolInvoiceDetail>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     history::list_pool_detail(conn)
+}
+
+#[tauri::command(async)]
+fn get_pool_invoices_by_uuids(state: tauri::State<'_, DbState>, uuids: Vec<String>) -> Result<Vec<history::PoolInvoice>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::list_pool_by_uuids(conn, &uuids)
 }
 
 #[tauri::command]
@@ -370,7 +377,7 @@ fn daily_entries_for_sync(state: tauri::State<'_, DbState>) -> Result<Vec<entrie
     entries::for_sync(conn)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_daily_entry_files(state: tauri::State<'_, DbState>) -> Result<Vec<entries::DailyEntryFileInfo>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -541,6 +548,7 @@ pub fn run() {
             list_invoice_pool,
             list_invoice_pool_summary,
             list_invoice_pool_detail,
+            get_pool_invoices_by_uuids,
             mark_pool_invoice_used,
             mark_pool_invoices_used,
             mark_pool_invoice_available,

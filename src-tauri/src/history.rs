@@ -523,6 +523,60 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     Ok(result)
 }
 
+/// Fetch full pool rows only for the given ETA uuids. Used so the sync can pull
+/// the (large) `raw_xml`/`lines_json` payload for just the rows it is about to
+/// push, instead of shipping the whole pool into the UI.
+pub fn list_pool_by_uuids(conn: &Connection, uuids: &[String]) -> Result<Vec<PoolInvoice>, String> {
+    if uuids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut result = Vec::new();
+    for chunk in uuids.chunks(500) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices WHERE uuid IN ({})",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Ok(PoolInvoice {
+                    id: row.get(0)?,
+                    invoice_id: row.get(1)?,
+                    uuid: row.get(2)?,
+                    seller_tax_id: row.get(3)?,
+                    seller_name: row.get(4)?,
+                    buyer_tax_id: row.get(5)?,
+                    buyer_name: row.get(6)?,
+                    issue_date: row.get(7)?,
+                    currency: row.get(8)?,
+                    net_amount: row.get(9)?,
+                    total_vat: row.get(10)?,
+                    total_wht: row.get(11)?,
+                    grand_total: row.get(12)?,
+                    lines_json: row.get(13)?,
+                    raw_xml: row.get(14)?,
+                    file_name: row.get(15)?,
+                    doc_status: {
+                        let s: String = row.get(16)?;
+                        if s.is_empty() { "Valid".to_string() } else { s }
+                    },
+                    status: row.get(17)?,
+                    used_by_snapshot_id: row.get(18)?,
+                    used_by_label: row.get(19)?,
+                    delete_requested_at: row.get(20)?,
+                    delete_requested_by: row.get(21)?,
+                    created_at: row.get(22)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            result.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+    Ok(result)
+}
+
 /// Supplier-analysis pool row: full financials plus per-line JSON (used by the
 /// Suppliers tab to derive per-item VAT rates from the real invoices), but no
 /// raw_xml. The lightweight summary omits lines entirely.

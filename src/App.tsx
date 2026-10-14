@@ -3307,7 +3307,7 @@ function App() {
   const reconcilePillsFromPool = async () => {
     try {
       const entries = formRef.current.import_entries ?? [];
-      const list = await invoke<any[]>("list_invoice_pool");
+      const list = await invoke<any[]>("list_invoice_pool_summary");
       const used = list.filter((p: any) => p.status === 'used');
       if (used.length === 0) return;
       let changed = false;
@@ -3395,7 +3395,7 @@ function App() {
     (form.import_entries || []).forEach((e: any) => { const k = buildRestoreKey(e?.attached_invoice, e?.seller_tax_id, e?.attached_uuid); if (k) keys.add(k); });
     if (keys.size === 0) return 0;
     let list: any[] = [];
-    try { list = await invoke<any[]>("list_invoice_pool"); } catch { return 0; }
+    try { list = await invoke<any[]>("list_invoice_pool_summary"); } catch { return 0; }
     const toClaim = resolveRestoreRows([...keys], list, serial);
     if (toClaim.length === 0) return 0;
     try {
@@ -3452,7 +3452,7 @@ function App() {
     // invoices that exist in the cloud but not yet in local SQLite.
     try { await syncPoolRemote(); } catch {}
     let list: any[] = [];
-    try { list = await invoke<any[]>("list_invoice_pool"); } catch { return 0; }
+    try { list = await invoke<any[]>("list_invoice_pool_summary"); } catch { return 0; }
     for (const doc of docs) {
       const toClaim = resolveRestoreRows([...doc.keys], list, doc.serial);
       if (toClaim.length === 0) continue;
@@ -3497,7 +3497,7 @@ function App() {
       //    - local is available but cloud still holds a stale claim (used),
       //      which means the user explicitly unclaimed — push the unclaim so
       //      the cloud converges and the next pull doesn't revert it.
-      const localAll = await invoke<any[]>("list_invoice_pool");
+      const localAll = await invoke<any[]>("list_invoice_pool_summary");
       info.local = localAll.length;
       const remoteMeta = await listPoolRemoteMeta();
       info.cloud = remoteMeta.length;
@@ -3535,7 +3535,11 @@ function App() {
       info.pushed = toPush.length;
       if (toPush.length > 0) {
         try {
-          await upsertPoolInvoicesRemote(toPush);
+          // Fetch the full rows (with raw_xml/lines_json) only for what we push,
+          // instead of shipping the whole pool into the UI.
+          const uuids = toPush.map((l: any) => l.uuid).filter(Boolean);
+          const full = await invoke<any[]>("get_pool_invoices_by_uuids", { uuids });
+          await upsertPoolInvoicesRemote(full);
         } catch (e) { console.error("upsert pool remote failed", e); info.error = `upsert: ${(e as any)?.message || e}`; }
       }
       // 1b) Drop cloud rows that still carry a synthetic uuid for a document we
@@ -4566,8 +4570,8 @@ function App() {
       showAlert(msg);
       if (authUser && imported.length > 0) {
         try {
-          const local = await invoke<any[]>("list_invoice_pool");
-          const rows = local.filter((l: any) => imported.some((i: any) => i.uuid && i.uuid === l.uuid));
+          const uuids = imported.map((i: any) => i.uuid).filter(Boolean);
+          const rows = await invoke<any[]>("get_pool_invoices_by_uuids", { uuids });
           await upsertPoolInvoicesRemote(rows);
         } catch (e) { console.error("upsert pool remote failed", e); }
       }
@@ -5459,7 +5463,7 @@ function App() {
                 <button className="hc-btn" onClick={async () => {
                   setPoolLoading(true);
                   await syncPoolRemote();
-                  try { setPoolList(await invoke<any[]>("list_invoice_pool")); } catch (e) { console.error(e); }
+                  try { setPoolList(await invoke<any[]>("list_invoice_pool_summary")); } catch (e) { console.error(e); }
                   setPoolLoading(false);
                 }}>{t("同步云端", "Sync Now")}</button>
                 <span style={{flex:1}} />

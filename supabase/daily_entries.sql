@@ -24,9 +24,14 @@ create table if not exists public.daily_entries (
   invoice_refs text not null default '',
   from_documents text not null default '',
   lines_json text not null default '[]',
+  report_date text not null default '',
   updated_at timestamptz not null default now(),
   user_id uuid
 );
+
+-- Older installs created the table before report_date existed; add it too.
+alter table public.daily_entries
+  add column if not exists report_date text not null default '';
 
 create index if not exists idx_daily_entries_source on public.daily_entries (source_file);
 create index if not exists idx_daily_entries_doc on public.daily_entries (doc_no);
