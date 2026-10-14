@@ -1404,6 +1404,113 @@ pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyEntryLocalMeta {
+    pub entry_key: String,
+    pub updated_at: String,
+}
+
+/// Local entry keys + updated_at, so the UI can decide which remote rows to pull
+/// (and which local rows to push) without downloading every `lines_json`.
+pub fn local_meta(conn: &Connection) -> Result<Vec<DailyEntryLocalMeta>, String> {
+    let mut stmt = conn
+        .prepare("SELECT entry_key, updated_at FROM daily_entries")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(DailyEntryLocalMeta { entry_key: r.get(0)?, updated_at: r.get(1)? })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Full sync rows for just the given entry keys (used to push only the rows the
+/// cloud is missing).
+pub fn for_sync_keys(conn: &Connection, keys: &[String]) -> Result<Vec<DailyEntrySyncRow>, String> {
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for chunk in keys.chunks(400) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT entry_key, source_file, source_page, pages, doc_no, serial, doc_date,
+                    journal_no, journal, branch, doc_source, contain_currency, local_amt,
+                    total_value, invoice_refs, from_documents, lines_json, report_date, updated_at
+             FROM daily_entries WHERE entry_key IN ({})",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                Ok(DailyEntrySyncRow {
+                    entry_key: r.get(0)?,
+                    source_file: r.get(1)?,
+                    source_page: r.get(2)?,
+                    pages: r.get(3)?,
+                    doc_no: r.get(4)?,
+                    serial: r.get(5)?,
+                    doc_date: r.get(6)?,
+                    journal_no: r.get(7)?,
+                    journal: r.get(8)?,
+                    branch: r.get(9)?,
+                    doc_source: r.get(10)?,
+                    contain_currency: r.get(11)?,
+                    local_amt: r.get(12)?,
+                    total_value: r.get(13)?,
+                    invoice_refs: r.get(14)?,
+                    from_documents: r.get(15)?,
+                    lines_json: r.get(16)?,
+                    report_date: r.get(17)?,
+                    updated_at: r.get(18)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            out.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+    Ok(out)
+}
+
+/// Full sync rows for one source file (used right after importing it).
+pub fn for_sync_file(conn: &Connection, source_file: &str) -> Result<Vec<DailyEntrySyncRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT entry_key, source_file, source_page, pages, doc_no, serial, doc_date,
+                    journal_no, journal, branch, doc_source, contain_currency, local_amt,
+                    total_value, invoice_refs, from_documents, lines_json, report_date, updated_at
+             FROM daily_entries WHERE source_file = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![source_file], |r| {
+            Ok(DailyEntrySyncRow {
+                entry_key: r.get(0)?,
+                source_file: r.get(1)?,
+                source_page: r.get(2)?,
+                pages: r.get(3)?,
+                doc_no: r.get(4)?,
+                serial: r.get(5)?,
+                doc_date: r.get(6)?,
+                journal_no: r.get(7)?,
+                journal: r.get(8)?,
+                branch: r.get(9)?,
+                doc_source: r.get(10)?,
+                contain_currency: r.get(11)?,
+                local_amt: r.get(12)?,
+                total_value: r.get(13)?,
+                invoice_refs: r.get(14)?,
+                from_documents: r.get(15)?,
+                lines_json: r.get(16)?,
+                report_date: r.get(17)?,
+                updated_at: r.get(18)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
 pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result<(), String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;

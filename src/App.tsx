@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemote, upsertDailyEntriesRemote, deleteDailyEntriesRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, deleteDailyEntriesRemote } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -2891,39 +2891,41 @@ function App() {
   const [isSerialDuplicate, setIsSerialDuplicate] = useState(false);
   const historyOverlayRef = useRef<HTMLDivElement>(null);
 
-  const showHistoryModal = async () => {
+  const showHistoryModal = () => {
     if (historyOverlayRef.current) {
       historyOverlayRef.current.style.visibility = 'visible';
       historyOverlayRef.current.style.opacity = '1';
       historyOverlayRef.current.style.pointerEvents = 'auto';
     }
-    // Auto-sync local snapshots to cloud when logged in
-    if (authUser) {
+    // Show the list immediately; sync local snapshots to the cloud in the
+    // background and refresh only if anything was uploaded.
+    loadHistoryList("");
+    if (!authUser) return;
+    void (async () => {
       try {
         const localList = await invoke<HistoryEntry[]>("list_history", { search: "" });
-        if (localList.length > 0) {
-          const remoteRows = await listSnapshotsRemote("");
-          const remoteLabels = new Set(remoteRows.map(r => r.label));
-          let synced = 0;
-          for (const entry of localList) {
-            if (remoteLabels.has(entry.label)) continue; // skip duplicates
-            try {
-              const dataJson = await invoke<string>("load_history", { id: entry.id });
-              await saveSnapshotRemote(entry.label, entry.notes || "", dataJson);
-              synced++;
-            } catch (e) {
-              console.error("Failed to sync entry", entry.id, e);
-            }
+        if (localList.length === 0) return;
+        const remoteRows = await listSnapshotsRemote("");
+        const remoteLabels = new Set(remoteRows.map(r => r.label));
+        let synced = 0;
+        for (const entry of localList) {
+          if (remoteLabels.has(entry.label)) continue; // skip duplicates
+          try {
+            const dataJson = await invoke<string>("load_history", { id: entry.id });
+            await saveSnapshotRemote(entry.label, entry.notes || "", dataJson);
+            synced++;
+          } catch (e) {
+            console.error("Failed to sync entry", entry.id, e);
           }
-          if (synced > 0) {
-            console.log(`Auto-synced ${synced} local snapshots to cloud`);
-          }
+        }
+        if (synced > 0) {
+          console.log(`Auto-synced ${synced} local snapshots to cloud`);
+          loadHistoryList("");
         }
       } catch (e) {
         console.error("Auto-sync failed", e);
       }
-    }
-    loadHistoryList("");
+    })();
   };
 
   const hideHistoryModal = () => {
@@ -3719,9 +3721,9 @@ function App() {
     return () => clearTimeout(id);
   }, [tab, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries, loadDeFiles]);
 
-  // On first open, sync both ways with the shared cloud store: pull remote
-  // entries locally, and push any local entries the cloud doesn't have yet
-  // (e.g. ones imported while signed out of the account).
+  // On first open, sync both ways with the shared cloud store using only
+  // metadata (keys + updated_at), then download/push just what changed — so we
+  // never re-download every entry's `lines_json` on each session.
   const dePulledRef = useRef(false);
   useEffect(() => {
     if (tab !== "entries" || !authUser || dePulledRef.current) return;
@@ -3729,17 +3731,36 @@ function App() {
     (async () => {
       setDeSyncing(true);
       try {
-        const remote: any[] = await listDailyEntriesRemote();
-        if (remote.length) {
-          await invoke("sync_daily_entries_from_remote", { rows: remote });
+        const [remoteMeta, localMeta] = await Promise.all([
+          listDailyEntriesRemoteMeta(),
+          invoke<any[]>("daily_entries_local_meta"),
+        ]);
+        const remoteUpdated = new Map<string, string>(remoteMeta.map((r: any) => [r.entry_key, r.updated_at]));
+        const localUpdated = new Map<string, string>(localMeta.map((m: any) => [m.entry_key, m.updated_at]));
+        const ts = (s: any) => {
+          const t = Date.parse(String(s || "").replace(" ", "T"));
+          return isFinite(t) ? t : 0;
+        };
+        // Pull: remote rows missing locally, or newer than the local copy.
+        const toPull = remoteMeta
+          .filter((r: any) => {
+            const lu = localUpdated.get(r.entry_key);
+            return lu == null || ts(r.updated_at) > ts(lu) + 5000;
+          })
+          .map((r: any) => r.entry_key);
+        if (toPull.length > 0) {
+          const rows = await listDailyEntriesRemoteByKeys(toPull);
+          if (rows.length) await invoke("sync_daily_entries_from_remote", { rows });
         }
-        const remoteKeys = new Set<string>(remote.map((r: any) => r.entry_key));
-        const local: any[] = await invoke("daily_entries_for_sync");
-        const missing = local.filter((r: any) => r.entry_key && !remoteKeys.has(r.entry_key));
-        if (missing.length) {
-          await upsertDailyEntriesRemote(missing);
+        // Push: local rows the cloud doesn't have yet.
+        const toPushKeys = localMeta
+          .filter((m: any) => m.entry_key && !remoteUpdated.has(m.entry_key))
+          .map((m: any) => m.entry_key);
+        if (toPushKeys.length > 0) {
+          const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: toPushKeys });
+          if (rows.length) await upsertDailyEntriesRemote(rows);
         }
-        if (remote.length || missing.length) setDeRefresh(v => v + 1);
+        if (toPull.length > 0 || toPushKeys.length > 0) setDeRefresh(v => v + 1);
       } catch (e) {
         console.error("daily entries sync failed", e);
       } finally {
@@ -3788,8 +3809,8 @@ function App() {
       await loadDeFiles();
       if (authUser) {
         try {
-          const local: any[] = await invoke("daily_entries_for_sync");
-          await upsertDailyEntriesRemote(local.filter((r: any) => r.source_file === info?.source_file));
+          const rows: any[] = await invoke("daily_entries_for_sync_file", { sourceFile: info?.source_file });
+          if (rows.length) await upsertDailyEntriesRemote(rows);
         } catch (e) {
           console.error("daily entries push failed", e);
         }
@@ -3854,9 +3875,8 @@ function App() {
       await invoke("update_daily_entry_lines", { entryKey, linesJson: JSON.stringify(lines) });
       if (authUser) {
         try {
-          const local: any[] = await invoke("daily_entries_for_sync");
-          const row = local.find((r: any) => r.entry_key === entryKey);
-          if (row) await upsertDailyEntriesRemote([row]);
+          const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: [entryKey] });
+          if (rows.length) await upsertDailyEntriesRemote(rows);
         } catch {}
       }
       setDeRefresh(v => v + 1);

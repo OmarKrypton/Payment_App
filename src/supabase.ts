@@ -522,7 +522,7 @@ export async function listDailyEntriesRemote(): Promise<DailyEntrySyncRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   const COLS =
-    "entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal, branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents, lines_json, updated_at";
+    "entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal, branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents, lines_json, report_date, updated_at";
   const build = (from: number, to: number) =>
     supabase
       .from("daily_entries")
@@ -534,6 +534,41 @@ export async function listDailyEntriesRemote(): Promise<DailyEntrySyncRow[]> {
         return data;
       });
   return fetchAllPooled(build, 500);
+}
+
+/** Keys + updated_at only (no lines_json) so the UI can decide what to pull. */
+export async function listDailyEntriesRemoteMeta(): Promise<{ entry_key: string; updated_at: string }[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const build = (from: number, to: number) =>
+    supabase
+      .from("daily_entries")
+      .select("entry_key, updated_at")
+      .order("updated_at", { ascending: true })
+      .range(from, to)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        return data;
+      });
+  return fetchAllPooled(build, 1000);
+}
+
+/** Full rows for just the given keys (chunked), used to pull only what's new. */
+export async function listDailyEntriesRemoteByKeys(keys: string[]): Promise<DailyEntrySyncRow[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (keys.length === 0) return [];
+  const COLS =
+    "entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal, branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents, lines_json, report_date, updated_at";
+  const all: DailyEntrySyncRow[] = [];
+  const PAGE = 200;
+  for (let i = 0; i < keys.length; i += PAGE) {
+    const chunk = keys.slice(i, i + PAGE);
+    const { data, error } = await supabase.from("daily_entries").select(COLS).in("entry_key", chunk);
+    if (error) throw error;
+    if (data) all.push(...(data as DailyEntrySyncRow[]));
+  }
+  return all;
 }
 
 export async function deleteDailyEntriesRemote(sourceFile: string): Promise<void> {

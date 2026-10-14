@@ -378,6 +378,27 @@ fn daily_entries_for_sync(state: tauri::State<'_, DbState>) -> Result<Vec<entrie
 }
 
 #[tauri::command(async)]
+fn daily_entries_local_meta(state: tauri::State<'_, DbState>) -> Result<Vec<entries::DailyEntryLocalMeta>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::local_meta(conn)
+}
+
+#[tauri::command(async)]
+fn daily_entries_for_sync_keys(state: tauri::State<'_, DbState>, keys: Vec<String>) -> Result<Vec<entries::DailyEntrySyncRow>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::for_sync_keys(conn, &keys)
+}
+
+#[tauri::command(async)]
+fn daily_entries_for_sync_file(state: tauri::State<'_, DbState>, source_file: String) -> Result<Vec<entries::DailyEntrySyncRow>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::for_sync_file(conn, &source_file)
+}
+
+#[tauri::command(async)]
 fn list_daily_entry_files(state: tauri::State<'_, DbState>) -> Result<Vec<entries::DailyEntryFileInfo>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -561,6 +582,9 @@ pub fn run() {
             import_daily_entries,
             list_daily_entries,
             daily_entries_for_sync,
+            daily_entries_local_meta,
+            daily_entries_for_sync_keys,
+            daily_entries_for_sync_file,
             list_daily_entry_files,
             update_daily_entry_lines,
             sync_daily_entries_from_remote,
