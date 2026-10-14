@@ -2,9 +2,11 @@
 -- Extracted journal documents are kept locally in SQLite and mirrored here so the
 -- Daily Entries tab is shared across all devices/users.
 --
--- Identity of an entry is `entry_key` = source_file|doc_no|serial|doc_date, so
--- re-uploading an updated report (same file name) overwrites its entries instead
--- of duplicating them.
+-- Identity of an entry is `entry_key` = doc_no|serial|doc_date (the document),
+-- so the same voucher imported from overlapping reports is stored once, and the
+-- newest report replaces the older one.
+--
+-- Safe to run more than once.
 
 create table if not exists public.daily_entries (
   entry_key text primary key,
@@ -42,15 +44,20 @@ alter table public.daily_entries enable row level security;
 -- Shared team workspace: any authenticated user may read/write. The predicate is
 -- "a signed-in user" rather than the literal `true`, which keeps the Supabase
 -- linter's permissive-RLS warning away.
+-- Drop first so this file is safe to re-run.
+drop policy if exists "daily entries read" on public.daily_entries;
 create policy "daily entries read" on public.daily_entries
   for select to authenticated using ((select auth.uid()) is not null);
 
+drop policy if exists "daily entries insert" on public.daily_entries;
 create policy "daily entries insert" on public.daily_entries
   for insert to authenticated with check ((select auth.uid()) is not null);
 
+drop policy if exists "daily entries update" on public.daily_entries;
 create policy "daily entries update" on public.daily_entries
   for update to authenticated using ((select auth.uid()) is not null)
   with check ((select auth.uid()) is not null);
 
+drop policy if exists "daily entries delete" on public.daily_entries;
 create policy "daily entries delete" on public.daily_entries
   for delete to authenticated using ((select auth.uid()) is not null);
