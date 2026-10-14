@@ -577,12 +577,69 @@ pub fn list_pool_by_uuids(conn: &Connection, uuids: &[String]) -> Result<Vec<Poo
     Ok(result)
 }
 
+#[derive(serde::Serialize)]
+pub struct PoolRatedLine {
+    pub description: String,
+    pub vat_rate: f64,
+}
+
+/// Compact pool row for the Suppliers tab: only what it needs to show a
+/// supplier's invoices and derive per-item VAT rates — no `raw_xml`/`lines_json`
+/// payload beyond the description + VAT rate of each rated line.
+#[derive(serde::Serialize)]
+pub struct PoolSupplierRow {
+    pub invoice_id: String,
+    pub seller_tax_id: String,
+    pub seller_name: String,
+    pub doc_status: String,
+    pub net_amount: f64,
+    pub total_vat: f64,
+    pub rated_lines: Vec<PoolRatedLine>,
+}
+
+pub fn list_pool_supplier_rows(conn: &Connection) -> Result<Vec<PoolSupplierRow>, String> {
+    let mut stmt = conn
+        .prepare("SELECT invoice_id, seller_tax_id, seller_name, doc_status, net_amount, total_vat, lines_json FROM eta_invoices")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            let lines_json: String = r.get(6)?;
+            let rated_lines: Vec<PoolRatedLine> = serde_json::from_str::<Vec<serde_json::Value>>(&lines_json)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|l| {
+                    let vr = l.get("vat_rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    if vr <= 0.0 {
+                        return None;
+                    }
+                    Some(PoolRatedLine {
+                        description: l.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        vat_rate: vr,
+                    })
+                })
+                .collect();
+            Ok(PoolSupplierRow {
+                invoice_id: r.get(0)?,
+                seller_tax_id: r.get(1)?,
+                seller_name: r.get(2)?,
+                doc_status: {
+                    let s: String = r.get(3)?;
+                    if s.is_empty() { "Valid".to_string() } else { s }
+                },
+                net_amount: r.get(4)?,
+                total_vat: r.get(5)?,
+                rated_lines,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
 /// Supplier-analysis pool row: full financials plus per-line JSON (used by the
 /// Suppliers tab to derive per-item VAT rates from the real invoices), but no
 /// raw_xml. The lightweight summary omits lines entirely.
 #[derive(serde::Serialize)]
-pub struct PoolInvoiceDetail {
-    pub id: i64,
+pub struct PoolInvoiceDetail {    pub id: i64,
     pub invoice_id: String,
     pub uuid: String,
     pub seller_tax_id: String,

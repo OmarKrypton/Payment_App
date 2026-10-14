@@ -489,9 +489,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     if (!a.name && pe.name) a.name = pe.name;
     if (!a.poolName && pe.name) a.poolName = pe.name;
     for (const inv of pe.invoices) {
-      let lines: any[] = [];
-      try { lines = JSON.parse(inv.lines_json || "[]"); } catch {}
-      const ratedLines = lines.filter((l: any) => (Number(l.vat_rate) || 0) > 0);
+      const ratedLines = (inv.rated_lines || []).filter((l: any) => (Number(l.vat_rate) || 0) > 0);
       if (ratedLines.length) {
         for (const l of ratedLines) {
           bumpVat(a, `${Number(l.vat_rate)}%`, vatItemKind(String(l.description || "")));
@@ -3918,7 +3916,7 @@ function App() {
       let pool: any[] = [];
       try {
         if (authUser) await syncPoolRemote();
-        pool = await invoke<any[]>("list_invoice_pool_detail");
+        pool = await invoke<any[]>("list_pool_supplier_rows");
       } catch {}
       const base = buildSuppliers(rows, pool);
       // Manually-added suppliers (a saved name with no documents or pool rows

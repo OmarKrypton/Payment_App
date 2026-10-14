@@ -239,6 +239,13 @@ fn list_invoice_pool_detail(state: tauri::State<'_, DbState>) -> Result<Vec<hist
 }
 
 #[tauri::command(async)]
+fn list_pool_supplier_rows(state: tauri::State<'_, DbState>) -> Result<Vec<history::PoolSupplierRow>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::list_pool_supplier_rows(conn)
+}
+
+#[tauri::command(async)]
 fn get_pool_invoices_by_uuids(state: tauri::State<'_, DbState>, uuids: Vec<String>) -> Result<Vec<history::PoolInvoice>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -569,6 +576,7 @@ pub fn run() {
             list_invoice_pool,
             list_invoice_pool_summary,
             list_invoice_pool_detail,
+            list_pool_supplier_rows,
             get_pool_invoices_by_uuids,
             mark_pool_invoice_used,
             mark_pool_invoices_used,
