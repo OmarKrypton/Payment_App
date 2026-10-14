@@ -1109,6 +1109,34 @@ function App() {
   const [remainderSearch, setRemainderSearch] = useState("");
   const [savedDocsIndex, setSavedDocsIndex] = useState<any[]>([]);
 
+  // ── View cache ─────────────────────────────────────────────────────────────
+  // Reopening a view used to re-query it (and, for the pool/history/suppliers,
+  // re-hit the network) even when nothing had changed. Each view records the
+  // query key and time of its last load; a reload is skipped while the key is
+  // unchanged and the data is younger than the TTL. Local mutations call
+  // loadPool(true) / invalidateView() so their view always reflects the change
+  // immediately, and the short TTL keeps changes made on other devices visible.
+  const VIEW_TTL_MS = 45_000;
+  const SUPPLIERS_TTL_MS = 60_000;
+  const ENTRIES_TTL_MS = 120_000;
+  // Network gates for the invoice pool. Reopening the modal within
+  // POOL_FRESH_MS is a no-op, and the cloud is contacted at most once per
+  // POOL_SYNC_MIN_MS unless a local mutation forces an immediate push.
+  const POOL_FRESH_MS = 30_000;
+  const POOL_SYNC_MIN_MS = 120_000;
+  const POOL_SYNC_PERIOD_MS = 180_000;
+  const viewStamps = useRef<Record<string, { key: string; at: number }>>({});
+  const isViewFresh = useCallback((view: string, key: string, ttl = VIEW_TTL_MS) => {
+    const s = viewStamps.current[view];
+    return !!s && s.key === key && Date.now() - s.at < ttl;
+  }, []);
+  const markViewLoaded = useCallback((view: string, key: string) => {
+    viewStamps.current[view] = { key, at: Date.now() };
+  }, []);
+  const invalidateView = useCallback((...views: string[]) => {
+    for (const v of views) delete viewStamps.current[v];
+  }, []);
+
   // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
   // prefill with the last-used rates for that seller).
   const [sellerRates, setSellerRates] = useState<Record<string, { vat: string; wht: string; rate: string }>>(() => {
@@ -2896,9 +2924,11 @@ function App() {
       historyOverlayRef.current.style.pointerEvents = 'auto';
     }
     // Show the list immediately; sync local snapshots to the cloud in the
-    // background and refresh only if anything was uploaded.
-    loadHistoryList("");
-    if (!authUser) return;
+    // background and refresh only if anything was uploaded. Reopening the modal
+    // shortly after the last load is a no-op (cached list), which keeps it snappy.
+    const fresh = isViewFresh("history", "history|");
+    loadHistoryList("", !fresh);
+    if (fresh || !authUser) return;
     void (async () => {
       try {
         const localList = await invoke<HistoryEntry[]>("list_history", { search: "" });
@@ -2934,7 +2964,9 @@ function App() {
     }
   };
 
-  const loadHistoryList = async (search = "") => {
+  const loadHistoryList = async (search = "", force = true) => {
+    const cacheKey = `history|${search}`;
+    if (!force && isViewFresh("history", cacheKey)) return;
     setHistoryLoading(true);
     if (authUser) {
       try {
@@ -3006,6 +3038,7 @@ function App() {
       }
     }
     setHistoryLoading(false);
+    markViewLoaded("history", cacheKey);
   };
 
   // Debounced duplicate serial check
@@ -3450,7 +3483,7 @@ function App() {
     if (docs.length === 0) return 0;
     // Make sure the local pool is up to date first so claims can target
     // invoices that exist in the cloud but not yet in local SQLite.
-    try { await syncPoolRemote(); } catch {}
+    try { await syncPoolRemote({ force: true }); } catch {}
     let list: any[] = [];
     try { list = await invoke<any[]>("list_invoice_pool_summary"); } catch { return 0; }
     for (const doc of docs) {
@@ -3479,9 +3512,14 @@ function App() {
   // an available local row never overwrites an existing remote claim. The pull
   // then brings the authoritative cloud state (including every claim) down to
   // local SQLite, converging every device to the full union.
-  const syncPoolRemote = async (): Promise<void> => {
+  const syncPoolRemote = async (opts?: { force?: boolean }): Promise<void> => {
     if (poolSyncInFlight.current) return;
+    const force = opts?.force === true;
+    // The cloud is contacted at most once per POOL_SYNC_MIN_MS unless a caller
+    // forces it (login, a local mutation, or the explicit "Sync Now" button).
+    if (!force && Date.now() - poolLastSyncRef.current < POOL_SYNC_MIN_MS) return;
     poolSyncInFlight.current = true;
+    poolLastSyncRef.current = Date.now();
     const info: { ok: boolean; local: number; cloud: number; pushed: number; pulled: number; error?: string } = { ok: true, local: 0, cloud: 0, pushed: 0, pulled: 0 };
     if (!authUser) {
       info.error = "not logged in (authUser null)";
@@ -3622,6 +3660,22 @@ function App() {
       info.ok = !info.error;
       setPoolSyncInfo(info);
       poolSyncInFlight.current = false;
+      // A push or pull means local state changed: invalidate the cached views
+      // that read it, and repaint the pool immediately when its modal is open.
+      if (info.pulled > 0 || info.pushed > 0) {
+        invalidateView("pool", "suppliers");
+        if (showPoolRef.current) await refreshPoolList();
+      }
+    }
+  };
+
+  // Re-read the local pool into the rendered list without touching the network.
+  const refreshPoolList = async (): Promise<void> => {
+    try {
+      setPoolList(await invoke<any[]>("list_invoice_pool_summary"));
+      markViewLoaded("pool", "pool");
+    } catch (e) {
+      console.error("refresh pool list failed", e);
     }
   };
 
@@ -3630,12 +3684,16 @@ function App() {
   // the filters/search/tab starts back at the first page.
   useEffect(() => { setPoolVisible(150); }, [poolSearch, poolSeller, poolCurrency, poolDateFrom, poolDateTo, poolTab, poolDocFilter, showPool]);
 
-  const loadPool = async () => {
+  const loadPool = async (force = true) => {
+    // Opening the pool again within POOL_FRESH_MS is a no-op: the list and the
+    // cloud state were just read. Local mutations pass force=true.
+    if (!force && isViewFresh("pool", "pool", POOL_FRESH_MS)) return;
     setPoolLoading(true);
     try {
-      await syncPoolRemote();
+      await syncPoolRemote({ force });
       const list = await invoke<any[]>("list_invoice_pool_summary");
       setPoolList(list);
+      markViewLoaded("pool", "pool");
     } catch (e) {
       console.error("list_invoice_pool_summary failed", e);
       setPoolList([]);
@@ -3645,16 +3703,21 @@ function App() {
 
   // Auto-sync the pool whenever a user logs in (or a saved session is restored)
   // so invoices imported on any device reach the cloud without needing to open
-  // the pool modal first. Also refreshes periodically so a device that was
-  // offline (or opened before the cloud was updated) still converges.
+  // the pool modal first. Also refreshes periodically (and when the window
+  // regains focus after being away) so a device that was offline — or opened
+  // before the cloud was updated — still converges. The POOL_SYNC_MIN_MS gate in
+  // syncPoolRemote keeps these from hammering the network.
   const didInitPoolSync = useRef<string | null>(null);
   const poolSyncInFlight = useRef(false);
+  const poolLastSyncRef = useRef(0);
+  const showPoolRef = useRef(false);
+  useEffect(() => { showPoolRef.current = showPool; }, [showPool]);
   useEffect(() => {
     if (!authUser) { didInitPoolSync.current = null; return; }
     if (didInitPoolSync.current === authUser) return;
     didInitPoolSync.current = authUser;
     const run = async () => {
-      try { await syncPoolRemote(); } catch (e) { console.error("auto pool sync failed", e); }
+      try { await syncPoolRemote({ force: true }); } catch (e) { console.error("auto pool sync failed", e); }
     };
     run();
   }, [authUser]);
@@ -3663,8 +3726,16 @@ function App() {
     if (!authUser) return;
     const id = setInterval(() => {
       syncPoolRemote().catch((e) => console.error("periodic pool sync failed", e));
-    }, 60_000);
-    return () => clearInterval(id);
+    }, POOL_SYNC_PERIOD_MS);
+    const onFocus = () => { syncPoolRemote().catch(() => {}); };
+    const onVisible = () => { if (document.visibilityState === "visible") syncPoolRemote().catch(() => {}); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [authUser]);
 
   const openPool = () => {
@@ -3673,7 +3744,7 @@ function App() {
     setPoolSearch("");
     setPoolTab("all");
     setPoolSelected(new Set());
-    loadPool();
+    loadPool(false);
   };
 
   // ── Daily Entries: load / import / sync ────────────────────────────────────
@@ -3712,7 +3783,13 @@ function App() {
   // Reload (debounced) whenever the tab is opened or a query/filter changes.
   useEffect(() => {
     if (tab !== "entries") return;
+    // Reopening the tab with an unchanged query is a no-op within the TTL; any
+    // mutation bumps deRefresh, which changes the key and forces a reload.
+    const key = `${deSearch}|${deSearchIn}|${deDateFrom}|${deDateTo}|${deLimit}|${deRefresh}`;
+    if (isViewFresh("entries", key, ENTRIES_TTL_MS)) return;
     const id = setTimeout(() => {
+      if (isViewFresh("entries", key, ENTRIES_TTL_MS)) return;
+      markViewLoaded("entries", key);
       loadDailyEntries(deSearch, deSearchIn, deDateFrom, deDateTo, deLimit);
       loadDeFiles();
     }, 200);
@@ -3884,7 +3961,8 @@ function App() {
   };
 
   // Load suppliers data whenever the Suppliers tab is opened.
-  const loadSuppliersData = async () => {
+  const loadSuppliersData = async (force = true) => {
+    if (!force && isViewFresh("suppliers", "suppliers", SUPPLIERS_TTL_MS)) return;
     setSuppliersLoading(true);
     try {
       let rows: any[];
@@ -3944,17 +4022,25 @@ function App() {
       console.error("suppliers load failed", e);
     } finally {
       setSuppliersLoading(false);
+      markViewLoaded("suppliers", "suppliers");
     }
   };
+  // Re-sync the supplier directory + cert dates from the cloud and rebuild the
+  // list, but only when the tab is (re)opened after the TTL or the account
+  // changed. Editing a supplier calls loadSuppliersData(true) directly.
+  const suppliersAuthRef = useRef<string | null>(null);
   useEffect(() => {
     // Always refresh the Suppliers view when the tab is opened so a document
     // saved moments ago shows up for its supplier without an app restart.
     // Pull the synced supplier directory + certificate dates first so the list
     // includes entries added on other devices.
     if (tab !== "suppliers") return;
+    const authChanged = suppliersAuthRef.current !== authUser;
+    suppliersAuthRef.current = authUser;
+    if (!authChanged && isViewFresh("suppliers", "suppliers", SUPPLIERS_TTL_MS)) return;
     (async () => {
       await Promise.all([loadManualSuppliers(), loadWhtCerts()]);
-      loadSuppliersData();
+      loadSuppliersData(true);
     })();
   }, [tab, authUser]);
 
@@ -4184,7 +4270,7 @@ function App() {
     setPoolSearch("");
     setPoolTab("all");
     setPoolSelected(new Set());
-    loadPool();
+    loadPool(false);
   };
 
   const poolToImportEntry = (p: any) => {
@@ -5480,8 +5566,8 @@ function App() {
                 </button>
                 <button className="hc-btn" onClick={async () => {
                   setPoolLoading(true);
-                  await syncPoolRemote();
-                  try { setPoolList(await invoke<any[]>("list_invoice_pool_summary")); } catch (e) { console.error(e); }
+                  await syncPoolRemote({ force: true });
+                  await refreshPoolList();
                   setPoolLoading(false);
                 }}>{t("同步云端", "Sync Now")}</button>
                 <span style={{flex:1}} />
