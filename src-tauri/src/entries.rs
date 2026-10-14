@@ -511,6 +511,16 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     conn.execute("CREATE TABLE IF NOT EXISTS daily_meta (k TEXT PRIMARY KEY, v TEXT)", [])
         .map_err(|e| e.to_string())?;
+    // Local tombstones for deleted source files: kept until the remote delete is
+    // confirmed, so a deletion made offline still propagates on the next sync.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS daily_deletions (
+            entry_key TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_source ON daily_entries(source_file)", [])
         .map_err(|e| e.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_doc ON daily_entries(doc_no)", [])
@@ -756,8 +766,18 @@ pub struct DailyEntrySyncRow {
     pub lines_json: String,
     #[serde(default)]
     pub report_date: String,
+    /// Remote tombstone: non-empty means the row was deleted on some device.
+    #[serde(default)]
+    pub deleted_at: String,
     #[serde(default)]
     pub updated_at: String,
+}
+
+/// Timestamps are stored in UTC (RFC 3339) so every device — and Supabase's
+/// `timestamptz` — agree on the instant. Using local time caused comparison
+/// skew across timezones, which made devices miss each other's edits.
+fn now_utc() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Identity of a voucher: the same document can appear in more than one report
@@ -787,8 +807,12 @@ fn report_at_least_as_new(new_report: &str, old_report: &str) -> bool {
 }
 
 fn insert_entry(conn: &Connection, source_file: &str, report_date: &str, e: &ParsedEntry) -> Result<(), String> {
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let now = now_utc();
     let key = entry_key_for(e);
+    // (Re)importing a document clears any tombstone for it, so a previously
+    // deleted entry is not immediately re-deleted by a pending deletion.
+    conn.execute("DELETE FROM daily_deletions WHERE entry_key = ?1", params![key])
+        .map_err(|e| e.to_string())?;
     let lines_json = serde_json::to_string(&e.lines).unwrap_or_else(|_| "[]".into());
     let refs = join_refs(&invoice_refs_of(e));
     let docs = join_refs(&from_documents_of(e));
@@ -910,10 +934,65 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
 }
 
 /// Delete every entry that came from a given source file (used when re-importing
-/// an updated report).
-pub fn delete_source(conn: &Connection, source_file: &str) -> Result<(), String> {
-    conn.execute("DELETE FROM daily_entries WHERE source_file = ?1", params![source_file])
+/// an updated report) and record a tombstone for each so the deletion reaches
+/// the cloud — and from there every other device — even if done offline.
+pub fn delete_source(conn: &Connection, source_file: &str) -> Result<Vec<String>, String> {
+    let now = now_utc();
+    let keys: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT entry_key FROM daily_entries WHERE source_file = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![source_file], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    for k in &keys {
+        tx.execute(
+            "INSERT OR REPLACE INTO daily_deletions (entry_key, deleted_at) VALUES (?1, ?2)",
+            params![k, now],
+        )
         .map_err(|e| e.to_string())?;
+    }
+    tx.execute("DELETE FROM daily_entries WHERE source_file = ?1", params![source_file])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(keys)
+}
+
+/// Tombstones not yet confirmed on the cloud (entry keys + when deleted).
+pub fn pending_deletions(conn: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn
+        .prepare("SELECT entry_key, deleted_at FROM daily_deletions ORDER BY deleted_at")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Drop tombstones once the cloud delete has succeeded.
+pub fn clear_deletions(conn: &Connection, keys: &[String]) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    for k in keys {
+        tx.execute("DELETE FROM daily_deletions WHERE entry_key = ?1", params![k])
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Remove local entries that another device tombstoned in the cloud.
+pub fn apply_deletions(conn: &Connection, keys: &[String]) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    for k in keys {
+        tx.execute("DELETE FROM daily_entries WHERE entry_key = ?1", params![k])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM daily_deletions WHERE entry_key = ?1", params![k])
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1298,7 +1377,7 @@ pub fn list(
 /// Persist an edited set of lines for one entry (used when the user corrects a
 /// rate or an amount).
 pub fn update_lines(conn: &Connection, entry_key: &str, lines_json: &str) -> Result<(), String> {
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let now = now_utc();
     // Recompute the stored (derived) columns from the edited lines. Pairing is
     // NOT re-applied here so the user's edit is authoritative.
     let (source_file, doc_no, serial, doc_date): (String, String, String, String) = conn
@@ -1397,6 +1476,7 @@ pub fn for_sync(conn: &Connection) -> Result<Vec<DailyEntrySyncRow>, String> {
                 from_documents: join_refs(&from_documents_from_lines(&lines)),
                 lines_json,
                 report_date: r.get(17)?,
+                deleted_at: String::new(),
                 updated_at: r.get(18)?,
             })
         })
@@ -1462,6 +1542,7 @@ pub fn for_sync_keys(conn: &Connection, keys: &[String]) -> Result<Vec<DailyEntr
                     from_documents: r.get(15)?,
                     lines_json: r.get(16)?,
                     report_date: r.get(17)?,
+                    deleted_at: String::new(),
                     updated_at: r.get(18)?,
                 })
             })
@@ -1504,6 +1585,7 @@ pub fn for_sync_file(conn: &Connection, source_file: &str) -> Result<Vec<DailyEn
                 from_documents: r.get(15)?,
                 lines_json: r.get(16)?,
                 report_date: r.get(17)?,
+                deleted_at: String::new(),
                 updated_at: r.get(18)?,
             })
         })
@@ -1512,12 +1594,21 @@ pub fn for_sync_file(conn: &Connection, source_file: &str) -> Result<Vec<DailyEn
 }
 
 pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result<(), String> {
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for r in rows {
         // Recompute the key from the document identity so rows pushed by an
         // older app version (keyed by source file) collapse onto one entry.
         let key = format!("{}|{}|{}", r.doc_no, r.serial, r.doc_date);
+        // A tombstone from any device wins: remove the entry locally (and forget
+        // our own tombstone for it) so a deletion propagates instead of the row
+        // being re-pushed by this device.
+        if !r.deleted_at.trim().is_empty() {
+            tx.execute("DELETE FROM daily_entries WHERE entry_key = ?1", params![key])
+                .map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM daily_deletions WHERE entry_key = ?1", params![key])
+                .map_err(|e| e.to_string())?;
+            continue;
+        }
         // Recompute the stored/derived columns (a row pulled from an older
         // app version may not carry them). Pairing is applied so remote rows
         // stored before that fix still reconcile.
@@ -1550,7 +1641,11 @@ pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result
             rusqlite::types::Value::Text(r.report_date.clone()),
         ];
         args.extend(derived_params(&d));
-        args.push(rusqlite::types::Value::Text(now.clone()));
+        // Keep the *remote* timestamp, not local now: overwriting it with the
+        // pull time made the local copy look newer than the cloud and caused
+        // later remote edits to be ignored.
+        args.push(rusqlite::types::Value::Text(r.updated_at.clone()));
+        args.push(rusqlite::types::Value::Text(r.updated_at.clone()));
         tx.execute(
             "INSERT OR REPLACE INTO daily_entries
                 (entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no,
@@ -1717,6 +1812,52 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
         let all = load_all(&conn).unwrap();
         assert_eq!(all.len(), 2, "the same documents must not be duplicated");
         assert!(all.iter().all(|e| e.source_file == "b.pdf"), "newest report should win");
+    }
+
+    #[test]
+    fn deletion_records_tombstones() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        for e in &parse_daily_entries(SAMPLE) {
+            insert_entry(&conn, "a.pdf", "01-01-2026", e).unwrap();
+        }
+        assert_eq!(load_all(&conn).unwrap().len(), 2);
+        let keys = delete_source(&conn, "a.pdf").unwrap();
+        assert_eq!(keys.len(), 2, "deleting a file returns its entry keys");
+        assert_eq!(load_all(&conn).unwrap().len(), 0, "local rows are removed");
+        // Each deletion leaves a tombstone to be pushed, which is dropped once
+        // the cloud delete is confirmed.
+        assert_eq!(pending_deletions(&conn).unwrap().len(), 2);
+        clear_deletions(&conn, &keys).unwrap();
+        assert_eq!(pending_deletions(&conn).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn pull_keeps_remote_timestamp_and_applies_tombstones() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        for e in &parse_daily_entries(SAMPLE) {
+            insert_entry(&conn, "a.pdf", "01-01-2026", e).unwrap();
+        }
+        let mut rows = for_sync_file(&conn, "a.pdf").unwrap();
+        let remote_ts = "2030-05-05T10:00:00.000Z".to_string();
+        for r in &mut rows {
+            r.updated_at = remote_ts.clone();
+        }
+        sync_from_remote(&conn, &rows).unwrap();
+        let meta = local_meta(&conn).unwrap();
+        assert_eq!(meta.len(), 2);
+        assert!(
+            meta.iter().all(|m| m.updated_at == remote_ts),
+            "a pull must keep the remote timestamp, not overwrite it with local now"
+        );
+
+        // A tombstoned remote row removes the local copy.
+        let mut dead = rows[0].clone();
+        dead.deleted_at = "2030-05-05T11:00:00.000Z".into();
+        sync_from_remote(&conn, &[dead.clone()]).unwrap();
+        let keys: Vec<String> = local_meta(&conn).unwrap().into_iter().map(|m| m.entry_key).collect();
+        assert!(!keys.contains(&dead.entry_key), "tombstoned entry must be removed");
     }
 
     #[test]

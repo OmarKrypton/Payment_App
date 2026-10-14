@@ -339,13 +339,19 @@ export async function markPoolsUsedRemote(items: { uuid: string }[], usedByLabel
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   if (items.length === 0) return;
+  // Update each independently: one bad row must not abort the rest, or the
+  // remaining claims silently never reach the cloud (devices then disagree on
+  // how many invoices are claimed).
+  const errors: string[] = [];
   for (const item of items) {
+    if (!item.uuid) continue;
     const { error } = await supabase
       .from("pool_invoices")
       .update({ status: "used", used_by_label: usedByLabel })
       .eq("uuid", item.uuid);
-    if (error) throw error;
+    if (error) errors.push(`${item.uuid}: ${error.message || error}`);
   }
+  if (errors.length > 0) throw new Error(`${errors.length} claim update(s) failed: ${errors[0]}`);
 }
 
 export async function markPoolAvailableRemote(uuid: string): Promise<void> {
@@ -362,13 +368,16 @@ export async function markPoolsAvailableRemote(items: { uuid: string }[]): Promi
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   if (items.length === 0) return;
+  const errors: string[] = [];
   for (const item of items) {
+    if (!item.uuid) continue;
     const { error } = await supabase
       .from("pool_invoices")
       .update({ status: "available", used_by_label: "" })
       .eq("uuid", item.uuid);
-    if (error) throw error;
+    if (error) errors.push(`${item.uuid}: ${error.message || error}`);
   }
+  if (errors.length > 0) throw new Error(`${errors.length} unclaim update(s) failed: ${errors[0]}`);
 }
 
 export async function deletePoolInvoiceRemote(uuid: string): Promise<void> {
@@ -501,7 +510,25 @@ export interface DailyEntrySyncRow {
   invoice_refs: string;
   from_documents: string;
   lines_json: string;
+  deleted_at?: string | null;
   updated_at: string;
+}
+
+// The `deleted_at` tombstone column was added later than the table; until the
+// project runs the ALTER, queries naming it fail. Detect once and fall back so
+// sync keeps working (deletions then simply can't propagate cross-device).
+let cloudHasDailyDeletedAt = true;
+
+function isMissingDeletedAtError(e: any): boolean {
+  const msg = String((e && (e.message ?? e)) || "");
+  return msg.includes("deleted_at");
+}
+
+/** Daily-entry columns that must exist on every row we read. */
+function dailyEntryCols(): string {
+  const base =
+    "entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal, branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents, lines_json, report_date, updated_at";
+  return cloudHasDailyDeletedAt ? `${base}, deleted_at` : base;
 }
 
 export async function upsertDailyEntriesRemote(rows: DailyEntrySyncRow[]): Promise<void> {
@@ -509,11 +536,22 @@ export async function upsertDailyEntriesRemote(rows: DailyEntrySyncRow[]): Promi
   if (!session) throw new Error("Not authenticated");
   if (rows.length === 0) return;
   const PAGE = 50;
+  const map = (r: DailyEntrySyncRow) => ({
+    ...r,
+    // A direct push (import or an edit) resurrects the entry: clear any tombstone.
+    deleted_at: cloudHasDailyDeletedAt ? null : undefined,
+    user_id: session.user.id,
+  });
   for (let i = 0; i < rows.length; i += PAGE) {
-    const chunk = rows.slice(i, i + PAGE).map((r) => ({ ...r, user_id: session.user.id }));
-    const { error } = await supabase
+    const chunk = rows.slice(i, i + PAGE).map(map);
+    let { error } = await supabase
       .from("daily_entries")
       .upsert(chunk, { onConflict: "entry_key" });
+    if (error && cloudHasDailyDeletedAt && isMissingDeletedAtError(error)) {
+      cloudHasDailyDeletedAt = false;
+      const retry = chunk.map(({ deleted_at, ...rest }: any) => ({ ...rest, user_id: session.user.id }));
+      ({ error } = await supabase.from("daily_entries").upsert(retry, { onConflict: "entry_key" }));
+    }
     if (error) throw error;
   }
 }
@@ -521,36 +559,85 @@ export async function upsertDailyEntriesRemote(rows: DailyEntrySyncRow[]): Promi
 export async function listDailyEntriesRemote(): Promise<DailyEntrySyncRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const COLS =
-    "entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal, branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents, lines_json, report_date, updated_at";
-  const build = (from: number, to: number) =>
+  const build = (from: number, to: number): PromiseLike<any[]> =>
     supabase
       .from("daily_entries")
-      .select(COLS)
+      .select(dailyEntryCols())
       .order("doc_date", { ascending: true })
       .range(from, to)
       .then(({ data, error }) => {
         if (error) throw error;
-        return data;
+        return (data || []) as any[];
       });
-  return fetchAllPooled(build, 500);
+  return fetchAllPooled<any>(build, 500) as Promise<DailyEntrySyncRow[]>;
 }
 
-/** Keys + updated_at only (no lines_json) so the UI can decide what to pull. */
-export async function listDailyEntriesRemoteMeta(): Promise<{ entry_key: string; updated_at: string }[]> {
+/** Keys + timestamps only (no lines_json) so the UI can decide what to pull. */
+export async function listDailyEntriesRemoteMeta(): Promise<
+  { entry_key: string; updated_at: string; deleted_at?: string | null }[]
+> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const build = (from: number, to: number) =>
-    supabase
+  const build = (from: number, to: number) => {
+    const cols = cloudHasDailyDeletedAt ? "entry_key, updated_at, deleted_at" : "entry_key, updated_at";
+    return supabase
       .from("daily_entries")
-      .select("entry_key, updated_at")
+      .select(cols)
       .order("updated_at", { ascending: true })
       .range(from, to)
       .then(({ data, error }) => {
-        if (error) throw error;
+        if (error) {
+          if (cloudHasDailyDeletedAt && isMissingDeletedAtError(error)) {
+            cloudHasDailyDeletedAt = false;
+            return supabase
+              .from("daily_entries")
+              .select("entry_key, updated_at")
+              .order("updated_at", { ascending: true })
+              .range(from, to)
+              .then((r2: any) => {
+                if (r2.error) throw r2.error;
+                return r2.data;
+              });
+          }
+          throw error;
+        }
         return data;
       });
-  return fetchAllPooled(build, 1000);
+  };
+  return fetchAllPooled(build, 1000) as Promise<
+    { entry_key: string; updated_at: string; deleted_at?: string | null }[]
+  >;
+}
+
+/**
+ * Cheap change token for the whole shared store: row count, newest `updated_at`
+ * and the number of tombstones. If it is unchanged since the last sync there is
+ * nothing to pull, so the (much larger) per-key metadata fetch can be skipped.
+ */
+export async function dailyEntriesSyncToken(): Promise<string> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const { count, error } = await supabase
+    .from("daily_entries")
+    .select("entry_key", { count: "exact", head: true });
+  if (error) throw error;
+  const { data, error: e2 } = await supabase
+    .from("daily_entries")
+    .select("updated_at")
+    .order("updated_at", { ascending: false })
+    .limit(1);
+  if (e2) throw e2;
+  let deletedCount = 0;
+  if (cloudHasDailyDeletedAt) {
+    const r = await supabase
+      .from("daily_entries")
+      .select("entry_key", { count: "exact", head: true })
+      .not("deleted_at", "is", null);
+    if (r.error && isMissingDeletedAtError(r.error)) cloudHasDailyDeletedAt = false;
+    else if (r.error) throw r.error;
+    else deletedCount = r.count ?? 0;
+  }
+  return `${count ?? 0}|${data?.[0]?.updated_at ?? ""}|${deletedCount}`;
 }
 
 /** Full rows for just the given keys (chunked), used to pull only what's new. */
@@ -558,17 +645,53 @@ export async function listDailyEntriesRemoteByKeys(keys: string[]): Promise<Dail
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   if (keys.length === 0) return [];
-  const COLS =
-    "entry_key, source_file, source_page, pages, doc_no, serial, doc_date, journal_no, journal, branch, doc_source, contain_currency, local_amt, total_value, invoice_refs, from_documents, lines_json, report_date, updated_at";
   const all: DailyEntrySyncRow[] = [];
   const PAGE = 200;
   for (let i = 0; i < keys.length; i += PAGE) {
     const chunk = keys.slice(i, i + PAGE);
-    const { data, error } = await supabase.from("daily_entries").select(COLS).in("entry_key", chunk);
+    let { data, error }: any = await supabase.from("daily_entries").select(dailyEntryCols()).in("entry_key", chunk);
+    if (error && cloudHasDailyDeletedAt && isMissingDeletedAtError(error)) {
+      cloudHasDailyDeletedAt = false;
+      ({ data, error } = await supabase
+        .from("daily_entries")
+        .select(dailyEntryCols())
+        .in("entry_key", chunk));
+    }
     if (error) throw error;
     if (data) all.push(...(data as DailyEntrySyncRow[]));
   }
   return all;
+}
+
+/**
+ * Tombstone the given entries in the cloud. Soft-delete (rather than a hard
+ * delete) is what lets every other device learn the entry is gone and stops it
+ * from being re-uploaded. Falls back to a hard delete if the column is absent.
+ */
+export async function softDeleteDailyEntriesRemoteByKeys(keys: string[]): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (keys.length === 0) return;
+  const PAGE = 200;
+  for (let i = 0; i < keys.length; i += PAGE) {
+    const chunk = keys.slice(i, i + PAGE);
+    if (cloudHasDailyDeletedAt) {
+      const { error } = await supabase
+        .from("daily_entries")
+        .update({ deleted_at: new Date().toISOString() })
+        .in("entry_key", chunk);
+      if (error && isMissingDeletedAtError(error)) {
+        cloudHasDailyDeletedAt = false;
+      } else if (error) {
+        throw error;
+      } else {
+        continue;
+      }
+    }
+    // Fallback: hard delete (works before the tombstone column exists).
+    const { error } = await supabase.from("daily_entries").delete().in("entry_key", chunk);
+    if (error) throw error;
+  }
 }
 
 export async function deleteDailyEntriesRemote(sourceFile: string): Promise<void> {

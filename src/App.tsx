@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, deleteDailyEntriesRemote } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -3572,13 +3572,22 @@ function App() {
       });
       info.pushed = toPush.length;
       if (toPush.length > 0) {
-        try {
+        const pushOnce = async () => {
           // Fetch the full rows (with raw_xml/lines_json) only for what we push,
           // instead of shipping the whole pool into the UI.
           const uuids = toPush.map((l: any) => l.uuid).filter(Boolean);
           const full = await invoke<any[]>("get_pool_invoices_by_uuids", { uuids });
           await upsertPoolInvoicesRemote(full);
-        } catch (e) { console.error("upsert pool remote failed", e); info.error = `upsert: ${(e as any)?.message || e}`; }
+        };
+        try {
+          await pushOnce();
+        } catch (e) {
+          console.error("upsert pool remote failed", e);
+          // Retry once before pulling: otherwise the pull could overwrite the
+          // local claims the failed push never delivered.
+          try { await pushOnce(); }
+          catch (e2) { info.error = `upsert: ${(e2 as any)?.message || e2}`; }
+        }
       }
       // 1b) Drop cloud rows that still carry a synthetic uuid for a document we
       //     now hold locally under its real uuid, so they stop reappearing as
@@ -3592,24 +3601,32 @@ function App() {
         try { await deletePoolInvoiceRemote(r.uuid); purgedSynthetic.add(r.uuid); }
         catch (e) { console.error("pool synthetic cleanup failed", e); }
       }
-      // 2) Pull only the remote rows that differ from local state (missing
-      //    locally, or claim state changed). This avoids re-downloading the
-      //    entire pool (with full raw_xml) on every sync, which was slowing
-      //    the app down as the pool grew.
-      const localByUuid = new Map(localAll.map((l) => [l.uuid, l]));
-      const changedRemote = remoteMeta.filter((r) => {
-        if (purgedSynthetic.has(r.uuid)) return false;
-        const l = r.uuid ? localByUuid.get(r.uuid) : undefined;
-        if (!l) return true;
-        return (l.status || "available") !== (r.status || "available") ||
-               (l.used_by_label || "") !== (r.used_by_label || "") ||
-               (l.doc_status || "Valid") !== (r.doc_status || "Valid");
-      });
-      const remote = changedRemote.length > 0 ? await listPoolRemoteByIds(changedRemote.map((r) => r.uuid)) : [];
-      info.cloud = remoteMeta.length;
-      info.pulled = remote.length;
-      if (remote.length > 0) {
-        const mapped = remote.map((r: any) => ({
+      // 2) Pull the remote rows that differ from local state (missing locally,
+      //    or claim state changed), then run a second verification pass. Every
+      //    fetch/apply is isolated so one failure can no longer strand the rest
+      //    — which is what made devices disagree on the claimed-invoice count.
+      const applied = new Set<string>();
+      const applyPull = async (): Promise<void> => {
+        const localNow = await invoke<any[]>("list_invoice_pool_summary");
+        const localByUuid = new Map(localNow.map((l) => [l.uuid, l]));
+        const changed = remoteMeta.filter((r) => {
+          if (purgedSynthetic.has(r.uuid) || applied.has(r.uuid)) return false;
+          const l = r.uuid ? localByUuid.get(r.uuid) : undefined;
+          if (!l) return true;
+          return (l.status || "available") !== (r.status || "available") ||
+                 (l.used_by_label || "") !== (r.used_by_label || "") ||
+                 (l.doc_status || "Valid") !== (r.doc_status || "Valid");
+        });
+        if (changed.length === 0) return;
+        let fetched: any[] = [];
+        try {
+          fetched = await listPoolRemoteByIds(changed.map((r) => r.uuid));
+        } catch (e) {
+          console.error("pool pull fetch failed", e);
+          info.error = `pull: ${(e as any)?.message || e}`;
+          return;
+        }
+        const mapped = fetched.map((r: any) => ({
           invoice_id: r.invoice_id,
           uuid: r.uuid || "",
           seller_tax_id: r.seller_tax_id || "",
@@ -3640,9 +3657,21 @@ function App() {
         const PAGE = 10;
         for (let i = 0; i < mapped.length; i += PAGE) {
           const chunk = mapped.slice(i, i + PAGE);
-          await invoke("sync_pool_from_remote", { invoices: chunk });
+          try {
+            await invoke("sync_pool_from_remote", { invoices: chunk });
+            for (const c of chunk) applied.add(c.uuid);
+          } catch (e) {
+            console.error("pool pull apply failed", e);
+            info.error = `apply: ${(e as any)?.message || e}`;
+          }
         }
-      }
+      };
+      await applyPull();
+      // Second pass is a cheap no-op once converged; it retries anything a
+      // transient failure left behind.
+      await applyPull();
+      info.cloud = remoteMeta.length;
+      info.pulled = applied.size;
       // 3) Clean up claims that have no serial. A "used" row without a serial
       //    label is meaningless (the serial links the invoice to a document),
       //    so downgrade them to available locally AND in the cloud so stale
@@ -3796,52 +3825,89 @@ function App() {
     return () => clearTimeout(id);
   }, [tab, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries, loadDeFiles]);
 
-  // On first open, sync both ways with the shared cloud store using only
-  // metadata (keys + updated_at), then download/push just what changed — so we
-  // never re-download every entry's `lines_json` on each session.
-  const dePulledRef = useRef(false);
+  // Two-way sync with the shared cloud store. Runs while the Daily Entries tab
+  // is open (and periodically), so edits/deletions made on another device appear
+  // without restarting. A cheap change token skips the larger per-key metadata
+  // fetch when the cloud is unchanged, and pending deletions are flushed first.
+  const deSyncRef = useRef<{ token: string; at: number } | null>(null);
+  const deSyncingRef = useRef(false);
   useEffect(() => {
-    if (tab !== "entries" || !authUser || dePulledRef.current) return;
-    dePulledRef.current = true;
-    (async () => {
-      setDeSyncing(true);
+    if (tab !== "entries" || !authUser) return;
+    let cancelled = false;
+    const ts = (s: any) => {
+      const t = Date.parse(String(s || "").replace(" ", "T"));
+      return isFinite(t) ? t : 0;
+    };
+    const run = async () => {
+      if (deSyncingRef.current) return;
+      deSyncingRef.current = true;
       try {
+        // 1) Propagate locally-made deletions to the cloud first. Keys still
+        //    pending a confirmed delete are never pulled back, so a deletion
+        //    can't be undone by the device that made it.
+        const pending: [string, string][] = await invoke("daily_pending_deletions");
+        const pendingKeys = new Set(pending.map((p) => p[0]));
+        if (pending.length > 0) {
+          try {
+            await softDeleteDailyEntriesRemoteByKeys(pending.map((p) => p[0]));
+            await invoke("clear_daily_entry_deletions", { keys: pending.map((p) => p[0]) });
+          } catch (e) {
+            console.error("flush daily deletions failed", e);
+          }
+        }
+        const token = await dailyEntriesSyncToken();
+        const last = deSyncRef.current;
+        if (last && last.token === token) return; // cloud unchanged since last sync
+        setDeSyncing(true);
         const [remoteMeta, localMeta] = await Promise.all([
           listDailyEntriesRemoteMeta(),
           invoke<any[]>("daily_entries_local_meta"),
         ]);
-        const remoteUpdated = new Map<string, string>(remoteMeta.map((r: any) => [r.entry_key, r.updated_at]));
         const localUpdated = new Map<string, string>(localMeta.map((m: any) => [m.entry_key, m.updated_at]));
-        const ts = (s: any) => {
-          const t = Date.parse(String(s || "").replace(" ", "T"));
-          return isFinite(t) ? t : 0;
-        };
-        // Pull: remote rows missing locally, or newer than the local copy.
-        const toPull = remoteMeta
-          .filter((r: any) => {
-            const lu = localUpdated.get(r.entry_key);
-            return lu == null || ts(r.updated_at) > ts(lu) + 5000;
-          })
-          .map((r: any) => r.entry_key);
+        // Tombstones from any device always win.
+        const deletedKeys = remoteMeta.filter((r: any) => r.deleted_at).map((r: any) => r.entry_key);
+        const deletedSet = new Set(deletedKeys);
+        const skip = new Set<string>([...deletedSet, ...pendingKeys]);
+        if (deletedKeys.length) {
+          await invoke("apply_daily_entry_deletions", { keys: deletedKeys });
+        }
+        // Last-write-wins per entry. Timestamps are UTC, so a small tolerance
+        // absorbs device clock skew and Postgres' timestamp formatting.
+        const liveMeta = remoteMeta.filter((r: any) => !r.deleted_at && !skip.has(r.entry_key));
+        const remoteKeys = new Set(liveMeta.map((r: any) => r.entry_key));
+        const toPull: string[] = [];
+        const toPush: string[] = [];
+        for (const r of liveMeta) {
+          const lu = localUpdated.get(r.entry_key);
+          if (lu == null) { toPull.push(r.entry_key); continue; }
+          const d = ts(r.updated_at) - ts(lu);
+          if (d > 1500) toPull.push(r.entry_key);
+          else if (d < -1500) toPush.push(r.entry_key);
+        }
+        // Local rows the cloud has never seen (and isn't tombstoning).
+        for (const m of localMeta) {
+          if (m.entry_key && !remoteKeys.has(m.entry_key) && !skip.has(m.entry_key)) toPush.push(m.entry_key);
+        }
         if (toPull.length > 0) {
           const rows = await listDailyEntriesRemoteByKeys(toPull);
           if (rows.length) await invoke("sync_daily_entries_from_remote", { rows });
         }
-        // Push: local rows the cloud doesn't have yet.
-        const toPushKeys = localMeta
-          .filter((m: any) => m.entry_key && !remoteUpdated.has(m.entry_key))
-          .map((m: any) => m.entry_key);
-        if (toPushKeys.length > 0) {
-          const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: toPushKeys });
+        if (toPush.length > 0) {
+          const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: toPush });
           if (rows.length) await upsertDailyEntriesRemote(rows);
         }
-        if (toPull.length > 0 || toPushKeys.length > 0) setDeRefresh(v => v + 1);
+        deSyncRef.current = { token, at: Date.now() };
+        if (deletedKeys.length > 0 || toPull.length > 0 || toPush.length > 0) setDeRefresh(v => v + 1);
       } catch (e) {
         console.error("daily entries sync failed", e);
       } finally {
-        setDeSyncing(false);
+        deSyncingRef.current = false;
+        if (!cancelled) setDeSyncing(false);
       }
-    })();
+    };
+    run();
+    const id = setInterval(run, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
   }, [tab, authUser]);
 
   // Position the "Files" dropdown as a fixed portal and close it on outside
@@ -3908,8 +3974,18 @@ function App() {
 
   const removeDailyEntryFile = async (file: string) => {
     try {
-      await invoke("delete_daily_entry_file", { sourceFile: file });
-      if (authUser) { try { await deleteDailyEntriesRemote(file); } catch {} }
+      // The command records a local tombstone and returns the removed entry
+      // keys, so the deletion can be propagated (soft-deleted) to the cloud.
+      const keys: string[] = await invoke("delete_daily_entry_file", { sourceFile: file });
+      if (authUser && keys.length > 0) {
+        try {
+          await softDeleteDailyEntriesRemoteByKeys(keys);
+          await invoke("clear_daily_entry_deletions", { keys });
+        } catch (e) {
+          // Kept as a pending tombstone; flushed on the next sync.
+          console.error("daily entries remote delete failed", e);
+        }
+      }
       await loadDeFiles();
       setDeRefresh(v => v + 1);
     } catch (e: any) {

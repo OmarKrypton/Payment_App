@@ -27,17 +27,24 @@ create table if not exists public.daily_entries (
   from_documents text not null default '',
   lines_json text not null default '[]',
   report_date text not null default '',
+  -- Tombstone: set when the source file is deleted so every device removes the
+  -- entry instead of re-uploading it. Null/absent means the entry is live.
+  deleted_at timestamptz,
   updated_at timestamptz not null default now(),
   user_id uuid
 );
 
--- Older installs created the table before report_date existed; add it too.
+-- Older installs created the table before these columns existed; add them too.
 alter table public.daily_entries
   add column if not exists report_date text not null default '';
+
+alter table public.daily_entries
+  add column if not exists deleted_at timestamptz;
 
 create index if not exists idx_daily_entries_source on public.daily_entries (source_file);
 create index if not exists idx_daily_entries_doc on public.daily_entries (doc_no);
 create index if not exists idx_daily_entries_date on public.daily_entries (doc_date);
+create index if not exists idx_daily_entries_deleted on public.daily_entries (deleted_at);
 
 alter table public.daily_entries enable row level security;
 

@@ -427,10 +427,34 @@ fn sync_daily_entries_from_remote(state: tauri::State<'_, DbState>, rows: Vec<en
 }
 
 #[tauri::command]
-fn delete_daily_entry_file(state: tauri::State<'_, DbState>, source_file: String) -> Result<(), String> {
+fn delete_daily_entry_file(state: tauri::State<'_, DbState>, source_file: String) -> Result<Vec<String>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     entries::delete_source(conn, &source_file)
+}
+
+/// Entry keys deleted locally but not yet confirmed on the cloud (survives
+/// restarts, so an offline deletion still propagates).
+#[tauri::command(async)]
+fn daily_pending_deletions(state: tauri::State<'_, DbState>) -> Result<Vec<(String, String)>, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::pending_deletions(conn)
+}
+
+#[tauri::command]
+fn clear_daily_entry_deletions(state: tauri::State<'_, DbState>, keys: Vec<String>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::clear_deletions(conn, &keys)
+}
+
+/// Apply tombstones pulled from the cloud: drop the local copies.
+#[tauri::command]
+fn apply_daily_entry_deletions(state: tauri::State<'_, DbState>, keys: Vec<String>) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    entries::apply_deletions(conn, &keys)
 }
 
 #[tauri::command]
@@ -597,6 +621,9 @@ pub fn run() {
             update_daily_entry_lines,
             sync_daily_entries_from_remote,
             delete_daily_entry_file,
+            daily_pending_deletions,
+            clear_daily_entry_deletions,
+            apply_daily_entry_deletions,
             clear_daily_entries,
             get_pdf_tools,
             set_pdf_tool_path,
