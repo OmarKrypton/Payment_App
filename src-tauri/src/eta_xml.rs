@@ -403,16 +403,19 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
     let mut matched_entry_indices: Vec<usize> = Vec::new();
 
     // ── Currency alignment ──
-    // The invoice amounts are stored in the sold currency (e.g. USD) while the
-    // form amounts are entered in EGP. For foreign-currency sales invoices, use
-    // the exchange rate typed in the import document to convert the invoice back
-    // to EGP before comparison, so validation matches the same EGP figures.
+    // The invoice is stored in its sold currency (e.g. USD), and the Import tab
+    // keeps that invoice's EGP figures converted with the exchange rate typed in
+    // the document. Only the Import tab has such a rate, so only convert there.
+    // The Bank tab stores each invoice in its own currency (the pool's amount is
+    // the sold-currency figure), so compare the invoice's sold-currency amounts
+    // directly — converting with a document rate would use a different rate and
+    // report false mismatches for USD invoices.
     let imported_rate = get_str("import_commercial_rate")
         .chars().filter(|c| !c.is_whitespace()).collect::<String>()
         .replace(',', "")
         .parse::<f64>()
         .unwrap_or(0.0);
-    let fx_factor = if invoice.currency != "EGP" && imported_rate > 0.0 {
+    let fx_factor = if doc_type == "import" && invoice.currency != "EGP" && imported_rate > 0.0 {
         imported_rate
     } else {
         1.0
@@ -893,6 +896,48 @@ mod tests {
         let res = validate_eta_against_form(&inv, form_json).unwrap();
         assert_eq!(res.matched_entry_indices, vec![0, 1], "both entries reference invoice 0205 ADT");
         assert!(res.is_valid, "totals match the sum of both entries: {:#?}", res.issues);
+    }
+
+    #[test]
+    fn bank_compares_usd_invoice_in_sold_currency() {
+        // A USD invoice (sold at 50 EGP/USD) attached to a Bank document must be
+        // compared in USD, ignoring any import rate on the form.
+        let xml = r#"<document>
+  <internalId>T-USD-1</internalId>
+  <issuerId>111111111</issuerId><receiverId>222222222</receiverId>
+  <netAmount>5000</netAmount><total>5700</total>
+  <document>
+    {"invoiceLines":[{"description":"A","quantity":1,
+       "unitValue":{"currencySold":"USD","currencyExchangeRate":50,"amountSold":100,"amountEGP":5000}}],
+     "taxTotals":[{"taxType":"T1","amount":700}],
+     "netAmount":5000,"totalAmount":5700}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.currency, "USD");
+        assert_eq!(inv.net_amount, 100.0);
+        assert_eq!(inv.grand_total, 114.0);
+
+        // Bank form stores the invoice amount in its own (USD) currency; the
+        // import rate present on the form must NOT be applied.
+        let bank_form = r#"{
+            "doc_type": "bank",
+            "import_commercial_rate": "50",
+            "invoices": [{"invoice_no": "T-USD-1", "seller_tax_id": "111111111", "amount": "100"}]
+        }"#;
+        let res = validate_eta_against_form(&inv, bank_form).unwrap();
+        assert!(res.is_valid, "USD invoice should match in sold currency: {:#?}", res.issues);
+
+        // Import form still converts with the document rate.
+        let import_form = r#"{
+            "doc_type": "import",
+            "import_commercial_rate": "50",
+            "import_entries": [
+                {"service_name": "Service Inv: T-USD-1", "amount": "100", "rate": "50", "vat_rate": "14%", "wht_rate": "0%", "free_wht": true}
+            ]
+        }"#;
+        let res2 = validate_eta_against_form(&inv, import_form).unwrap();
+        assert!(res2.is_valid, "import doc should convert to EGP at the document rate: {:#?}", res2.issues);
     }
 
     #[test]
