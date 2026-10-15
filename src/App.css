@@ -2618,6 +2618,27 @@ body {
 .history-modal .date-field:hover { transform: translateY(-1px); border-color: rgba(199, 210, 254, 0.95); color: var(--text-primary); }
 .history-modal .date-field .cal { flex: none; width: 13px; height: 13px; color: var(--text-muted); }
 .history-modal .date-field .date-native { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; }
+/* Pool filters: one row, every control stretched to an equal share of the width */
+.history-modal .pool-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.history-modal .pool-filterbar > .fsel,
+.history-modal .pool-filterbar > .date-field-wrap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.history-modal .pool-filterbar .fsel .fsel-btn,
+.history-modal .pool-filterbar .date-field {
+  width: 100%;
+  min-width: 0;
+}
+.history-modal .pool-filterbar > .pool-filter-reset {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .pool-selected { display: flex; align-items: center; gap: 8px; }
 .pool-list { display: flex; flex-direction: column; gap: 8px; }
 .hc-row { display: flex; align-items: flex-start; gap: 9px; }
@@ -2905,6 +2926,31 @@ body {
 }
 .suppliers-tab .supplier-vat-row:hover::after,
 .suppliers-tab .supplier-stat:hover::after { opacity: 1; }
+
+/* Suppliers header now mirrors Daily Entries: an icon badge + title, then the
+   stats row. The search moved into a sticky toolbar below the header. */
+.suppliers-title-row { display: flex; align-items: center; gap: 12px; }
+.suppliers-glyph {
+  width: 40px; height: 40px; border-radius: 12px; flex: none;
+  display: grid; place-items: center; color: #0e7490;
+  background: linear-gradient(180deg, rgba(165, 243, 252, 0.9), rgba(34, 211, 238, 0.35));
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 4px 12px rgba(8, 145, 178, 0.22);
+}
+.suppliers-title-text { min-width: 0; }
+.suppliers-title-text h2 { font-size: 15px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.01em; }
+.suppliers-title-text .suppliers-tagline { font-size: 11px; margin-top: 2px; }
+.suppliers-toolbar {
+  position: sticky; top: 0; z-index: 6;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.62));
+  -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+.suppliers-toolbar .suppliers-search { flex: 1; }
+.suppliers-toolbar .hc-btn { flex: none; padding: 8px 14px; font-size: 12px; }
 
 /* ── Daily Entries tab: History-style glass revamp ── */
 .entries-tab { display: flex; flex-direction: column; gap: 12px; }

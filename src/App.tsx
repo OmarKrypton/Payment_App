@@ -373,7 +373,10 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   const bumpVat = (a: Acc, rate: string, kind: string) => {
     const r = (rate || "0%").trim();
     const pct = parseFloat(r.replace('%', '')) || 0;
-    if (pct <= 0) return;
+    // Real ETA VAT rates are 0–100%. Nonsense values come from deriving a rate
+    // off a meaningless base (e.g. a 0.01 "fees" invoice whose VAT is a fixed
+    // amount → 6,500,000%); such values must never be shown as a rate.
+    if (pct <= 0 || pct > 100) return;
     if (!a.vat[r]) a.vat[r] = new Map();
     a.vat[r].set(kind, (a.vat[r].get(kind) || 0) + 1);
   };
@@ -1060,7 +1063,6 @@ function App() {
   const [poolSyncInfo, setPoolSyncInfo] = useState<{ ok: boolean; local: number; cloud: number; pushed: number; pulled: number; error?: string }>({ ok: true, local: 0, cloud: 0, pushed: 0, pulled: 0 });
   const [poolSearch, setPoolSearch] = useState("");
   const [poolTab, setPoolTab] = useState<"all" | "unclaimed" | "claimed">("all");
-  const [poolMode, setPoolMode] = useState<"validate" | "select">("validate");
   const [poolSelected, setPoolSelected] = useState<Set<number>>(new Set());
   const [poolDateFrom, setPoolDateFrom] = useState("");
   const [poolDateTo, setPoolDateTo] = useState("");
@@ -2261,34 +2263,36 @@ function App() {
     return (
       <div className="suppliers-tab">
         <div className="card suppliers-header">
-          <div className="suppliers-header-top">
-            <div>
-              <h3>{t("供应商概览", "Suppliers Overview")}</h3>
+          <div className="suppliers-title-row">
+            <div className="suppliers-glyph"><IconUsers size={20} /></div>
+            <div className="suppliers-title-text">
+              <h2>{t("供应商概览", "Suppliers Overview")}</h2>
               <p className="suppliers-tagline">{t("各供应商的税率情况与 WHT 状态，来自已保存文档和发票池", "VAT by item type and WHT status per supplier, derived from saved documents and the invoice pool")}</p>
             </div>
-            <div className="suppliers-stats">
-              <span className="supplier-stat">{supplierData.length} {t("供应商", "Suppliers")}</span>
-              <span className="supplier-stat">{totalDocs} {t("文档", "docs")}</span>
-              {whtFreeCount > 0 && <span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span>}
-              {withholdingCount > 0 && <span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span>}
-              {certsToRenew > 0 && <span className="supplier-stat bad">{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</span>}
-              {unknownCount > 0 && <span className="supplier-stat warn">{unknownCount} {t("未命名", "unnamed")}</span>}
-            </div>
           </div>
-          <div className="suppliers-header-tools">
-            <div className="suppliers-search">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-              <input
-                className="field-input"
-                placeholder={t("搜索税号或公司名称...", "Search tax ID or company name...")}
-                value={supplierSearch}
-                onChange={e => setSupplierSearch(e.target.value)}
-              />
-            </div>
-            <button className="hc-btn pri" onClick={() => setSupplierEditor({ taxId: "", name: "" })}>
-              + {t("添加供应商", "Add Supplier")}
-            </button>
+          <div className="suppliers-stats">
+            <span className="supplier-stat">{supplierData.length} {t("供应商", "Suppliers")}</span>
+            <span className="supplier-stat">{totalDocs} {t("文档", "docs")}</span>
+            {whtFreeCount > 0 && <span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span>}
+            {withholdingCount > 0 && <span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span>}
+            {certsToRenew > 0 && <span className="supplier-stat bad">{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</span>}
+            {unknownCount > 0 && <span className="supplier-stat warn">{unknownCount} {t("未命名", "unnamed")}</span>}
           </div>
+        </div>
+
+        <div className="suppliers-toolbar">
+          <div className="suppliers-search">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+            <input
+              className="field-input"
+              placeholder={t("搜索税号或公司名称...", "Search tax ID or company name...")}
+              value={supplierSearch}
+              onChange={e => setSupplierSearch(e.target.value)}
+            />
+          </div>
+          <button className="hc-btn pri" onClick={() => setSupplierEditor({ taxId: "", name: "" })}>
+            + {t("添加供应商", "Add Supplier")}
+          </button>
         </div>
 
         {suppliersLoading ? (
@@ -3309,31 +3313,6 @@ function App() {
     loadHistoryList(historySearch);
   };
 
-  const attachValidatedInvoices = async (results: any[]) => {
-    await ensureDraftNo();
-    const serial = currentClaimLabel();
-    const updated = [...(formRef.current.import_entries ?? [])];
-    for (const r of results) {
-      const indices: number[] = Array.isArray(r.matched_entry_indices)
-        ? r.matched_entry_indices
-        : r.matched_entry_index != null ? [r.matched_entry_index] : [];
-      if (r.is_valid && indices.length > 0) {
-        for (const idx of indices) {
-          if (updated[idx] && !updated[idx].attached_invoice) {
-            updated[idx] = { ...updated[idx], attached_invoice: r.invoice.invoice_id, seller_tax_id: r.invoice.seller_tax_id || updated[idx].seller_tax_id || "", attached_uuid: r.invoice.uuid };
-          }
-        }
-        try { if (r.pool_id) await invoke("mark_pool_invoice_used", { id: r.pool_id, snapshotId: 0, snapshotLabel: serial }); } catch {}
-        try { if (authUser) await markPoolUsedRemote(r.invoice.uuid, serial); } catch (e) { console.error("markPoolUsedRemote failed", e); }
-      }
-    }
-    if (updated.some((e, i) => e && e.attached_invoice !== (formRef.current.import_entries ?? [])[i]?.attached_invoice)) {
-      formRef.current = { ...formRef.current, import_entries: updated };
-      await recalc(formRef.current);
-    }
-    try { await loadPool(); } catch {}
-  };
-
   // Non-destructive: keep the form consistent with the pool by showing a pill on
   // any service whose name references an invoice already marked "used" in the pool.
   // It never changes pool status, so invoices stay used across documents.
@@ -3768,7 +3747,6 @@ function App() {
   }, [authUser]);
 
   const openPool = () => {
-    setPoolMode("validate");
     setShowPool(true);
     setPoolSearch("");
     setPoolTab("all");
@@ -4341,7 +4319,6 @@ function App() {
   }
 
   const openPoolForSelect = () => {
-    setPoolMode("select");
     setShowPool(true);
     setPoolSearch("");
     setPoolTab("all");
@@ -4765,24 +4742,6 @@ function App() {
   const isInvoiceUsable = (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
     return !p || !p.doc_status || p.doc_status === "Valid";
-  };
-
-  const validateFromPool = async (ids: number[]) => {
-    const unusable = ids.filter(id => !isInvoiceUsable(id));
-    if (unusable.length > 0) {
-      const labels = unusable.map(id => { const p = poolList.find((x: any) => x.id === id); return p?.invoice_id || id; });
-      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${labels.join(", ")}`);
-      return;
-    }
-    try {
-      const formJson = JSON.stringify(formRef.current);
-      const result = await invoke<any[]>("validate_from_pool", { ids, formJson });
-      await attachValidatedInvoices(result);
-      showEtaResults(result);
-      setShowPool(false);
-    } catch (e: any) {
-      showAlert(`${t("验证失败", "Validation failed")}: ${e.message || e}`);
-    }
   };
 
   const showEtaResults = (results: any[]) => {
@@ -5682,11 +5641,9 @@ function App() {
                   </div>
                 );
               })()}
-              {poolMode === 'select' && (
-                <div className="pool-hint">
-                  {t("选择要附加到本文档的发票（点击“添加”将其加入发票列表并标记为已认领）", "Select invoices to attach to this document. Click \"Add\" to include them in the invoice list and mark them as claimed.")}
-                </div>
-              )}
+              <div className="pool-hint">
+                {t("选择要附加到本文档的发票（点击“添加”将其加入发票列表并标记为已认领）", "Select invoices to attach to this document. Click \"Add\" to include them in the invoice list and mark them as claimed.")}
+              </div>
               <input
                 className="field-input"
                 style={{width:'100%', boxSizing:'border-box'}}
@@ -5751,27 +5708,20 @@ function App() {
                     </div>
                     {selectedIds.length > 0 && (
                       <div className="pool-selected">
-                        {poolMode === 'validate' ? (
-                          <button className="hc-btn pri" onClick={() => validateFromPool(selectedIds)}>
-                            {t("验证选中", "Validate Selected")} ({selectedIds.length})
-                          </button>
-                        ) : (
-                          <button className="hc-btn pri" onClick={() => attachBatchFromPool(selectedIds)}>
-                            {t("添加选中", "Attach Selected")} ({selectedIds.length})
-                          </button>
-                        )}
+                        <button className="hc-btn pri" onClick={() => attachBatchFromPool(selectedIds)}>
+                          {t("添加选中", "Attach Selected")} ({selectedIds.length})
+                        </button>
                       </div>
                     )}
                     {poolTab !== 'claimed' && (
                       <div className="pool-filterbar">
                         <GlassSelect value={poolCurrency} allLabel={t("所有货币", "All currencies")} options={currencies.map(c => ({ value: c, label: c }))} onChange={setPoolCurrency} />
                         <GlassSelect value={poolSeller} allLabel={t("所有卖方", "All sellers")} searchable searchPlaceholder={t("搜索卖方…", "Search sellers…")} options={sellers.map(s => ({ value: s, label: sellerNameByTax.get(s) ? `${sellerNameByTax.get(s)} · ${s}` : s }))} onChange={setPoolSeller} />
-                        <GlassDate value={poolDateFrom} onChange={setPoolDateFrom} placeholder={t("起始日期", "From")} />
-                        <span style={{color:'var(--text-muted)',fontSize:11}}>–</span>
-                        <GlassDate value={poolDateTo} onChange={setPoolDateTo} placeholder={t("结束日期", "To")} />
+                        <GlassDate value={poolDateFrom} onChange={setPoolDateFrom} placeholder={t("起始日期", "From date")} />
+                        <GlassDate value={poolDateTo} onChange={setPoolDateTo} placeholder={t("结束日期", "To date")} />
                         {(poolSeller !== 'all' || poolCurrency !== 'all' || poolDateFrom || poolDateTo) && (
-                          <button className="pool-chip" style={{marginLeft:'auto'}} onClick={() => { setPoolSeller('all'); setPoolCurrency('all'); setPoolDateFrom(''); setPoolDateTo(''); }}>
-                            ✕ {t("重置筛选", "Reset filters")}
+                          <button className="pool-chip pool-filter-reset" onClick={() => { setPoolSeller('all'); setPoolCurrency('all'); setPoolDateFrom(''); setPoolDateTo(''); }}>
+                            ✕ {t("重置", "Reset")}
                           </button>
                         )}
                       </div>
@@ -5850,17 +5800,12 @@ function App() {
                                 <span className="hc-info">{t("合计", "Total")} <b>{p.grand_total.toFixed(2)}</b></span>
                               </div>
                               <div className="hc-actions">
-                                {poolMode === 'select' && p.status === 'available' && !unusable && (
+                                {p.status === 'available' && !unusable && (
                                   <button className="hc-btn pri" onClick={() => attachFromPool(p.id)}>
                                     {t("添加", "Add")}
                                   </button>
                                 )}
-                                {poolMode === 'validate' && p.status === 'available' && !unusable && (
-                                  <button className="hc-btn pri" onClick={() => validateFromPool([p.id])}>
-                                    {t("验证", "Validate")}
-                                  </button>
-                                )}
-                                {poolMode !== 'select' && p.status === 'used' && !pendingDelete && (
+                                {p.status === 'used' && !pendingDelete && (
                                   <button className="hc-btn" onClick={() => unclaimPoolInvoice(p.id)}>
                                     {t("解除认领", "Unclaim")}
                                   </button>
