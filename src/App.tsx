@@ -256,7 +256,9 @@ const dedupeTaxIds = (set: Set<string>): string[] => {
 // Builds a per-supplier profile from saved snapshots + the invoice pool.
 // A WHT-free certificate is issued PER COMPANY: if any document for a supplier
 // carries it (bank: check_wht_cert; import: entry.free_wht), the whole supplier
-// is treated as WHT-free. When there is no certificate, WHT is still withheld
+// is treated as WHT-free — and stays that way until the certificate expires
+// (the registry `valid_until`) or is removed, even if an *earlier* document
+// withheld WHT. When there is no certificate, WHT is still withheld
 // in our documents at whatever rate we set, so that rate (not the invoice total)
 // is what we report. VAT on ETA invoices is per-item: the same supplier can
 // legitimately charge 10% on customs clearance and 14% on transportation.
@@ -473,8 +475,14 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       for (const taxId of dedupeTaxIds(ids)) {
         upsert(taxId, docRef, companyByTax.get(taxId) || "", poolEntryFor(taxId)?.name || "", companyByTax.get(taxId) || "");
         const a = acc.get(taxId)!;
-        if ((p.checklist && p.checklist.check_wht_cert?.s === "pass") || p.check_wht_cert) a.whtCert = true;
-        if (docAppliedWht(p)) a.whtApplied = true;
+        // A certificate is company-wide and sticky until it expires, so an
+        // older document that withheld 1% must not cancel it. Only a document
+        // that records the certificate *while still withholding* is a conflict
+        // (a stale tick), and that document must not mark the supplier free.
+        const docCert = (p.checklist && p.checklist.check_wht_cert?.s === "pass") || p.check_wht_cert;
+        const docWht = docAppliedWht(p);
+        if (docCert && !docWht) a.whtCert = true;
+        if (docWht) a.whtApplied = true;
         if (hasInvoices(taxId)) {
           bumpWht(a, p.wht_rate || "0%");
         } else {
@@ -509,9 +517,10 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   // into a supplier. Truncated ids are now kept as their own supplier. Same
   // document duplicates are still collapsed by dedupeTaxIds above.
   for (const [taxId, a] of acc) {
-    // If WHT was actually withheld on any document, the supplier is not
-    // WHT-free — regardless of a stale certificate/checklist tick.
-    if (a.whtApplied) a.whtCert = false;
+    // NOTE: a certificate is NOT cancelled by past withholding. It stays in
+    // force until it expires (registry valid_until) or is removed, so a
+    // supplier that withheld 1% in the past but has since provided the
+    // certificate is reported WHT-free.
     const vat: SupplierVatRow[] = Object.entries(a.vat)
       .map(([rate, kinds]) => {
         const sorted = [...kinds.entries()].sort((x, y) => y[1] - x[1]);
@@ -2368,7 +2377,9 @@ function App() {
                           <span className="supplier-wht-sub">
                             {whtCerts[s.taxId]?.valid_until
                               ? `${t("证明有效期至", "certificate valid until")} ${whtCerts[s.taxId].valid_until}`
-                              : t("本供应商按 0% 预扣处理", "treated as withheld at 0%")}
+                              : s.whtCert
+                                ? t("证书来自已保存文档，请在下方登记有效期", "certificate recorded in a saved document — record its validity date below")
+                                : t("本供应商按 0% 预扣处理", "treated as withheld at 0%")}
                           </span>
                         </div>
                       </div>
