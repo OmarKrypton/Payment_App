@@ -110,6 +110,8 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     // rows that are the same document as another (they used to multiply when a
     // file without an embedded uuid was re-imported).
     normalize_synthetic_uuids(conn)?;
+    // Backfill line items / VAT for pool rows an older build could not parse.
+    repair_pool_lines(conn)?;
     crate::entries::init_schema(conn)?;
     Ok(())
 }
@@ -609,12 +611,27 @@ pub fn list_pool_supplier_rows(conn: &Connection) -> Result<Vec<PoolSupplierRow>
                 .into_iter()
                 .filter_map(|l| {
                     let vr = l.get("vat_rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    if vr <= 0.0 {
+                    let va = l.get("vat_amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let lt = l.get("line_total").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    // Prefer the declared rate. When a line carries a tax amount
+                    // but no rate (some stamp/fee taxes omit it) derive the
+                    // effective rate from that line's *own* figures. Never use
+                    // the invoice total — it sums every added tax, so a rate
+                    // derived from it is meaningless (e.g. 6.5M% on a 0.01
+                    // "fees" line).
+                    let mut rate = vr;
+                    if rate <= 0.0 && va > 0.0 && lt > 0.0 {
+                        let r = (va / lt * 100.0 * 100.0).round() / 100.0;
+                        if r > 0.0 && r <= 100.0 {
+                            rate = r;
+                        }
+                    }
+                    if rate <= 0.0 {
                         return None;
                     }
                     Some(PoolRatedLine {
                         description: l.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        vat_rate: vr,
+                        vat_rate: rate,
                     })
                 })
                 .collect();
@@ -633,6 +650,49 @@ pub fn list_pool_supplier_rows(conn: &Connection) -> Result<Vec<PoolSupplierRow>
         })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Re-parse pool rows whose line items were never captured. Older builds did not
+/// understand the ETA portal's escaped-XML export, so those rows stored an empty
+/// `lines_json` (and no VAT). Re-running the parser on the kept `raw_xml` fills
+/// them in. Cheap and idempotent: only rows that still have no lines and whose
+/// raw XML actually contains invoice lines are touched.
+pub fn repair_pool_lines(conn: &Connection) -> Result<usize, String> {
+    let raws: Vec<(i64, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, raw_xml FROM eta_invoices
+                 WHERE (lines_json IS NULL OR lines_json = '' OR lines_json = '[]')
+                   AND raw_xml LIKE '%invoiceLine%'",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let mut fixed = 0usize;
+    for (id, raw) in raws {
+        let Ok(inv) = crate::eta_xml::parse_eta_xml(&raw) else { continue };
+        if inv.lines.is_empty() {
+            continue;
+        }
+        let lines_json = serde_json::to_string(&inv.lines).unwrap_or_else(|_| "[]".into());
+        // A foreign-currency portal export parses into the *sold* currency, so
+        // adopt its converted amounts; otherwise keep the wrapper's EGP totals.
+        let fx = inv.currency != "EGP" && !inv.currency.is_empty();
+        conn.execute(
+            "UPDATE eta_invoices SET lines_json=?2, total_vat=?3, total_wht=?4,
+                 net_amount = CASE WHEN net_amount = 0 OR ?8 THEN ?5 ELSE net_amount END,
+                 grand_total = CASE WHEN grand_total = 0 OR ?8 THEN ?6 ELSE grand_total END,
+                 currency = CASE WHEN ?7 = '' OR ?7 IS NULL THEN currency ELSE ?7 END
+             WHERE id=?1",
+            params![id, lines_json, inv.total_vat, inv.total_wht, inv.net_amount, inv.grand_total, inv.currency, fx],
+        )
+        .map_err(|e| e.to_string())?;
+        fixed += 1;
+    }
+    Ok(fixed)
 }
 
 /// Supplier-analysis pool row: full financials plus per-line JSON (used by the
@@ -843,7 +903,8 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
         conn.execute(
             "UPDATE eta_invoices SET invoice_id=?2, uuid=?3, seller_tax_id=?4, seller_name=?5, buyer_tax_id=?6, buyer_name=?7,
              issue_date=?8, currency=?9, net_amount=?10, total_vat=?11, total_wht=?12, grand_total=?13,
-             lines_json=?14, raw_xml = CASE WHEN ?15 = '' THEN raw_xml ELSE ?15 END, file_name=?16,
+             lines_json = CASE WHEN ?14 = '' OR ?14 = '[]' THEN lines_json ELSE ?14 END,
+             raw_xml = CASE WHEN ?15 = '' THEN raw_xml ELSE ?15 END, file_name=?16,
              doc_status = CASE WHEN ?17 IS NULL OR ?17 = '' THEN doc_status ELSE ?17 END,
              status=?18, used_by_label=?19, delete_requested_at=?20, delete_requested_by=?21 WHERE id=?1",
             params![
@@ -905,6 +966,25 @@ mod pool_supersede_tests {
             params![uuid],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).unwrap()
+    }
+
+    #[test]
+    fn repair_real_pool_db() {
+        // Env-gated: point VOUCHIFY_POOL_DB at a copy of history.db to verify the
+        // one-time line/VAT backfill over real ETA portal exports.
+        let Ok(path) = std::env::var("VOUCHIFY_POOL_DB") else { return };
+        let conn = Connection::open(&path).unwrap();
+        init_schema(&conn).unwrap();
+        let total: i64 = conn.query_row("SELECT COUNT(*) FROM eta_invoices", [], |r| r.get(0)).unwrap();
+        let with_lines: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM eta_invoices WHERE lines_json IS NOT NULL AND lines_json <> '[]' AND lines_json <> ''",
+            [], |r| r.get(0)).unwrap();
+        let vat: f64 = conn.query_row("SELECT COALESCE(SUM(total_vat),0) FROM eta_invoices", [], |r| r.get(0)).unwrap();
+        let still_empty: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM eta_invoices WHERE (lines_json IS NULL OR lines_json='[]' OR lines_json='') AND raw_xml LIKE '%invoiceLine%'",
+            [], |r| r.get(0)).unwrap();
+        eprintln!("repair: total={} with_lines={} still_empty_with_lines={} total_vat_sum={:.2}", total, with_lines, still_empty, vat);
+        assert_eq!(still_empty, 0, "every parseable row must have line items after repair");
     }
 
     fn row_count_where(conn: &Connection, id: &str) -> i64 {

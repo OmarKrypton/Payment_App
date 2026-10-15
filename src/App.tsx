@@ -492,14 +492,12 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     if (!a.name && pe.name) a.name = pe.name;
     if (!a.poolName && pe.name) a.poolName = pe.name;
     for (const inv of pe.invoices) {
-      const ratedLines = (inv.rated_lines || []).filter((l: any) => (Number(l.vat_rate) || 0) > 0);
-      if (ratedLines.length) {
-        for (const l of ratedLines) {
-          bumpVat(a, `${Number(l.vat_rate)}%`, vatItemKind(String(l.description || "")));
-        }
-      } else if (inv.net_amount > 0) {
-        const r = Math.round(((inv.total_vat || 0) / inv.net_amount) * 100);
-        if (r > 0) bumpVat(a, `${r}%`, vatItemKind(inv.seller_name || inv.invoice_id));
+      // Rates come straight from each invoice line (declared, or derived by the
+      // backend from the line's own tax amount). Never derive from the invoice
+      // total: it sums every added tax and produced nonsense rates.
+      for (const l of (inv.rated_lines || [])) {
+        const rate = Number(l.vat_rate) || 0;
+        if (rate > 0) bumpVat(a, `${rate}%`, vatItemKind(String(l.description || "")));
       }
     }
   }

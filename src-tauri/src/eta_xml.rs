@@ -93,6 +93,97 @@ fn service_matches_invoice(service_name: &str, invoice_id: &str) -> bool {
     })
 }
 
+/// Some ETA portal exports embed the real document as an *escaped XML string*
+/// inside the outer `<document>` element instead of the JSON block the SDK
+/// emits. This converts that inner XML into the same JSON shape the parser
+/// already reads, so its line items and tax totals are captured instead of
+/// being silently dropped (which left those invoices with no VAT at all).
+fn xml_document_to_json(xml: &str) -> Option<serde_json::Value> {
+    use serde_json::json;
+
+    fn blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
+        let open = format!("<{}>", tag);
+        let close = format!("</{}>", tag);
+        let mut out = Vec::new();
+        let mut rest = xml;
+        while let Some(s) = rest.find(&open) {
+            let start = s + open.len();
+            match rest[start..].find(&close) {
+                Some(e) => { out.push(&rest[start..start + e]); rest = &rest[start + e + close.len()..]; }
+                None => break,
+            }
+        }
+        out
+    }
+    fn text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
+        let open = format!("<{}>", tag);
+        let close = format!("</{}>", tag);
+        let s = xml.find(&open)? + open.len();
+        let e = xml[s..].find(&close)? + s;
+        Some(xml[s..e].trim())
+    }
+    fn num(xml: &str, tag: &str) -> f64 {
+        text(xml, tag).and_then(|t| t.parse::<f64>().ok()).unwrap_or(0.0)
+    }
+
+    // Only treat this as a real document when it actually carries invoice lines.
+    let line_blocks = blocks(xml, "invoiceLine");
+    if line_blocks.is_empty() {
+        return None;
+    }
+
+    let mut lines: Vec<serde_json::Value> = Vec::new();
+    for lb in &line_blocks {
+        let unit = text(lb, "unitValue").unwrap_or("");
+        let taxable: Vec<serde_json::Value> = blocks(lb, "taxableItem")
+            .iter()
+            .map(|tb| json!({
+                "taxType": text(tb, "taxType").unwrap_or(""),
+                "subType": text(tb, "subType").unwrap_or(""),
+                "rate": num(tb, "rate"),
+                "amount": num(tb, "amount"),
+            }))
+            .collect();
+        lines.push(json!({
+            "description": text(lb, "description").unwrap_or(""),
+            "quantity": num(lb, "quantity"),
+            "unitValue": {
+                "currencySold": text(unit, "currencySold").unwrap_or(""),
+                "amountSold": num(unit, "amountSold"),
+                "amountEGP": num(unit, "amountEGP"),
+                "currencyExchangeRate": num(unit, "currencyExchangeRate"),
+            },
+            "netTotal": num(lb, "netTotal"),
+            "taxableItems": taxable,
+        }));
+    }
+
+    let tax_totals: Vec<serde_json::Value> = blocks(xml, "taxTotal")
+        .iter()
+        .map(|tb| json!({
+            "taxType": text(tb, "taxType").unwrap_or(""),
+            "subType": text(tb, "subType").unwrap_or(""),
+            "rate": num(tb, "rate"),
+            "amount": num(tb, "amount"),
+        }))
+        .collect();
+
+    let issuer = text(xml, "issuer").unwrap_or("");
+    let receiver = text(xml, "receiver").unwrap_or("");
+    Some(json!({
+        "uuid": text(xml, "uuid").unwrap_or(""),
+        "internalID": text(xml, "internalID").or_else(|| text(xml, "internalId")).unwrap_or(""),
+        "documentType": text(xml, "documentType").unwrap_or(""),
+        "dateTimeIssued": text(xml, "dateTimeIssued").unwrap_or(""),
+        "netAmount": num(xml, "netAmount"),
+        "totalAmount": num(xml, "totalAmount"),
+        "issuer": { "id": text(issuer, "id").unwrap_or(""), "name": text(issuer, "name").unwrap_or("") },
+        "receiver": { "id": text(receiver, "id").unwrap_or(""), "name": text(receiver, "name").unwrap_or("") },
+        "invoiceLines": lines,
+        "taxTotals": tax_totals,
+    }))
+}
+
 pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
     let mut reader = Reader::from_str(xml_content);
     reader.config_mut().trim_text(true);
@@ -201,11 +292,18 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         }
     }
 
-    // Parse the embedded JSON for line items and tax totals
-    if !document_json.is_empty() {
+    // Parse the embedded document for line items and tax totals. The ETA SDK
+    // emits it as JSON inside <document>; some portal exports instead wrap an
+    // escaped XML document there, and others nest a plain XML document. Cover
+    // all three so no invoice is imported without its lines/VAT.
+    {
         // Fix HTML entities first
         let json_str = document_json.replace("&#34;", "\"");
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        let parsed_value = serde_json::from_str::<serde_json::Value>(&json_str)
+            .ok()
+            .or_else(|| xml_document_to_json(&json_str))
+            .or_else(|| xml_document_to_json(xml_content));
+        if let Some(parsed) = parsed_value {
             // Determine which tax types are withholding by inspecting line-level subtypes.
             // WHT entries carry a "W"-prefixed subtype (e.g. W004); added taxes (VAT-like)
             // like Tbl01 must NOT be summed into WHT. If no subtype info exists at all
@@ -836,6 +934,30 @@ mod tests {
         assert_eq!(inv.total_vat, 147.0);
         assert_eq!(inv.grand_total, 1197.0);
         assert_eq!(inv.lines.len(), 1);
+    }
+
+    #[test]
+    fn parses_escaped_xml_document_export() {
+        // ETA portal "document" downloads wrap the real document as an escaped
+        // XML string inside <document> (not the SDK's JSON block). Those files
+        // used to import with no lines and no VAT at all.
+        let inner = r#"<document><issuer><type>B</type><id>100443648</id><name>Warehouse Co</name></issuer><receiver><type>B</type><id>100489095</id><name>Buyer Co</name></receiver><documentType>I</documentType><dateTimeIssued>2026-03-14T12:12:00Z</dateTimeIssued><internalID>I1895071</internalID><invoiceLines><invoiceLine><description>Open safe</description><quantity>1</quantity><unitValue><currencySold>EGP</currencySold><amountEGP>30</amountEGP><amountSold>0</amountSold><currencyExchangeRate>0</currencyExchangeRate></unitValue><netTotal>30</netTotal><taxableItems><taxableItem><taxType>T1</taxType><amount>4.2</amount><subType>V009</subType><rate>14</rate></taxableItem></taxableItems></invoiceLine><invoiceLine><description>Storage</description><quantity>1</quantity><unitValue><currencySold>EGP</currencySold><amountEGP>1400</amountEGP><amountSold>0</amountSold><currencyExchangeRate>0</currencyExchangeRate></unitValue><netTotal>1400</netTotal><taxableItems><taxableItem><taxType>T1</taxType><amount>196</amount><subType>V009</subType><rate>14</rate></taxableItem></taxableItems></invoiceLine></invoiceLines><netAmount>1430</netAmount><taxTotals><taxTotal><taxType>T1</taxType><amount>200.2</amount></taxTotal></taxTotals><totalAmount>1630.2</totalAmount></document>"#;
+        let escaped = inner.replace('<', "&lt;").replace('>', "&gt;");
+        let xml = format!(
+            r#"<document><uuid>Z45YBJ5HB3ZQS0060VAQAPKK10</uuid><internalId>I1895071</internalId><issuerId>100443648</issuerId><issuerName>Warehouse Co</issuerName><receiverId>100489095</receiverId><receiverName>Buyer Co</receiverName><dateTimeIssued>2026-03-14T12:12:00</dateTimeIssued><netAmount>1430</netAmount><total>1630.2</total><status>Valid</status><document>{}</document></document>"#,
+            escaped
+        );
+        let inv = parse_eta_xml(&xml).unwrap();
+        assert_eq!(inv.invoice_id, "I1895071");
+        assert_eq!(inv.seller_tax_id, "100443648");
+        assert_eq!(inv.lines.len(), 2, "escaped-XML lines must be captured");
+        assert_eq!(inv.lines[0].description, "Open safe");
+        assert_eq!(inv.lines[0].line_total, 30.0);
+        assert_eq!(inv.lines[0].vat_rate, 14.0);
+        assert_eq!(inv.lines[0].vat_amount, 4.2);
+        assert_eq!(inv.total_vat, 200.2, "VAT from taxTotals must be captured");
+        assert_eq!(inv.net_amount, 1430.0);
+        assert_eq!(inv.grand_total, 1630.2);
     }
 
     #[test]
