@@ -33,6 +33,12 @@ pub struct EtaInvoice {
     pub total_vat: f64,
     pub total_wht: f64,
     pub grand_total: f64,
+    /// ETA rate used to convert the document's EGP figures into the invoice's
+    /// sold currency (1.0 for an EGP invoice). Derived from `amountEGP /
+    /// amountSold` when the document omits `currencyExchangeRate`, so every
+    /// foreign invoice can be compared in either currency.
+    #[serde(default)]
+    pub exchange_rate: f64,
     pub lines: Vec<EtaInvoiceLine>,
 }
 
@@ -203,6 +209,7 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         total_vat: 0.0,
         total_wht: 0.0,
         grand_total: 0.0,
+        exchange_rate: 1.0,
         lines: Vec::new(),
     };
 
@@ -367,8 +374,19 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
                         if invoice.currency == "EGP" {
                             invoice.currency = cur_sold.clone();
                         }
-                        if rate > 0.0 {
-                            exchange_rate = rate;
+                        // Prefer the declared rate; when the document omits it (some
+                        // portal exports do) derive it from amountEGP / amountSold so
+                        // the totals are still converted into the sold currency.
+                        let mut line_rate = rate;
+                        if line_rate <= 0.0 {
+                            let sold = amount_sold.unwrap_or(0.0);
+                            let egp = amount_egp.unwrap_or(0.0);
+                            if sold > 0.0 && egp > 0.0 {
+                                line_rate = egp / sold;
+                            }
+                        }
+                        if line_rate > 0.0 {
+                            exchange_rate = line_rate;
                         }
                     }
 
@@ -478,6 +496,13 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
             line.vat_amount = (line.vat_amount / exchange_rate * 100.0).round() / 100.0;
         }
     }
+    // Record the rate the figures are expressed at (1.0 for an EGP invoice), so
+    // a bank document can compare the invoice in either currency.
+    invoice.exchange_rate = if invoice.currency != "EGP" && exchange_rate > 0.0 {
+        exchange_rate
+    } else {
+        1.0
+    };
 
     // Central identity normalization: never let stray whitespace into IDs.
     invoice.invoice_id = invoice.invoice_id.trim().to_string();
@@ -1198,6 +1223,31 @@ mod tests {
         assert_eq!(inv.lines[0].line_total, 341.0);
         assert_eq!(inv.lines[0].unit_price, 341.0);
         assert_eq!(inv.lines[0].vat_amount, 47.74);
+    }
+
+    #[test]
+    fn derives_exchange_rate_when_xml_omits_it() {
+        // Some portal exports set currencySold but omit currencyExchangeRate,
+        // which used to leave EGP totals under a "USD" label. The rate is derived
+        // from amountEGP / amountSold so the totals convert correctly.
+        let xml = r#"<document>
+  <internalId>EGALM26024</internalId>
+  <issuerId>91310115662480226X</issuerId>
+  <netAmount>17933.19</netAmount>
+  <total>20443.84</total>
+  <document>
+    {"invoiceLines":[{"description":"Import shipment services","quantity":1,
+      "unitValue":{"currencySold":"USD","amountEGP":17933.19,"amountSold":341},
+      "netTotal":17933.19,"taxableItems":[{"taxType":"T1","amount":2510.65,"subType":"V009","rate":14}]}],
+     "taxTotals":[{"taxType":"T1","amount":2510.65}],
+     "netAmount":17933.19,"totalAmount":20443.84}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.currency, "USD");
+        assert!((inv.exchange_rate - 52.59).abs() < 0.01, "derived rate: {}", inv.exchange_rate);
+        assert!((inv.net_amount - 341.0).abs() < 0.01, "net in sold currency: {}", inv.net_amount);
+        assert!((inv.grand_total - 388.74).abs() < 0.05, "total in sold currency: {}", inv.grand_total);
     }
 
     #[test]

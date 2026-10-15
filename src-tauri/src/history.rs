@@ -41,6 +41,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             total_vat REAL DEFAULT 0,
             total_wht REAL DEFAULT 0,
             grand_total REAL DEFAULT 0,
+            exchange_rate REAL DEFAULT 0,
             lines_json TEXT DEFAULT '[]',
             raw_xml TEXT DEFAULT '',
             file_name TEXT DEFAULT '',
@@ -104,6 +105,13 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     }
     if !cols.iter().any(|c| c == "doc_status") {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN doc_status TEXT DEFAULT 'Valid'", [])
+            .map_err(|e| e.to_string())?;
+    }
+    // ETA rate the invoice figures are expressed at (1.0 for EGP). Local,
+    // derived: filled on import / pull / repair from the raw XML, so no shared
+    // schema change is required.
+    if !cols.iter().any(|c| c == "exchange_rate") {
+        conn.execute("ALTER TABLE eta_invoices ADD COLUMN exchange_rate REAL DEFAULT 0", [])
             .map_err(|e| e.to_string())?;
     }
     // Guarantee no pool row is left with an empty / legacy uuid, and collapse any
@@ -225,6 +233,10 @@ pub struct PoolInvoice {
     pub total_vat: f64,
     pub total_wht: f64,
     pub grand_total: f64,
+    /// ETA rate the figures are expressed at (1.0 for EGP). Local/derived — not
+    /// part of the shared Supabase schema.
+    #[serde(default)]
+    pub exchange_rate: f64,
     pub     lines_json: String,
     #[serde(default)]
     pub raw_xml: String,
@@ -458,25 +470,25 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
         conn.execute(
             "UPDATE eta_invoices SET invoice_id=?2, uuid=?3, seller_tax_id=?4, seller_name=?5, buyer_tax_id=?6, buyer_name=?7,
              issue_date=?8, currency=?9, net_amount=?10, total_vat=?11, total_wht=?12, grand_total=?13,
-             lines_json=?14, raw_xml=?15, file_name=?16, doc_status=?17 WHERE id=?1",
+             lines_json=?14, raw_xml=?15, file_name=?16, doc_status=?17, exchange_rate=?18 WHERE id=?1",
             params![
                 id, invoice.invoice_id, final_uuid, invoice.seller_tax_id, invoice.seller_name, invoice.buyer_tax_id,
                 invoice.buyer_name, invoice.issue_date, invoice.currency, invoice.net_amount,
                 invoice.total_vat, invoice.total_wht, invoice.grand_total, lines_json,
-                raw_xml, file_name, incoming_status
+                raw_xml, file_name, incoming_status, invoice.exchange_rate
             ],
         ).map_err(|e| e.to_string())?;
         return Ok(PoolAddOutcome::Updated(id));
     }
 
     conn.execute(
-        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'available', ?17)",
+        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, created_at, exchange_rate)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'available', ?17, ?18)",
         params![
             invoice.invoice_id, resolved, invoice.seller_tax_id, invoice.seller_name,
             invoice.buyer_tax_id, invoice.buyer_name, invoice.issue_date, invoice.currency,
             invoice.net_amount, invoice.total_vat, invoice.total_wht, invoice.grand_total,
-            lines_json, raw_xml, file_name, incoming_status, now
+            lines_json, raw_xml, file_name, incoming_status, now, invoice.exchange_rate
         ],
     ).map_err(|e| e.to_string())?;
     Ok(PoolAddOutcome::Inserted(conn.last_insert_rowid()))
@@ -485,7 +497,7 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
 pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     let mut result = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices ORDER BY created_at DESC")
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate FROM eta_invoices ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -516,6 +528,7 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
                 delete_requested_at: row.get(20)?,
                 delete_requested_by: row.get(21)?,
                 created_at: row.get(22)?,
+                exchange_rate: row.get(23).unwrap_or(0.0),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -536,7 +549,7 @@ pub fn list_pool_by_uuids(conn: &Connection, uuids: &[String]) -> Result<Vec<Poo
     for chunk in uuids.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
-            "SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices WHERE uuid IN ({})",
+            "SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate FROM eta_invoices WHERE uuid IN ({})",
             placeholders
         );
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
@@ -569,6 +582,7 @@ pub fn list_pool_by_uuids(conn: &Connection, uuids: &[String]) -> Result<Vec<Poo
                     delete_requested_at: row.get(20)?,
                     delete_requested_by: row.get(21)?,
                     created_at: row.get(22)?,
+                    exchange_rate: row.get(23).unwrap_or(0.0),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -662,8 +676,12 @@ pub fn repair_pool_lines(conn: &Connection) -> Result<usize, String> {
         let mut stmt = conn
             .prepare(
                 "SELECT id, raw_xml FROM eta_invoices
-                 WHERE (lines_json IS NULL OR lines_json = '' OR lines_json = '[]')
-                   AND raw_xml LIKE '%invoiceLine%'",
+                 WHERE raw_xml LIKE '%invoiceLine%'
+                   AND (
+                     lines_json IS NULL OR lines_json = '' OR lines_json = '[]'
+                     OR (currency NOT IN ('EGP', 'egp', '')
+                         AND (exchange_rate IS NULL OR exchange_rate = 0))
+                   )",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -678,16 +696,19 @@ pub fn repair_pool_lines(conn: &Connection) -> Result<usize, String> {
             continue;
         }
         let lines_json = serde_json::to_string(&inv.lines).unwrap_or_else(|_| "[]".into());
-        // A foreign-currency portal export parses into the *sold* currency, so
-        // adopt its converted amounts; otherwise keep the wrapper's EGP totals.
+        // A foreign-currency export parses into the *sold* currency, so adopt its
+        // converted amounts (an earlier build that could not derive the rate left
+        // the EGP totals under a foreign-currency label); otherwise keep the
+        // wrapper's EGP totals.
         let fx = inv.currency != "EGP" && !inv.currency.is_empty();
         conn.execute(
             "UPDATE eta_invoices SET lines_json=?2, total_vat=?3, total_wht=?4,
                  net_amount = CASE WHEN net_amount = 0 OR ?8 THEN ?5 ELSE net_amount END,
                  grand_total = CASE WHEN grand_total = 0 OR ?8 THEN ?6 ELSE grand_total END,
-                 currency = CASE WHEN ?7 = '' OR ?7 IS NULL THEN currency ELSE ?7 END
+                 currency = CASE WHEN ?7 = '' OR ?7 IS NULL THEN currency ELSE ?7 END,
+                 exchange_rate = ?9
              WHERE id=?1",
-            params![id, lines_json, inv.total_vat, inv.total_wht, inv.net_amount, inv.grand_total, inv.currency, fx],
+            params![id, lines_json, inv.total_vat, inv.total_wht, inv.net_amount, inv.grand_total, inv.currency, fx, inv.exchange_rate],
         )
         .map_err(|e| e.to_string())?;
         fixed += 1;
@@ -780,6 +801,7 @@ pub struct PoolInvoiceSummary {
     pub total_vat: f64,
     pub total_wht: f64,
     pub grand_total: f64,
+    pub exchange_rate: f64,
     pub file_name: String,
     pub doc_status: String,
     pub status: String,
@@ -792,7 +814,7 @@ pub struct PoolInvoiceSummary {
 pub fn list_pool_summary(conn: &Connection) -> Result<Vec<PoolInvoiceSummary>, String> {
     let mut result = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at FROM eta_invoices ORDER BY created_at DESC")
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate FROM eta_invoices ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -820,6 +842,7 @@ pub fn list_pool_summary(conn: &Connection) -> Result<Vec<PoolInvoiceSummary>, S
                 delete_requested_at: row.get(17)?,
                 delete_requested_by: row.get(18)?,
                 created_at: row.get(19)?,
+                exchange_rate: row.get(20).unwrap_or(0.0),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -899,6 +922,31 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
     // uuid wins over a synthetic one and a synthetic remote row does not create
     // a second copy of a document we already hold under its real uuid.
     let resolved = resolve_pool_uuid(&inv.uuid, &inv.invoice_id, &inv.seller_tax_id, &inv.file_name, &inv.raw_xml);
+    // Re-derive the amounts from the raw XML when present: the shared table has
+    // no exchange-rate column, and an older importing device may have stored EGP
+    // totals under a foreign-currency label. Parsing keeps every device
+    // consistent with the current parser (only changed rows are pulled).
+    let parsed = if inv.raw_xml.is_empty() { None } else { crate::eta_xml::parse_eta_xml(&inv.raw_xml).ok() };
+    let (currency, net_amount, total_vat, total_wht, grand_total, exchange_rate, lines_json) = match &parsed {
+        Some(p) if !p.lines.is_empty() => (
+            p.currency.clone(),
+            p.net_amount,
+            p.total_vat,
+            p.total_wht,
+            p.grand_total,
+            p.exchange_rate,
+            serde_json::to_string(&p.lines).unwrap_or_else(|_| inv.lines_json.clone()),
+        ),
+        _ => (
+            inv.currency.clone(),
+            inv.net_amount,
+            inv.total_vat,
+            inv.total_wht,
+            inv.grand_total,
+            inv.exchange_rate,
+            inv.lines_json.clone(),
+        ),
+    };
     if let Some((id, final_uuid)) = reconcile_pool_row(conn, &inv.invoice_id, &inv.seller_tax_id, &resolved)? {
         conn.execute(
             "UPDATE eta_invoices SET invoice_id=?2, uuid=?3, seller_tax_id=?4, seller_name=?5, buyer_tax_id=?6, buyer_name=?7,
@@ -906,26 +954,27 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
              lines_json = CASE WHEN ?14 = '' OR ?14 = '[]' THEN lines_json ELSE ?14 END,
              raw_xml = CASE WHEN ?15 = '' THEN raw_xml ELSE ?15 END, file_name=?16,
              doc_status = CASE WHEN ?17 IS NULL OR ?17 = '' THEN doc_status ELSE ?17 END,
-             status=?18, used_by_label=?19, delete_requested_at=?20, delete_requested_by=?21 WHERE id=?1",
+             status=?18, used_by_label=?19, delete_requested_at=?20, delete_requested_by=?21,
+             exchange_rate=?22 WHERE id=?1",
             params![
                 id, inv.invoice_id, final_uuid, inv.seller_tax_id, inv.seller_name, inv.buyer_tax_id, inv.buyer_name,
-                inv.issue_date, inv.currency, inv.net_amount, inv.total_vat, inv.total_wht, inv.grand_total,
-                inv.lines_json, inv.raw_xml, inv.file_name, inv.doc_status, inv.status, inv.used_by_label,
-                inv.delete_requested_at, inv.delete_requested_by
+                inv.issue_date, currency, net_amount, total_vat, total_wht, grand_total,
+                lines_json, inv.raw_xml, inv.file_name, inv.doc_status, inv.status, inv.used_by_label,
+                inv.delete_requested_at, inv.delete_requested_by, exchange_rate
             ],
         ).map_err(|e| e.to_string())?;
         return Ok(());
     }
     conn.execute(
-        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             inv.invoice_id, resolved, inv.seller_tax_id, inv.seller_name,
-            inv.buyer_tax_id, inv.buyer_name, inv.issue_date, inv.currency,
-            inv.net_amount, inv.total_vat, inv.total_wht, inv.grand_total,
-            inv.lines_json, inv.raw_xml, inv.file_name, inv.doc_status,
+            inv.buyer_tax_id, inv.buyer_name, inv.issue_date, currency,
+            net_amount, total_vat, total_wht, grand_total,
+            lines_json, inv.raw_xml, inv.file_name, inv.doc_status,
             inv.status, inv.used_by_label, inv.delete_requested_at, inv.delete_requested_by,
-            inv.created_at,
+            inv.created_at, exchange_rate,
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
@@ -955,6 +1004,7 @@ mod pool_supersede_tests {
             total_vat: 14.0,
             total_wht: 0.0,
             grand_total: 114.0,
+            exchange_rate: 1.0,
             lines: vec![],
             doc_status: doc_status.into(),
         }

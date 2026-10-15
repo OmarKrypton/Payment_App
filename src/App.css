@@ -1087,6 +1087,81 @@ body {
 .invoice-compare-row.ok { background: var(--green-bg); }
 .invoice-compare-row.warn { background: #fffbeb; }
 
+/* ── Document currency (USD/EGP) ── */
+.cur-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid var(--border);
+}
+.cur-toggle button {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 6px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.cur-toggle button.active {
+  background: linear-gradient(180deg, var(--accent), #2563eb);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+.cur-toggle button.active.usd {
+  background: linear-gradient(180deg, #16a34a, #15803d);
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+}
+.invoice-company .inv-cur {
+  position: absolute;
+  top: -12px;
+  right: 0;
+  z-index: 2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--green-bg);
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  white-space: nowrap;
+}
+.invoice-company .inv-cur.egp { background: var(--accent-light); color: #1d4ed8; border-color: #bfdbfe; }
+.inv-cur-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-light);
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.inv-cur-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 10.5px;
+  line-height: 1.45;
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin: 6px 0;
+  border: 1px solid #bfdbfe;
+  background: var(--accent-light);
+  color: #1d4ed8;
+}
+.inv-cur-note.warn { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+
 /* ── Audit Tab ── */
 .audit-tab {
   display: flex;
@@ -2462,6 +2537,7 @@ body {
 .hc-rj { color: var(--red); background: var(--red-bg); border: 1px solid #fecaca; }
 .hc-imp { color: #7c3aed; background: #f5f3ff; border: 1px solid #ddd6fe; }
 .hc-bank { color: var(--text-secondary); background: #f1f5f9; border: 1px solid var(--border); }
+.hc-cur { color: #15803d; background: var(--green-bg); border: 1px solid #bbf7d0; }
 .hc-del { color: #fff; background: var(--red); border: 1px solid var(--red); }
 .hc-date { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .hc-meta { font-size: 11px; color: var(--text-secondary); margin-top: 6px; padding-left: 8px; }

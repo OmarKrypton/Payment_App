@@ -343,6 +343,7 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, ids: Vec<i64>, form_json
                 total_vat: pool_inv.total_vat,
                 total_wht: pool_inv.total_wht,
                 grand_total: pool_inv.grand_total,
+                exchange_rate: pool_inv.exchange_rate,
                 lines,
             }
         };

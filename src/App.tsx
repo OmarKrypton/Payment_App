@@ -46,6 +46,8 @@ interface InvoiceData {
   company_name?: string;
   attached_invoice?: string;
   attached_uuid?: string;
+  currency?: string;        // invoice currency from the pool (EGP/USD/...)
+  exchange_rate?: number;   // ETA rate of that invoice (1 for EGP)
 }
 
 interface ImportCostRow {
@@ -63,6 +65,7 @@ interface FormData {
   soc_rate: string; val_12A: string;
   val_7A: string; val_10A: string; val_11A: string; val_11B: string;
   doc_serial: string; buyer_tax_id: string; seller_tax_id: string; seller_tax_ids: string[];
+  doc_currency: string; // document currency the computed fields are expressed in (EGP/USD)
   remainder_of: string; // serial of the document that carries this invoice's deductions (split settlement)
   draft_no: number | null;
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
@@ -110,6 +113,7 @@ const EMPTY_FORM: FormData = {
   soc_rate: "0%", val_12A: "0.00",
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [], remainder_of: "",
+  doc_currency: "EGP",
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   checklist: {},
@@ -138,6 +142,7 @@ const DEFAULT_FORM: FormData = {
   soc_rate: "0%", val_12A: "0.00",
   val_7A: "0.00", val_10A: "0.00", val_11A: "0.00", val_11B: "0.00",
   doc_serial: "", buyer_tax_id: "", seller_tax_id: "", seller_tax_ids: [], remainder_of: "",
+  doc_currency: "EGP",
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   checklist: {},
@@ -1613,12 +1618,36 @@ function App() {
   );
 
   const InvoicesCard = () => {
+    const docCur = (data.doc_currency || "EGP").toUpperCase();
+    // Fall back to the pool row for invoices attached before currency was stored
+    // on the row, so existing documents work without re-attaching.
+    const poolByUuid = new Map(((poolList as any[]) || []).map(p => [String(p.uuid || ""), p]));
+    const poolFor = (inv: any) => (inv.attached_uuid ? poolByUuid.get(String(inv.attached_uuid)) : undefined);
+    const rateOf = (inv: any) => Number(inv.exchange_rate) || Number(poolFor(inv)?.exchange_rate) || 0;
+    const curOf = (inv: any) => String(inv.currency || poolFor(inv)?.currency || "EGP").toUpperCase();
+    // Convert an invoice value into the document currency. ok=false means a rate
+    // is required but missing (e.g. an EGP invoice billed against a USD document).
+    const toDocCur = (v: number, inv: any): { v: number; ok: boolean } => {
+      const c = curOf(inv);
+      if (c === docCur) return { v, ok: true };
+      const r = rateOf(inv);
+      if (c !== "EGP" && docCur === "EGP") return r > 0 ? { v: v * r, ok: true } : { v, ok: false };
+      return { v, ok: false };
+    };
+    const unconvertedInvoices: string[] = [];
     const totals = (data.invoices ?? []).reduce((acc, inv) => {
-      acc.net += toNum(inv.amount);
-      acc.vat += toNum(inv.vat || "0");
-      acc.wht += toNum(inv.wht || "0");
+      const n = toDocCur(toNum(inv.amount), inv);
+      const vt = toDocCur(toNum(inv.vat || "0"), inv);
+      const wt = toDocCur(toNum(inv.wht || "0"), inv);
+      if (!n.ok || !vt.ok || !wt.ok) {
+        const label = String(inv.attached_invoice || inv.invoice_no || "—");
+        if (!unconvertedInvoices.includes(label)) unconvertedInvoices.push(label);
+        return acc; // excluded from the totals — its currency cannot be converted
+      }
+      acc.net += n.v; acc.vat += vt.v; acc.wht += wt.v;
       return acc;
     }, { net: 0, vat: 0, wht: 0 });
+    const foreignCount = (data.invoices ?? []).filter(inv => curOf(inv) !== docCur).length;
     const invVatRate = totals.net > 0 ? (totals.vat / totals.net) * 100 : 0;
     const invWhtRate = totals.net > 0 ? (totals.wht / totals.net) * 100 : 0;
     const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
@@ -1649,7 +1678,7 @@ function App() {
     const hasInvoices = (data.invoices ?? []).length > 0;
     return (
     <div className="card">
-      <h3>{t("发票", "Invoices")}</h3>
+      <h3>{t("发票", "Invoices")}{foreignCount > 0 && <span className="inv-cur-badge">{docCur}</span>}</h3>
       <div className="invoice-header">
         <span>{t("公司名", "Company Name")}</span>
         <span>{t("发票号", "Invoice No")}</span>
@@ -1659,11 +1688,19 @@ function App() {
         <span>WHT</span>
         <span></span>
       </div>
-      {data.invoices.map((inv, i) => (
-        <div key={i} className={`invoice-row${inv.attached_invoice ? ' has-pill' : ''}`}>
+      {data.invoices.map((inv, i) => {
+        const c = curOf(inv);
+        const showCur = c !== docCur;
+        return (
+        <div key={i} className={`invoice-row${inv.attached_invoice || showCur ? ' has-pill' : ''}`}>
           <div className="invoice-company">
             {inv.attached_invoice && (
               <div className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${inv.attached_invoice}`}>✓ {inv.attached_invoice}</div>
+            )}
+            {showCur && (
+              <span className={`inv-cur${c === "EGP" ? " egp" : ""}`} title={rateOf(inv) > 0 ? `${c} @ ${rateOf(inv)}` : c}>
+                {c}{rateOf(inv) > 0 ? ` @${rateOf(inv)}` : ""}
+              </span>
             )}
             <FastInput value={inv.company_name || ""} onChange={v => updInv(i, "company_name", v)} />
           </div>
@@ -1674,7 +1711,8 @@ function App() {
           <NumericInput value={inv.wht || "0.00"} onChange={v => updInv(i, "wht", v)} />
           <button className="btn-danger" onClick={() => delInv(i)}>✕</button>
         </div>
-      ))}
+        );
+      })}
       <div className="invoice-row invoice-totals">
         <div className="invoice-company" style={{fontWeight:600}}>{t("合计", "Totals")}</div>
         <div />
@@ -1684,6 +1722,21 @@ function App() {
         <div className="computed-value" style={{fontWeight:700}}>{fmtShort(totals.wht)}</div>
         <div />
       </div>
+      {foreignCount > unconvertedInvoices.length && (
+        <div className="inv-cur-note">
+          <span>⇅</span>
+          <div>{foreignCount - unconvertedInvoices.length} {t(`张发票按其自身 ETA 汇率换算为 ${docCur} 后计入合计。`, `invoice(s) converted to ${docCur} at their own ETA rate for the totals.`)}</div>
+        </div>
+      )}
+      {unconvertedInvoices.length > 0 && (
+        <div className="inv-cur-note warn">
+          <span>⚠</span>
+          <div>
+            {t("以下发票币种与文档币种不同且无 ETA 汇率，无法换算，未计入对比：", "These invoices are not in the document currency and carry no ETA rate, so they cannot be converted and are excluded from the comparison:")}
+            {" "}<b>{unconvertedInvoices.join(", ")}</b>
+          </div>
+        </div>
+      )}
       <div style={{display:'flex',gap:8,marginTop:8}}>
         <button className="btn-add" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
         <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
@@ -1693,7 +1746,7 @@ function App() {
       </div>
       {hasInvoices && shown.length > 0 && (
         <div className="invoice-compare">
-          <div style={{fontWeight:600,fontSize:11,marginBottom:6}}>{t("与文档字段对比", "Comparison vs Document Fields")}</div>
+          <div style={{fontWeight:600,fontSize:11,marginBottom:6}}>{t("与文档字段对比", "Comparison vs Document Fields")}<span className="inv-cur-badge">{docCur}</span></div>
           {shown.map((c, i) => (
             <div key={i} className={`invoice-compare-row ${c.warn ? 'warn' : c.ok ? 'ok' : 'bad'}`}>
               <span>{c.label}</span>
@@ -1962,6 +2015,20 @@ function App() {
         )}
         {!isImport && (
         <>
+          <div className="field">
+            <label className="field-label">{t("文档币种", "Document Currency")}</label>
+            <div className="cur-toggle">
+              {(["EGP", "USD"] as const).map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`${((data.doc_currency || "EGP").toUpperCase() === c) ? "active" : ""}${c === "USD" ? " usd" : ""}`}
+                  onClick={() => updateField("doc_currency", c)}
+                >{c}</button>
+              ))}
+            </div>
+            <div className="field-sub">{t("所有计算字段以该币种表示；发票按其自身 ETA 汇率换算后对比。", "Computed fields are in this currency; invoices are converted at their own ETA rate for comparison.")}</div>
+          </div>
           <div className="field">
             <label className="field-label">{t("剩余部分", "Remainder")}</label>
             {isRemainder ? (
@@ -4554,6 +4621,8 @@ function App() {
       company_name: p.seller_name || "",
       attached_invoice: invoiceId,
       attached_uuid: p.uuid || "",
+      currency: p.currency || "EGP",
+      exchange_rate: p.exchange_rate || 0,
     }];
     formRef.current = { ...formRef.current, invoices: arr };
     await recalc(formRef.current);
@@ -4615,6 +4684,8 @@ function App() {
         company_name: p!.seller_name || "",
         attached_invoice: p!.invoice_id,
         attached_uuid: p!.uuid || "",
+        currency: p!.currency || "EGP",
+        exchange_rate: p!.exchange_rate || 0,
       })),
     ];
     formRef.current = { ...formRef.current, invoices: arr };
@@ -5354,6 +5425,10 @@ function App() {
                   } catch { return [] as { label: string; value: string }[]; }
                 })();
                 const remInfo = snapInfo.find(r => r.label === t("剩余部分", "Remainder of"));
+                const snapCurrency = (() => {
+                  try { return String(JSON.parse(h.data_json || "{}").doc_currency || "EGP").toUpperCase(); }
+                  catch { return "EGP"; }
+                })();
                 return (
                 <div key={h.id} className={`hc-item ${h.final_decision === "approve" ? "ap" : h.final_decision === "conditional" ? "co" : h.final_decision === "reject" ? "rj" : ""}${pendingDelete ? " pending" : ""}`}>
                   <span className="hc-bar" />
@@ -5363,6 +5438,7 @@ function App() {
                     {h.final_decision === "conditional" && <span className="hc-pill hc-co">{t("有条件", "Conditional")}</span>}
                     {h.final_decision === "reject" && <span className="hc-pill hc-rj">{t("已拒绝", "Rejected")}</span>}
                     <span className={`hc-pill ${h.doc_type === "import" ? "hc-imp" : "hc-bank"}`}>{h.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
+                    {snapCurrency !== "EGP" && <span className="hc-pill hc-cur" title={t("文档币种", "Document currency")}>{snapCurrency}</span>}
                     {pendingDelete && <span className="hc-pill hc-del">{t("待删除", "Pending delete")}</span>}
                     <span className="hc-date">{h.created_at}</span>
                   </div>
