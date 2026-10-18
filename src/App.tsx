@@ -1000,6 +1000,25 @@ const invoiceMatchesPoolRow = (inv: any, p: any): boolean => {
   return !is || !ps || is === ps;
 };
 
+// Pool document kind: I = invoice, C = credit note, D = debit note. Credit
+// notes cancel invoices; they are never payable themselves.
+const poolDocKind = (p: any): string => {
+  const k = String(p?.doc_kind || "").trim().toUpperCase();
+  return k || "I";
+};
+const isCreditNote = (p: any): boolean => poolDocKind(p) === "C";
+const isDebitNote = (p: any): boolean => poolDocKind(p) === "D";
+const isCancelledByCredit = (p: any): boolean => !!p?.cancelled;
+// Only real, valid, unclaimed-or-claimed invoices can be attached. Credit
+// notes, invoices cancelled by a credit note, rejected/cancelled ETA documents
+// and rows pending deletion are all blocked.
+const poolRowUsable = (p: any): boolean =>
+  !!p &&
+  !isCreditNote(p) &&
+  !isCancelledByCredit(p) &&
+  (!p.doc_status || p.doc_status === "Valid") &&
+  p.delete_requested_at == null;
+
 function App() {
   const [tab, setTab] = useState<"bank" | "import" | "suppliers" | "entries">("bank");
   const [lang, setLang] = useState<"zh" | "en">("en");
@@ -1080,7 +1099,7 @@ function App() {
   const [poolDateTo, setPoolDateTo] = useState("");
   const [poolSeller, setPoolSeller] = useState("all");
   const [poolCurrency, setPoolCurrency] = useState("all");
-  const [poolDocFilter, setPoolDocFilter] = useState<"all" | "Valid" | "Rejected" | "Cancelled">("all");
+  const [poolDocFilter, setPoolDocFilter] = useState<"all" | "Valid" | "Rejected" | "Cancelled" | "Credit">("all");
   const [poolVisible, setPoolVisible] = useState(150);
   const [poolImportProgress, setPoolImportProgress] = useState<{ processed: number; total: number; file: string } | null>(null);
   const [resultSearch, setResultSearch] = useState("");
@@ -1697,6 +1716,16 @@ function App() {
             {inv.attached_invoice && (
               <div className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${inv.attached_invoice}`}>✓ {inv.attached_invoice}</div>
             )}
+            {isCreditNote(poolFor(inv)) && (
+              <div className="attached-pill cn" title={t("该文档是贷项通知单，不能付款", "This document is a credit note and cannot be paid")}>
+                {t("贷项通知单", "Credit Note")}
+              </div>
+            )}
+            {isCancelledByCredit(poolFor(inv)) && (
+              <div className="attached-pill cn-by" title={`${t("已被贷项通知单取消", "Cancelled by credit note")}: ${poolFor(inv)?.cancelled_by || ""}${poolFor(inv)?.cancelled_via === "amount" ? ` (${t("按金额匹配", "matched by amount")})` : ""}`}>
+                ⚠ {t("已被取消", "Cancelled")}{poolFor(inv)?.cancelled_by ? ` · ${poolFor(inv)?.cancelled_by}` : ""}
+              </div>
+            )}
             {showCur && (
               <span className={`inv-cur${c === "EGP" ? " egp" : ""}`} title={rateOf(inv) > 0 ? `${c} @ ${rateOf(inv)}` : c}>
                 {c}{rateOf(inv) > 0 ? ` @${rateOf(inv)}` : ""}
@@ -1734,6 +1763,14 @@ function App() {
           <div>
             {t("以下发票币种与文档币种不同且无 ETA 汇率，无法换算，未计入对比：", "These invoices are not in the document currency and carry no ETA rate, so they cannot be converted and are excluded from the comparison:")}
             {" "}<b>{unconvertedInvoices.join(", ")}</b>
+          </div>
+        </div>
+      )}
+      {(data.invoices ?? []).some(inv => isCreditNote(poolFor(inv)) || isCancelledByCredit(poolFor(inv))) && (
+        <div className="inv-cur-note warn">
+          <span>⚠</span>
+          <div>
+            {t("本文档包含贷项通知单或已被贷项通知单取消的发票；请在付款前将其移除。", "This document contains a credit note, or an invoice cancelled by a credit note. Remove it before payment.")}
           </div>
         </div>
       )}
@@ -1870,7 +1907,7 @@ function App() {
 
   const isImport = data.doc_type === "import";
   const isRemainder = !!data.remainder_of;
-  const availablePoolCount = poolList.filter((p: any) => p.status === "available").length;
+  const availablePoolCount = poolList.filter((p: any) => p.status === "available" && poolRowUsable(p)).length;
   // EGP vs foreign-currency service split for the Import tab (shared by the
   // summary bar and the Import tab body). Lines without an A–D code or a
   // 9-digit tax id — and Nafeza/Commercial/Form 4–6 — are excluded.
@@ -4497,8 +4534,9 @@ function App() {
   const attachImportEntryFromPool = async (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
-    if (p.doc_status && p.doc_status !== "Valid") {
-      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${p.invoice_id}`);
+    const blocked = poolBlockedReason(p);
+    if (blocked) {
+      showAlert(blocked);
       return;
     }
     await ensureDraftNo();
@@ -4541,7 +4579,7 @@ function App() {
     const usable = items.filter(p => isInvoiceUsable(p.id));
     const blockedCount = items.length - usable.length;
     if (blockedCount > 0) {
-      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
+      showAlert(`${t("部分文档是贷项通知单、已被取消或已拒绝，无法使用", "Some documents are credit notes or were cancelled/rejected and cannot be used")} (${blockedCount})`);
     }
     if (usable.length === 0) return;
     const entries = [...current];
@@ -4603,8 +4641,9 @@ function App() {
     const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
     const invoiceId = p.invoice_id;
-    if (p.doc_status && p.doc_status !== "Valid") {
-      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${invoiceId}`);
+    const blocked = poolBlockedReason(p);
+    if (blocked) {
+      showAlert(blocked);
       return;
     }
     const currentInvoices = [...(formRef.current.invoices ?? [])];
@@ -4665,7 +4704,7 @@ function App() {
     const fresh = items.filter(p => !already.some(a => samePoolItem(a!, p!)) && isInvoiceUsable(p!.id));
     const blockedCount = items.length - already.length - fresh.length;
     if (blockedCount > 0) {
-      showAlert(`${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")} (${blockedCount})`);
+      showAlert(`${t("部分文档是贷项通知单、已被取消或已拒绝，无法使用", "Some documents are credit notes or were cancelled/rejected and cannot be used")} (${blockedCount})`);
     }
     if (fresh.length === 0) {
       if (blockedCount === 0) {
@@ -4799,7 +4838,11 @@ function App() {
       const res = await invoke<any>("import_to_pool", { filePaths });
       const imported: any[] = res.imported || [];
       const failed: any[] = res.failed || [];
-      let msg = `${t("已上传", "Uploaded")} ${imported.length} ${t("发票到池", "invoice(s) to pool")}`;
+      const cnCount = imported.filter((i: any) => String(i.invoice_type_code || "").toUpperCase() === "C").length;
+      let msg = `${t("已上传", "Uploaded")} ${imported.length} ${t("份文档到池", "document(s) to pool")}`;
+      if (cnCount > 0) {
+        msg += `\n${cnCount} ${t("份贷项通知单；其引用的发票会自动取消", "credit note(s); the invoices they reference are cancelled automatically")}`;
+      }
       if (failed.length > 0) {
         const names = failed.slice(0, 3).map((f: any) => f.file).join(", ");
         msg += `\n${t("跳过", "Skipped")} ${failed.length}: ${names}${failed.length > 3 ? "…" : ""}`;
@@ -4821,7 +4864,27 @@ function App() {
 
   const isInvoiceUsable = (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
-    return !p || !p.doc_status || p.doc_status === "Valid";
+    return !p || poolRowUsable(p);
+  };
+
+  // Explains why a pool row cannot be attached, so credit notes / cancelled
+  // invoices do not look like a generic "rejected" document.
+  const poolBlockedReason = (p: any): string | null => {
+    if (!p) return null;
+    if (isCreditNote(p)) {
+      return t("该文档是贷项通知单（credit note），不能加入付款文档", "This document is a credit note and cannot be added to a payment document");
+    }
+    if (isCancelledByCredit(p)) {
+      const how = p.cancelled_via === "amount" ? ` (${t("按金额匹配", "matched by amount")})` : "";
+      return `${t("该发票已被贷项通知单取消", "Invoice cancelled by credit note")}: ${p.cancelled_by || ""}${how}`;
+    }
+    if (p.doc_status && p.doc_status !== "Valid") {
+      return `${t("发票已被拒绝或取消，无法使用", "Rejected/cancelled invoices cannot be used")}: ${p.invoice_id}`;
+    }
+    if (p.delete_requested_at != null) {
+      return t("该发票待删除，无法使用", "This invoice is pending deletion and cannot be used");
+    }
+    return null;
   };
 
   const showEtaResults = (results: any[]) => {
@@ -5684,7 +5747,12 @@ function App() {
         <div className="modal-overlay history-overlay" style={{position:'fixed'}} onClick={() => setShowPool(false)}>
           <div className="modal history-modal pool-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{t("发票池", "Invoice Pool")} <span className="history-count">{poolList.length} {t("张", "invoices")} · {poolList.filter((p: any) => p.status === 'available').length} {t("未认领", "unclaimed")} · {poolList.filter((p: any) => p.status === 'used').length} {t("已认领", "claimed")}</span></h3>
+              <h3>{t("发票池", "Invoice Pool")} <span className="history-count">
+                {poolList.filter((p: any) => !isCreditNote(p)).length} {t("张发票", "invoices")}
+                {poolList.some((p: any) => isCreditNote(p)) ? ` · ${poolList.filter((p: any) => isCreditNote(p)).length} ${t("张贷项通知单", "credit notes")}` : ""}
+                {" · "}{poolList.filter((p: any) => p.status === 'available' && poolRowUsable(p)).length} {t("未认领", "unclaimed")}
+                {" · "}{poolList.filter((p: any) => p.status === 'used' && !isCreditNote(p)).length} {t("已认领", "claimed")}
+              </span></h3>
               <button className="modal-close" onClick={() => setShowPool(false)}>✕</button>
             </div>
             <div className="pool-body">
@@ -5762,17 +5830,29 @@ function App() {
                   return true;
                 });
                 const effDocFilter = poolDocFilter;
-                const tabBase = poolTab === 'all' ? base : base.filter((p: any) => p.status === (poolTab === 'unclaimed' ? 'available' : 'used'));
-                const statusCounts = { Valid: 0, Rejected: 0, Cancelled: 0 };
+                const tabBase = poolTab === 'all'
+                  ? base
+                  : base.filter((p: any) => !isCreditNote(p) && p.status === (poolTab === 'unclaimed' ? 'available' : 'used'));
+                const statusCounts = { Valid: 0, Rejected: 0, Cancelled: 0, Credit: 0 };
                 for (const p of tabBase) {
-                  const s = (p.doc_status || "Valid") as "Valid" | "Rejected" | "Cancelled";
-                  if (s in statusCounts) statusCounts[s]++;
+                  if (isCreditNote(p)) { statusCounts.Credit++; continue; }
+                  if (isCancelledByCredit(p) || (p.doc_status || "Valid") === "Cancelled") {
+                    statusCounts.Cancelled++;
+                  } else if ((p.doc_status || "Valid") === "Rejected") {
+                    statusCounts.Rejected++;
+                  } else {
+                    statusCounts.Valid++;
+                  }
                 }
-                const filtered = effDocFilter === 'all' ? tabBase : tabBase.filter((p: any) => (p.doc_status || "Valid") === effDocFilter);
-                const unclaimed = base.filter((p: any) => p.status === 'available');
-                const claimed = base.filter((p: any) => p.status === 'used');
+                const filtered = effDocFilter === 'all' ? tabBase
+                  : effDocFilter === 'Credit' ? tabBase.filter((p: any) => isCreditNote(p))
+                  : effDocFilter === 'Cancelled' ? tabBase.filter((p: any) => !isCreditNote(p) && (isCancelledByCredit(p) || (p.doc_status || "Valid") === "Cancelled"))
+                  : effDocFilter === 'Valid' ? tabBase.filter((p: any) => !isCreditNote(p) && !isCancelledByCredit(p) && (p.doc_status || "Valid") === "Valid")
+                  : tabBase.filter((p: any) => !isCreditNote(p) && (p.doc_status || "Valid") === effDocFilter);
+                const unclaimed = base.filter((p: any) => p.status === 'available' && !isCreditNote(p));
+                const claimed = base.filter((p: any) => p.status === 'used' && !isCreditNote(p));
                 const shown = filtered;
-                const selectedIds = shown.filter((p: any) => p.status === 'available' && (p.doc_status || "Valid") === "Valid" && poolSelected.has(p.id)).map((p: any) => p.id);
+                const selectedIds = shown.filter((p: any) => p.status === 'available' && poolRowUsable(p) && poolSelected.has(p.id)).map((p: any) => p.id);
                 return (
                   <>
                     <div className="pool-seg">
@@ -5792,6 +5872,7 @@ function App() {
                         ["Valid", t("有效", "Valid"), statusCounts.Valid, "var(--green)"],
                         ["Rejected", t("已拒绝", "Rejected"), statusCounts.Rejected, "var(--red)"],
                         ["Cancelled", t("已取消", "Cancelled"), statusCounts.Cancelled, "#64748b"],
+                        ["Credit", t("贷项通知单", "Credit Notes"), statusCounts.Credit, "#7c3aed"],
                       ] as [string, string, number, string][]).map(([key, label, count, color]) => (
                         <button key={key} className={`pool-chip pool-chip-${key.toLowerCase()}${poolDocFilter === key ? ' pool-chip-active' : ''}`} onClick={() => setPoolDocFilter(key as any)}>
                           <span className="dot" style={{ background: poolDocFilter === key ? '#fff' : color }} />
@@ -5829,16 +5910,34 @@ function App() {
                       ) : shown.slice(0, poolVisible).map((p: any) => {
                         const pendingDelete = p.delete_requested_at != null;
                         const docStatus = p.doc_status || "Valid";
-                        const unusable = docStatus !== "Valid";
+                        const credit = isCreditNote(p);
+                        const debit = isDebitNote(p);
+                        const cancelledByCn = isCancelledByCredit(p);
+                        const unusable = docStatus !== "Valid" || credit || cancelledByCn;
                         const cardCls = pendingDelete ? "cancelled"
+                          : credit ? "credit"
+                          : cancelledByCn ? "cancelled"
                           : unusable ? (docStatus === "Cancelled" ? "cancelled" : "rejected")
                           : p.status === 'used' ? "claimed" : "unclaimed";
                         const dim = cardCls !== "unclaimed";
+                        const cnRefs: string[] = credit ? (() => {
+                          try { return JSON.parse(p.references_json || "[]"); } catch { return []; }
+                        })() : [];
+                        const cnRefIds = cnRefs
+                          .map((u: string) => poolList.find((x: any) => String(x.uuid || "").trim().toUpperCase() === String(u).trim().toUpperCase())?.invoice_id)
+                          .filter(Boolean);
+                        const amountMatchedIds = credit
+                          ? poolList.filter((x: any) =>
+                              String(x.cancelled_by || "") === String(p.invoice_id || "") &&
+                              String(x.seller_tax_id || "") === String(p.seller_tax_id || "") &&
+                              String(x.cancelled_via || "") === "amount")
+                            .map((x: any) => x.invoice_id)
+                          : [];
                         return (
                         <div key={p.id} className={`hc-item pool-card ${cardCls}${dim ? " dim" : ""}`}>
                           <span className="hc-bar" />
                           <div className="hc-row">
-                            {(poolTab === 'unclaimed' || poolTab === 'all') && p.status === 'available' && !unusable && (
+                            {(poolTab === 'unclaimed' || poolTab === 'all') && p.status === 'available' && poolRowUsable(p) && (
                               <input
                                 type="checkbox"
                                 className="hc-check"
@@ -5854,17 +5953,35 @@ function App() {
                             <div className="hc-main">
                               <div className="hc-row1">
                                 <strong className="hc-serial">{p.invoice_id}</strong>
-                                {pendingDelete ? (
-                                  <span className="hc-pill pp-cn">⚠ {t("待删除", "Pending delete")}</span>
-                                ) : unusable ? (
+                                {pendingDelete && <span className="hc-pill pp-cn">⚠ {t("待删除", "Pending delete")}</span>}
+                                {credit ? (
+                                  <span className="hc-pill pp-cr">{t("贷项通知单", "Credit Note")}</span>
+                                ) : debit ? (
+                                  <span className="hc-pill pp-db">{t("借项通知单", "Debit Note")}</span>
+                                ) : null}
+                                {credit && docStatus !== "Valid" && (
+                                  <span className={`hc-pill ${docStatus === "Cancelled" ? "pp-cn" : "pp-rj"}`}>
+                                    {docStatus === "Cancelled" ? t("已取消", "Cancelled") : t("已拒绝", "Rejected")}
+                                  </span>
+                                )}
+                                {cancelledByCn && !credit ? (
+                                  <span className="hc-pill pp-cnby" title={p.cancelled_via === "amount"
+                                    ? t("按金额匹配的贷项通知单已全额抵销本发票", "Fully offset by a credit note matched by amount")
+                                    : t("引用本发票的贷项通知单已全额抵销", "Fully offset by a referencing credit note")}>
+                                    {t("已被贷项通知单取消", "Cancelled by credit note")}{p.cancelled_by ? ` · ${p.cancelled_by}` : ""}
+                                  </span>
+                                ) : null}
+                                {!credit && !cancelledByCn && unusable ? (
                                   docStatus === "Cancelled" ? (
                                     <span className="hc-pill pp-cn">{t("已取消", "Cancelled")}</span>
                                   ) : (
                                     <span className="hc-pill pp-rj">{t("已拒绝", "Rejected")}</span>
                                   )
-                                ) : p.status === 'used' ? (
+                                ) : null}
+                                {!credit && !cancelledByCn && !unusable && p.status === 'used' && (
                                   <span className="hc-pill pp-cl">{t("已认领", "Claimed")}</span>
-                                ) : (
+                                )}
+                                {!credit && !cancelledByCn && !unusable && p.status !== 'used' && (
                                   <span className="hc-pill pp-un">{t("未认领", "Unclaimed")}</span>
                                 )}
                                 {p.status === 'used' && p.used_by_label && (
@@ -5883,6 +6000,17 @@ function App() {
                                 {p.seller_name || p.seller_tax_id}
                                 {p.seller_name && p.seller_tax_id ? ` · ${p.seller_tax_id}` : ''}
                               </div>
+                              {credit && (
+                                <div className="hc-cn-ref">
+                                  {cnRefIds.length > 0
+                                    ? `↳ ${t("抵销", "Cancels")}: ${cnRefIds.join(", ")}`
+                                    : amountMatchedIds.length > 0
+                                      ? `↳ ${t("抵销（按金额匹配）", "Cancels (matched by amount)")}: ${amountMatchedIds.join(", ")}`
+                                      : cnRefs.length > 0
+                                        ? t("↳ 关联发票不在池中（无法自动取消）", "↳ Linked invoice not in pool (cannot auto-cancel)")
+                                        : t("↳ 未关联发票（无法自动取消）", "↳ No linked invoice (cannot auto-cancel)")}
+                                </div>
+                              )}
                               {p.file_name && (
                                 <div className="hc-file">📄 {p.file_name}</div>
                               )}
@@ -5893,7 +6021,7 @@ function App() {
                                 <span className="hc-info">{t("合计", "Total")} <b>{p.grand_total.toFixed(2)}</b></span>
                               </div>
                               <div className="hc-actions">
-                                {p.status === 'available' && !unusable && (
+                                {p.status === 'available' && poolRowUsable(p) && (
                                   <button className="hc-btn pri" onClick={() => attachFromPool(p.id)}>
                                     {t("添加", "Add")}
                                   </button>

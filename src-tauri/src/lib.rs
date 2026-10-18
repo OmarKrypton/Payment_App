@@ -316,6 +316,7 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, ids: Vec<i64>, form_json
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
     let pool = history::list_pool(conn)?;
+    let cancellations = history::credit_cancellations(conn)?;
     let mut results = Vec::new();
     for pool_id in &ids {
         let pool_inv = pool.iter().find(|p| p.id == *pool_id)
@@ -332,7 +333,7 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, ids: Vec<i64>, form_json
                 invoice_id: pool_inv.invoice_id.clone(),
                 uuid: pool_inv.uuid.clone(),
                 issue_date: pool_inv.issue_date.clone(),
-                invoice_type_code: String::new(),
+                invoice_type_code: if pool_inv.doc_kind.is_empty() { "I".to_string() } else { pool_inv.doc_kind.clone() },
                 seller_tax_id: pool_inv.seller_tax_id.clone(),
                 seller_name: pool_inv.seller_name.clone(),
                 buyer_tax_id: pool_inv.buyer_tax_id.clone(),
@@ -345,9 +346,33 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, ids: Vec<i64>, form_json
                 grand_total: pool_inv.grand_total,
                 exchange_rate: pool_inv.exchange_rate,
                 lines,
+                references: serde_json::from_str(&pool_inv.references_json).unwrap_or_default(),
             }
         };
         let mut result = eta_xml::validate_eta_against_form(&invoice, &form_json)?;
+        // A credit note is not a payable invoice, and an invoice fully offset by
+        // a credit note must not be paid either.
+        if invoice.invoice_type_code.eq_ignore_ascii_case("C") {
+            result.issues.push(eta_xml::ValidationIssue {
+                field: "Document Type".into(),
+                xml_value: "Credit note".into(),
+                form_value: String::new(),
+                severity: "error".into(),
+                message: "This document is a credit note and cannot be paid".into(),
+            });
+            result.is_valid = false;
+        }
+        if let Some(cn) = cancellations.get(&pool_inv.uuid.trim().to_uppercase()) {
+            let how = if cn.via == "amount" { "matched by amount" } else { "ETA reference" };
+            result.issues.push(eta_xml::ValidationIssue {
+                field: "Document Status".into(),
+                xml_value: format!("Cancelled by credit note {}", cn.credit_note_id),
+                form_value: String::new(),
+                severity: "error".into(),
+                message: format!("Invoice cancelled by credit note {} ({})", cn.credit_note_id, how),
+            });
+            result.is_valid = false;
+        }
         result.pool_id = Some(pool_inv.id);
         results.push(result);
     }

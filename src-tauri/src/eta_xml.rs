@@ -40,6 +40,10 @@ pub struct EtaInvoice {
     #[serde(default)]
     pub exchange_rate: f64,
     pub lines: Vec<EtaInvoiceLine>,
+    /// ETA `references` array: for a credit note, the UUID(s) of the invoice(s)
+    /// it credits/cancels. Empty for ordinary invoices.
+    #[serde(default)]
+    pub references: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +75,126 @@ fn parse_f64(s: &str) -> f64 {
 
 fn normalize_id(s: &str) -> String {
     s.trim().to_uppercase().chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// ETA document type: `I` invoice, `C` credit note, `D` debit note. Unknown or
+/// missing values fall back to `I` so every legacy pool row stays payable.
+pub fn normalize_doc_kind(s: &str) -> String {
+    match s.trim().to_uppercase().as_str() {
+        "" | "I" | "INVOICE" => "I".to_string(),
+        "C" | "CREDIT" | "CREDIT_NOTE" | "CREDITNOTE" => "C".to_string(),
+        "D" | "DEBIT" | "DEBIT_NOTE" | "DEBITNOTE" => "D".to_string(),
+        other => other.chars().next().map(|c| c.to_string()).unwrap_or_else(|| "I".to_string()),
+    }
+}
+
+/// Lightweight extraction of the two metadata fields the pool needs from the
+/// *raw* XML, without parsing the whole document. Portal exports encode the
+/// embedded JSON with HTML entities (`&#34;`) while others use plain nested XML,
+/// so both shapes are handled.
+pub fn parse_eta_meta(raw_xml: &str) -> (String, Vec<String>) {
+    let normalized = raw_xml
+        .replace("&#34;", "\"")
+        .replace("&#x22;", "\"")
+        .replace("&quot;", "\"");
+    let kind = json_string_value(&normalized, "documentType")
+        .or_else(|| xml_text(&normalized, "documentType"))
+        .map(|s| normalize_doc_kind(&s))
+        .unwrap_or_else(|| "I".to_string());
+    let refs = extract_references(&normalized);
+    (kind, refs)
+}
+
+fn json_string_value(hay: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{}\"", key);
+    let mut from = 0usize;
+    while let Some(pos) = hay[from..].find(&needle) {
+        let after_key = &hay[from + pos + needle.len()..];
+        if let Some(colon) = after_key.find(':') {
+            let after_colon = &after_key[colon + 1..];
+            if let Some(open) = after_colon.find('"') {
+                let value = &after_colon[open + 1..];
+                if let Some(close) = value.find('"') {
+                    return Some(value[..close].trim().to_string());
+                }
+            }
+        }
+        from += pos + needle.len();
+    }
+    None
+}
+
+fn xml_text(hay: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}>", tag);
+    let close = format!("</{}>", tag);
+    let start = hay.find(&open)? + open.len();
+    let end = hay[start..].find(&close)? + start;
+    Some(hay[start..end].trim().to_string())
+}
+
+fn looks_like_reference(s: &str) -> bool {
+    let t = s.trim();
+    t.len() >= 16 && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn extract_quoted_refs(arr: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = arr;
+    while let Some(open) = rest.find('"') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('"') else { break };
+        let value = after[..close].trim();
+        if looks_like_reference(value) {
+            out.push(value.to_string());
+        }
+        rest = &after[close + 1..];
+    }
+    out
+}
+
+fn extract_references(hay: &str) -> Vec<String> {
+    // JSON: "references": ["uuid", ...]
+    if let Some(pos) = hay.find("\"references\"") {
+        let rest = &hay[pos..];
+        if let Some(open) = rest.find('[') {
+            if let Some(close) = rest[open..].find(']') {
+                let refs = extract_quoted_refs(&rest[open + 1..open + close]);
+                if !refs.is_empty() {
+                    return refs;
+                }
+            }
+        }
+    }
+    // XML: <references><reference>uuid</reference></references>
+    if let Some(pos) = hay.find("<references>") {
+        let rest = &hay[pos..];
+        if let Some(end) = rest.find("</references>") {
+            let block = &rest[..end];
+            let mut out = Vec::new();
+            let mut cursor = block;
+            while let Some(open) = cursor.find("<reference>") {
+                let after = &cursor[open + "<reference>".len()..];
+                let Some(close) = after.find("</reference>") else { break };
+                let value = after[..close].trim();
+                if looks_like_reference(value) {
+                    out.push(value.to_string());
+                }
+                cursor = &after[close + "</reference>".len()..];
+            }
+            if !out.is_empty() {
+                return out;
+            }
+            // Some exports put the UUID directly inside <references>…</references>.
+            let inner = block.trim_start_matches("<references>").trim();
+            if looks_like_reference(inner) {
+                out.push(inner.to_string());
+            }
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+    Vec::new()
 }
 
 fn service_matches_invoice(service_name: &str, invoice_id: &str) -> bool {
@@ -187,6 +311,11 @@ fn xml_document_to_json(xml: &str) -> Option<serde_json::Value> {
         "receiver": { "id": text(receiver, "id").unwrap_or(""), "name": text(receiver, "name").unwrap_or("") },
         "invoiceLines": lines,
         "taxTotals": tax_totals,
+        "references": blocks(xml, "reference")
+            .iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty())
+            .collect::<Vec<_>>(),
     }))
 }
 
@@ -198,7 +327,7 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         invoice_id: String::new(),
         uuid: String::new(),
         issue_date: String::new(),
-        invoice_type_code: String::new(),
+        invoice_type_code: "I".to_string(),
         seller_tax_id: String::new(),
         seller_name: String::new(),
         buyer_tax_id: String::new(),
@@ -211,6 +340,7 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
         grand_total: 0.0,
         exchange_rate: 1.0,
         lines: Vec::new(),
+        references: Vec::new(),
     };
 
     let mut exchange_rate = 0.0;
@@ -507,6 +637,12 @@ pub fn parse_eta_xml(xml_content: &str) -> Result<EtaInvoice, String> {
     // Central identity normalization: never let stray whitespace into IDs.
     invoice.invoice_id = invoice.invoice_id.trim().to_string();
     invoice.uuid = invoice.uuid.trim().to_string();
+
+    // Document type + credit-note references. Extracted from the raw export so
+    // both the escaped-JSON and plain-XML shapes are covered.
+    let (doc_kind, references) = parse_eta_meta(xml_content);
+    invoice.invoice_type_code = doc_kind;
+    invoice.references = references;
 
     Ok(invoice)
 }
@@ -1309,5 +1445,30 @@ mod tests {
         }"#;
         let res = validate_eta_against_form(&inv, form).unwrap();
         assert!(res.is_valid, "should pass after EGP conversion: {:#?}", res.issues);
+    }
+
+    #[test]
+    fn parses_credit_note_type_and_reference() {
+        // Escaped-JSON ETA export (the portal form) carrying a credit note.
+        let xml = r#"<document><document>{&#34;internalID&#34;:&#34;CN-1&#34;,&#34;documentType&#34;:&#34;c&#34;,&#34;references&#34;:[&#34;ZNT9AQ7BA0BJB5T3VZEGYEYK10&#34;],&#34;netAmount&#34;:100,&#34;totalAmount&#34;:100}</document></document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.invoice_id, "CN-1");
+        assert_eq!(inv.invoice_type_code, "C");
+        assert_eq!(inv.references, vec!["ZNT9AQ7BA0BJB5T3VZEGYEYK10"]);
+    }
+
+    #[test]
+    fn parses_plain_xml_document_type_and_references() {
+        let xml = r#"<document><document><internalID>DN-1</internalID><documentType>D</documentType><references><reference>ABC12345678901234567890123</reference></references><invoiceLines><invoiceLine><description>x</description><quantity>1</quantity><unitValue><currencySold>EGP</currencySold><amountEGP>10</amountEGP></unitValue><netTotal>10</netTotal></invoiceLine></invoiceLines><netAmount>10</netAmount><totalAmount>10</totalAmount></document></document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        assert_eq!(inv.invoice_type_code, "D");
+        assert_eq!(inv.references, vec!["ABC12345678901234567890123"]);
+    }
+
+    #[test]
+    fn meta_defaults_to_invoice_without_document_type() {
+        let (kind, refs) = parse_eta_meta("<document><internalID>X</internalID></document>");
+        assert_eq!(kind, "I");
+        assert!(refs.is_empty());
     }
 }
