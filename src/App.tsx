@@ -5426,8 +5426,16 @@ function App() {
                 })();
                 const remInfo = snapInfo.find(r => r.label === t("剩余部分", "Remainder of"));
                 const snapCurrency = (() => {
-                  try { return String(JSON.parse(h.data_json || "{}").doc_currency || "EGP").toUpperCase(); }
-                  catch { return "EGP"; }
+                  try {
+                    const p = JSON.parse(h.data_json || "{}");
+                    if (p.doc_currency) return String(p.doc_currency).toUpperCase();
+                    // Snapshots saved before the currency field existed: infer from
+                    // the attached invoices so an old USD document is not shown as EGP.
+                    const curs = (p.invoices || [])
+                      .map((inv: any) => String(inv.currency || "").toUpperCase())
+                      .filter(Boolean);
+                    return curs.find((c: string) => c !== "EGP") || "EGP";
+                  } catch { return "EGP"; }
                 })();
                 return (
                 <div key={h.id} className={`hc-item ${h.final_decision === "approve" ? "ap" : h.final_decision === "conditional" ? "co" : h.final_decision === "reject" ? "rj" : ""}${pendingDelete ? " pending" : ""}`}>
@@ -5438,7 +5446,7 @@ function App() {
                     {h.final_decision === "conditional" && <span className="hc-pill hc-co">{t("有条件", "Conditional")}</span>}
                     {h.final_decision === "reject" && <span className="hc-pill hc-rj">{t("已拒绝", "Rejected")}</span>}
                     <span className={`hc-pill ${h.doc_type === "import" ? "hc-imp" : "hc-bank"}`}>{h.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
-                    {snapCurrency !== "EGP" && <span className="hc-pill hc-cur" title={t("文档币种", "Document currency")}>{snapCurrency}</span>}
+                    <span className={`hc-pill hc-cur${snapCurrency === "EGP" ? " egp" : ""}`} title={t("文档币种", "Document currency")}>{snapCurrency}</span>
                     {pendingDelete && <span className="hc-pill hc-del">{t("待删除", "Pending delete")}</span>}
                     <span className="hc-date">{h.created_at}</span>
                   </div>
