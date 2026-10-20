@@ -159,6 +159,18 @@ pub fn update_snapshot(conn: &Connection, id: i64, label: &str, notes: &str, dat
     Ok(())
 }
 
+/// Update only the snapshot payload. Used by metadata-only changes such as the
+/// Paid/Unpaid toggle: the document keeps its original position and date in the
+/// History Browser instead of jumping to the top as a full edit would.
+pub fn update_snapshot_data(conn: &Connection, id: i64, data_json: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE snapshots SET data = ?1 WHERE id = ?2",
+        params![data_json, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn list_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntry>, String> {
     let mut result = Vec::new();
 
@@ -1334,6 +1346,25 @@ mod pool_supersede_tests {
             params![uuid],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).unwrap()
+    }
+
+    #[test]
+    fn paid_metadata_update_keeps_created_at() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO snapshots (label, notes, created_at, data) VALUES ('DOC-1', '', '2026-01-02 03:04:05', '{\"paid\":false}')",
+            [],
+        ).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM snapshots WHERE label='DOC-1'", [], |r| r.get(0)).unwrap();
+        update_snapshot_data(&conn, id, "{\"paid\":true,\"paid_by\":\"omar\"}").unwrap();
+        let (created, data): (String, String) = conn.query_row(
+            "SELECT created_at, data FROM snapshots WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(created, "2026-01-02 03:04:05", "status toggle must not reorder history");
+        assert!(data.contains("\"paid\":true"));
     }
 
     #[test]

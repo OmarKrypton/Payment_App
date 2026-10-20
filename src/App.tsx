@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolAvailableRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -72,6 +72,8 @@ interface FormData {
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
   checklist: Record<string, { s: "" | "pass" | "fail" | "na"; n?: string }>;
   final_decision: string; conditional_reason: string; reject_reason: string; auditor: string;
+  /** Saved-document payment status. Lives in the snapshot JSON (no DB column). */
+  paid: boolean; paid_at: string; paid_by: string;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
   wht_manual_amount: boolean;
   invoices: InvoiceData[];
@@ -118,6 +120,7 @@ const EMPTY_FORM: FormData = {
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   checklist: {},
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
+  paid: false, paid_at: "", paid_by: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -147,6 +150,7 @@ const DEFAULT_FORM: FormData = {
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   checklist: {},
   final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
+  paid: false, paid_at: "", paid_by: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
   vat_rows: [{ amount: "0.00", rate: "0%" }],
@@ -926,6 +930,9 @@ interface HistoryEntry {
   id: number; label: string; notes: string; created_at: string; owner?: string;
   delete_requested_at?: string | null; delete_requested_by?: string | null;
   data_json?: string; final_decision?: string; doc_type?: string; auditor?: string;
+  paid?: boolean; paid_at?: string; paid_by?: string;
+  /** True when the row came from Supabase (id is the remote id). */
+  remote?: boolean;
   ts?: number;
 }
 
@@ -1065,7 +1072,17 @@ function App() {
   const [rateVisible, setRateVisible] = useState(true);
   const [historyFilter, setHistoryFilter] = useState<"all" | "bank" | "import">("all");
   const [historyStatusFilter, setHistoryStatusFilter] = useState<"all" | "approve" | "conditional" | "reject" | "pending">("all");
+  const [historyPaidFilter, setHistoryPaidFilter] = useState<"all" | "paid" | "unpaid">("all");
   const [historySort, setHistorySort] = useState<"newest" | "oldest" | "label">("newest");
+  // Pending Paid/Unpaid change: opening the confirmation dialog never mutates
+  // anything, so a cancelled toggle leaves the document untouched.
+  const [paidDialog, setPaidDialog] = useState<{
+    next: boolean;
+    target: { kind: "current" } | { kind: "history"; entry: HistoryEntry };
+    release: boolean;
+    claimCount: number;
+  } | null>(null);
+  const [paidBusy, setPaidBusy] = useState(false);
   const [etaResult, setEtaResult] = useState<any[] | null>(null);
   const [showEtaResult, setShowEtaResult] = useState(false);
   // ── Daily Entries (journal documents from Daily Entries PDF reports) ──
@@ -1808,14 +1825,17 @@ function App() {
   const delInv = (i: number) => {
     const inv = (formRef.current.invoices ?? [])[i];
     delRow("invoices", i);
-    if (inv && inv.invoice_no) {
-      const p = inv.attached_uuid
-        ? poolList.find((x: any) => x.uuid === inv.attached_uuid)
-        : poolList.find((x: any) => x.invoice_id === inv.invoice_no && x.status === 'used');
-      if (p) {
-        invoke("mark_pool_invoice_available", { id: p.id }).catch(() => {});
-        try { if (authUser) markPoolAvailableRemote(p.uuid); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
-      }
+    if (inv && (inv.attached_invoice || inv.attached_uuid)) {
+      // Release immediately through the shared path so the pool card flips to
+      // Unclaimed without waiting for a restart (the old code updated SQLite but
+      // never refreshed the rendered pool list).
+      const label = (formRef.current.doc_serial || "").trim() || currentClaimLabel();
+      void (async () => {
+        try {
+          const rows = await documentPoolRows({ invoices: [inv] }, label);
+          await releasePoolRows(rows);
+        } catch (e) { console.error("release deleted invoice failed", e); }
+      })();
     }
   };
 
@@ -1868,16 +1888,16 @@ function App() {
   };
   const delImportEntry = (i: number) => {
     const inv = (formRef.current.import_entries ?? [])[i];
-    const attached = inv?.attached_invoice;
+    const attached = inv?.attached_invoice || inv?.attached_uuid;
     delRow("import_entries", i);
     if (attached) {
-      const p = attached && inv?.attached_uuid
-        ? poolList.find((x: any) => x.uuid === inv.attached_uuid)
-        : poolList.find((x: any) => x.invoice_id === attached && x.status === 'used');
-      if (p) {
-        invoke("mark_pool_invoice_available", { id: p.id }).catch(() => {});
-        try { if (authUser) markPoolAvailableRemote(p.uuid); } catch (e: any) { console.error("markPoolAvailableRemote failed", e); }
-      }
+      const label = (formRef.current.doc_serial || "").trim() || currentClaimLabel();
+      void (async () => {
+        try {
+          const rows = await documentPoolRows({ import_entries: [inv] }, label);
+          await releasePoolRows(rows);
+        } catch (e) { console.error("release deleted import entry failed", e); }
+      })();
     }
   };
   const addCostRow = () => {
@@ -3092,11 +3112,15 @@ function App() {
           let final_decision = "";
           let doc_type = "bank";
           let auditor = "";
+          let paid = false, paid_at = "", paid_by = "";
           try {
             const parsed = JSON.parse(r.data_json);
             final_decision = parsed.final_decision || "";
             doc_type = parsed.doc_type || "bank";
             auditor = parsed.auditor || "";
+            paid = parsed.paid === true;
+            paid_at = parsed.paid_at || "";
+            paid_by = parsed.paid_by || "";
           } catch {}
           return {
             id: r.id,
@@ -3111,6 +3135,10 @@ function App() {
             final_decision,
             doc_type,
             auditor,
+            paid,
+            paid_at,
+            paid_by,
+            remote: true,
           };
         }));
       } catch (e) {
@@ -3121,13 +3149,17 @@ function App() {
             let final_decision = "";
             let doc_type = "bank";
             let auditor = "";
+            let paid = false, paid_at = "", paid_by = "";
             try {
               const parsed = JSON.parse(h.data_json || "{}");
               final_decision = parsed.final_decision || "";
               doc_type = parsed.doc_type || "bank";
               auditor = parsed.auditor || "";
+              paid = parsed.paid === true;
+              paid_at = parsed.paid_at || "";
+              paid_by = parsed.paid_by || "";
             } catch {}
-            return { ...h, final_decision, doc_type, auditor, ts: snapshotTs(h.created_at) };
+            return { ...h, final_decision, doc_type, auditor, paid, paid_at, paid_by, remote: false, ts: snapshotTs(h.created_at) };
           }));
         } catch (e2) {
           console.error("list_history fallback failed", e2);
@@ -3141,13 +3173,17 @@ function App() {
           let final_decision = "";
           let doc_type = "bank";
           let auditor = "";
+          let paid = false, paid_at = "", paid_by = "";
           try {
             const parsed = JSON.parse(h.data_json || "{}");
             final_decision = parsed.final_decision || "";
             doc_type = parsed.doc_type || "bank";
             auditor = parsed.auditor || "";
+            paid = parsed.paid === true;
+            paid_at = parsed.paid_at || "";
+            paid_by = parsed.paid_by || "";
           } catch {}
-          return { ...h, final_decision, doc_type, auditor, ts: snapshotTs(h.created_at) };
+          return { ...h, final_decision, doc_type, auditor, paid, paid_at, paid_by, remote: false, ts: snapshotTs(h.created_at) };
         }));
       } catch (e) {
         console.error("list_history failed", e);
@@ -3354,6 +3390,9 @@ function App() {
         }
       }
       if (!parsed.auditor) parsed.auditor = "";
+      if (parsed.paid !== true) parsed.paid = false;
+      if (!parsed.paid_at) parsed.paid_at = "";
+      if (!parsed.paid_by) parsed.paid_by = "";
       formRef.current = parsed;
       savedJsonRef.current = JSON.stringify(parsed);
       setDocStatus("saved");
@@ -4377,7 +4416,7 @@ function App() {
         const whtFree = p.doc_type === "import"
           ? ((p.import_entries || []).some((e: any) => e.free_wht) || p.checklist?.check_wht_cert?.s === "pass") && !importWhtApplied
           : (p.checklist?.check_wht_cert?.s === "pass" || !!p.check_wht_cert) && !bankWhtApplied;
-        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "", final_decision: p.final_decision || "", created_at: r.created_at || "", whtFree });
+        merged.push({ label, doc_type: p.doc_type || "bank", invoices, sellers: Array.from(sellers), taxIds: Array.from(taxIds), remainder_of: p.remainder_of || "", final_decision: p.final_decision || "", paid: p.paid === true, created_at: r.created_at || "", whtFree });
       }
       setSavedDocsIndex(merged);
     } catch {}
@@ -4762,20 +4801,237 @@ function App() {
     }
   };
 
+  // ── Pool claim release ────────────────────────────────────────────────────
+  // One path for every "put this invoice back in the pool" action: document
+  // row delete, pool Unclaim, mark-unpaid, and moving invoices to a new
+  // document. Local SQLite, Supabase and the rendered list are updated
+  // together, so the pool never keeps showing a stale "Claimed" badge.
+  const releasePoolRows = async (rows: any[]): Promise<number> => {
+    const eligible = rows.filter((r) => r && r.id != null && r.status === "used");
+    if (eligible.length === 0) return 0;
+    // Keep a concurrent periodic sync from pulling the old "used" row back
+    // while the release is still travelling to Supabase.
+    poolSyncInFlight.current = true;
+    try {
+      const ids = new Set<number>(eligible.map((r) => r.id));
+      // Optimistic repaint: the card flips to Unclaimed immediately, before the
+      // SQLite/Supabase round-trip finishes.
+      setPoolList((prev: any[]) => prev.map((p: any) =>
+        ids.has(p.id) ? { ...p, status: "available", used_by_label: "" } : p
+      ));
+      invalidateView("pool", "suppliers");
+      for (const r of eligible) {
+        try { await invoke("mark_pool_invoice_available", { id: r.id }); }
+        catch (e) { console.error("mark_pool_invoice_available failed", r.id, e); }
+      }
+      if (authUser) {
+        try {
+          await markPoolsAvailableRemote(
+            eligible.filter((r) => r.uuid).map((r) => ({ uuid: r.uuid }))
+          );
+        } catch (e) { console.error("markPoolsAvailableRemote failed", e); }
+      }
+      // Re-read the authoritative local state (also refreshes any other row that
+      // changed in the meantime) and mark the pool view fresh again.
+      try {
+        setPoolList(await invoke<any[]>("list_invoice_pool_summary"));
+        markViewLoaded("pool", "pool");
+      } catch (e) { console.error("refresh pool after release failed", e); }
+      return eligible.length;
+    } finally {
+      poolSyncInFlight.current = false;
+    }
+  };
+
+  // Resolve the pool rows a saved document references. Claims that now belong
+  // to a different document are deliberately excluded: marking an old unpaid
+  // document must never steal an invoice that was already moved elsewhere.
+  const documentPoolRows = async (doc: any, label: string): Promise<any[]> => {
+    let pool: any[] = poolList;
+    try { pool = await invoke<any[]>("list_invoice_pool_summary"); } catch {}
+    const wantedLabels = new Set<string>();
+    if (label) wantedLabels.add(label);
+    const draftNo = Number(doc?.draft_no);
+    if (Number.isFinite(draftNo) && draftNo >= 1) wantedLabels.add(draftLabel(draftNo));
+    const rows: any[] = [];
+    const seen = new Set<number>();
+    const add = (uuid: string, no: string, seller: string) => {
+      const u = String(uuid || "").trim().toUpperCase();
+      const n = String(no || "").trim();
+      const s = String(seller || "").trim();
+      if (!u && !n) return;
+      const matches = u
+        ? pool.filter((p: any) => String(p.uuid || "").trim().toUpperCase() === u)
+        : pool.filter((p: any) => String(p.invoice_id || "").trim() === n &&
+            (!s || !String(p.seller_tax_id || "").trim() || String(p.seller_tax_id || "").trim() === s));
+      for (const m of matches) {
+        if (m.status !== "used" || seen.has(m.id)) continue;
+        const by = String(m.used_by_label || "").trim();
+        if (by && wantedLabels.size > 0 && !wantedLabels.has(by)) continue;
+        seen.add(m.id);
+        rows.push(m);
+      }
+    };
+    (doc?.invoices || []).forEach((inv: any) => add(inv.attached_uuid, inv.attached_invoice || inv.invoice_no, inv.seller_tax_id));
+    (doc?.import_entries || []).forEach((e: any) => add(e.attached_uuid, e.attached_invoice, e.seller_tax_id));
+    return rows;
+  };
+
+  const paidClaimCount = (doc: any): number => {
+    const bank = (doc?.invoices || []).filter((i: any) => i?.attached_invoice).length;
+    const imp = (doc?.import_entries || []).filter((e: any) => e?.attached_invoice).length;
+    return bank + imp;
+  };
+
+  const detachAttachedInvoices = (doc: any): any => ({
+    ...doc,
+    invoices: (doc?.invoices || []).filter((i: any) => !i?.attached_invoice),
+    import_entries: (doc?.import_entries || []).filter((e: any) => !e?.attached_invoice),
+  });
+
+  const paidDateLabel = (at: string): string => {
+    if (!at) return "";
+    const d = new Date(at);
+    if (Number.isNaN(d.getTime())) return at;
+    return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+  };
+
+  const requestPaidChange = async (next: boolean, target: { kind: "current" } | { kind: "history"; entry: HistoryEntry }) => {
+    let doc: any = {};
+    let label = "";
+    try {
+      if (target.kind === "current") {
+        doc = formRef.current;
+        label = (doc.doc_serial || "").trim() || currentClaimLabel();
+      } else {
+        doc = JSON.parse(target.entry.data_json || "{}");
+        label = String(doc.doc_serial || target.entry.label || "").trim();
+      }
+    } catch {}
+    // Count the invoices that are actually claimed to this document right now,
+    // not just every attached row (a row may already have been released).
+    let count = paidClaimCount(doc);
+    try { count = (await documentPoolRows(doc, label)).length; } catch {}
+    setPaidDialog({ next, target, release: !next && count > 0, claimCount: count });
+  };
+
+  // Persist the paid flag only. For an open document we patch the stored
+  // snapshot instead of saving the whole form, so unrelated unsaved edits are
+  // never written by a simple status toggle.
+  const applyPaidStatus = async (next: boolean, target: { kind: "current" } | { kind: "history"; entry: HistoryEntry }, release: boolean) => {
+    const at = next ? new Date().toISOString() : "";
+    const by = next ? (authUser || "local") : "";
+    setPaidBusy(true);
+    try {
+      let released = 0;
+      let docForRelease: any = null;
+      let releaseLabel = "";
+      let changedLabel = "";
+
+      if (target.kind === "current") {
+        const current = formRef.current;
+        const label = (current.doc_serial || "").trim() || currentClaimLabel();
+        changedLabel = label;
+        let baseDoc: any = current;
+        if (overwriteTarget) {
+          try {
+            const raw = overwriteTarget.remote && authUser
+              ? await loadSnapshotRemote(overwriteTarget.id)
+              : await invoke<string>("load_history", { id: overwriteTarget.id });
+            baseDoc = JSON.parse(raw || "{}");
+          } catch (e) { console.error("load snapshot for paid toggle failed", e); }
+        }
+        const patched: any = { ...baseDoc, paid: next, paid_at: at, paid_by: by };
+        const finalDoc = release ? detachAttachedInvoices(patched) : patched;
+        const dataJson = JSON.stringify(finalDoc);
+        if (overwriteTarget) {
+          try {
+            if (overwriteTarget.remote && authUser) {
+              await updateSnapshotRemote(overwriteTarget.id, overwriteTarget.label, "", dataJson);
+            } else {
+              await invoke("update_history_data", { id: overwriteTarget.id, dataJson });
+            }
+            savedJsonRef.current = dataJson;
+            setSynced(true);
+          } catch (e: any) {
+            showAlert(`${t("保存付款状态失败", "Could not save payment status")}: ${e.message || e}`);
+            return;
+          }
+        }
+        formRef.current = release
+          ? { ...detachAttachedInvoices(current), paid: next, paid_at: at, paid_by: by }
+          : { ...current, paid: next, paid_at: at, paid_by: by };
+        queueFlush();
+        docForRelease = current;
+        releaseLabel = label;
+      } else {
+        const h = target.entry;
+        const parsed: any = JSON.parse(h.data_json || "{}");
+        const label = String(parsed.doc_serial || h.label || "").trim();
+        changedLabel = h.label;
+        const patched: any = { ...parsed, paid: next, paid_at: at, paid_by: by };
+        const finalDoc = release ? detachAttachedInvoices(patched) : patched;
+        const dataJson = JSON.stringify(finalDoc);
+        try {
+          if (h.remote && authUser) {
+            await updateSnapshotRemote(h.id, h.label, h.notes || "", dataJson);
+          } else {
+            await invoke("update_history_data", { id: h.id, dataJson });
+          }
+        } catch (e: any) {
+          showAlert(`${t("保存付款状态失败", "Could not save payment status")}: ${e.message || e}`);
+          return;
+        }
+        setHistoryList((prev) => prev.map((x) => x.id === h.id && x.remote === h.remote
+          ? { ...x, data_json: dataJson, paid: next, paid_at: at, paid_by: by }
+          : x));
+        // If the same document is open in the editor, mirror the change there.
+        const openLabel = (formRef.current.doc_serial || "").trim() || overwriteTarget?.label || "";
+        if (openLabel && openLabel === h.label) {
+          formRef.current = release
+            ? { ...detachAttachedInvoices(formRef.current), paid: next, paid_at: at, paid_by: by }
+            : { ...formRef.current, paid: next, paid_at: at, paid_by: by };
+          queueFlush();
+          if (overwriteTarget && overwriteTarget.label === h.label) savedJsonRef.current = dataJson;
+        }
+        docForRelease = parsed;
+        releaseLabel = label || h.label;
+      }
+
+      if (release && docForRelease) {
+        const rows = await documentPoolRows(docForRelease, releaseLabel);
+        released = await releasePoolRows(rows);
+        invalidateView("history");
+      }
+      // Rebuild the supplier/double-pay index so the new status is reflected
+      // immediately anywhere the document list is used.
+      try { await loadSavedDocsIndex(); } catch {}
+      const what = next ? t("已标记为已付款", "Marked as paid") : t("已标记为未付款", "Marked as unpaid");
+      const extra = released > 0
+        ? ` · ${released} ${t("张发票已退回发票池", "invoice(s) released to the pool")}`
+        : (!next && (paidDialog?.claimCount ?? 0) > 0 && !release
+          ? ` · ${t("发票仍保持认领状态", "invoices remain claimed")}`
+          : "");
+      showAlert(`${what} (${changedLabel})${extra}`);
+    } finally {
+      setPaidBusy(false);
+    }
+  };
+
+  const confirmPaidChange = async () => {
+    const dlg = paidDialog;
+    if (!dlg || paidBusy) return;
+    setPaidDialog(null);
+    await applyPaidStatus(dlg.next, dlg.target, dlg.release);
+  };
+
   const unclaimPoolInvoice = async (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
-    poolSyncInFlight.current = true;
     try {
-      await invoke("mark_pool_invoice_available", { id });
-      try {
-        if (authUser) await markPoolAvailableRemote(p.uuid);
-      } catch (e) { console.error("markPoolAvailableRemote failed", e); }
-      try { setPoolList(await invoke<any[]>("list_invoice_pool_summary")); } catch {}
+      await releasePoolRows([p]);
     } catch (e: any) {
       showAlert(`${t("解除认领失败", "Unclaim failed")}: ${e.message || e}`);
-    } finally {
-      poolSyncInFlight.current = false;
     }
   };
 
@@ -5136,6 +5392,7 @@ function App() {
             <span className={`doc-pill ${docPill.cls}`}>
               {docPill.label}
             </span>
+            {data.paid && <span className="doc-pill paid">✓ {t("已付款", "Paid")}</span>}
           </div>
           <div className="doc-context">
             {`${(isImport ? (data.import_entries ?? []).filter((e: any) => e.attached_invoice) : (data.invoices ?? [])).length} ${t("发票", "invoices")}`}
@@ -5147,6 +5404,20 @@ function App() {
               <span className={`doc-dot${synced ? "" : " red"}`} />
               {synced ? t("已同步", "Synced") : t("未同步", "Not synced")}
             </span>
+          </div>
+          <div className={`doc-pay-row${data.paid ? " is-paid" : ""}`}>
+            <span className="doc-pay-state">
+              {data.paid
+                ? `✓ ${t("已付款", "Paid")}${data.paid_at ? ` · ${paidDateLabel(data.paid_at)}` : ""}`
+                : `○ ${t("未付款", "Unpaid")}`}
+            </span>
+            <button
+              className={`doc-pay-btn${data.paid ? " unpay" : ""}`}
+              onClick={() => requestPaidChange(!data.paid, { kind: "current" })}
+              title={overwriteTarget ? t("立即更新保存的文档", "Updates the saved document immediately") : t("保存文档时一并保存", "Saved with the document")}
+            >
+              {data.paid ? `↺ ${t("标记未付款", "Mark unpaid")}` : `✓ ${t("标记已付款", "Mark paid")}`}
+            </button>
           </div>
         </div>
 
@@ -5407,6 +5678,75 @@ function App() {
         )}
       </main>
 
+      {paidDialog && (
+        <div
+          className="modal-overlay history-overlay paid-confirm-overlay"
+          style={{ position: 'fixed', zIndex: 10001 }}
+          onClick={() => { if (!paidBusy) setPaidDialog(null); }}
+        >
+          <div
+            className={`modal history-modal paid-confirm-modal ${paidDialog.next ? "is-paid" : "is-unpaid"}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="paid-confirm-head">
+              <span className={`paid-confirm-ico ${paidDialog.next ? "paid" : "unpaid"}`}>
+                {paidDialog.next ? "✓" : "↺"}
+              </span>
+              <div className="paid-confirm-title">
+                <h3>
+                  {paidDialog.next
+                    ? t("标记为已付款？", "Mark as paid?")
+                    : t("标记为未付款？", "Mark as unpaid?")}
+                </h3>
+                <p className="paid-confirm-serial">
+                  {paidDialog.target.kind === "current"
+                    ? ((data.doc_serial || "").trim() || draftLabel(data.draft_no ?? draftNo))
+                    : paidDialog.target.entry.label}
+                </p>
+              </div>
+            </div>
+            <p className="paid-confirm-msg">
+              {paidDialog.next
+                ? t("文档将标记为已付款，并记录付款日期和操作人。已认领的发票会继续保留在本文件上，防止被另一份文档再次认领。",
+                    "The document will be marked as paid with today’s date and your name. Its invoices stay claimed to this document so they cannot be claimed again elsewhere.")
+                : t("文档将恢复为未付款。已认领的发票可以选择退回发票池，以便认领到新的付款文档。",
+                    "The document will return to unpaid. You can release its claimed invoices back to the pool so they can be claimed on the replacement document.")}
+            </p>
+            {!paidDialog.next && paidDialog.claimCount > 0 && (
+              <label className="paid-confirm-opt">
+                <input
+                  type="checkbox"
+                  checked={paidDialog.release}
+                  onChange={e => setPaidDialog(prev => prev ? { ...prev, release: e.target.checked } : prev)}
+                />
+                <span>
+                  <b>{t(`将 ${paidDialog.claimCount} 张发票退回发票池`, `Release its ${paidDialog.claimCount} invoice(s) back to the pool`)}</b>
+                  <em>{t("发票会立即从未付款文档中移除并变为未认领，可附加到新文档。", "The invoices are removed from the unpaid document and become unclaimed immediately, ready for the new document.")}</em>
+                </span>
+              </label>
+            )}
+            <div className="paid-confirm-actions">
+              <button className="hc-btn" disabled={paidBusy} onClick={() => setPaidDialog(null)}>
+                {t("取消", "Cancel")}
+              </button>
+              <button
+                className={`hc-btn ${paidDialog.next ? "hc-pay" : "hc-unpay"}`}
+                disabled={paidBusy}
+                onClick={confirmPaidChange}
+              >
+                {paidBusy
+                  ? t("正在保存...", "Saving...")
+                  : paidDialog.next
+                    ? `✓ ${t("标记为已付款", "Mark as paid")}`
+                    : paidDialog.release
+                      ? `↺ ${t("标记未付款并退回发票", "Mark unpaid & release")}`
+                      : `↺ ${t("标记为未付款", "Mark as unpaid")}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div ref={historyOverlayRef} className="modal-overlay history-overlay" style={{ visibility: 'hidden', opacity: 0, pointerEvents: 'none' }} onClick={hideHistoryModal}>
         <div className="modal history-modal" onClick={e => e.stopPropagation()}>
           <div className="modal-header">
@@ -5427,6 +5767,9 @@ function App() {
             <button className={`st-conditional ${historyStatusFilter === "conditional" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("conditional")}>{t("有条件", "Conditional")}</button>
             <button className={`st-reject ${historyStatusFilter === "reject" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("reject")}>{t("已拒绝", "Rejected")}</button>
             <button className={`st-pending ${historyStatusFilter === "pending" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("pending")}>{t("待删除", "Pending delete")}</button>
+            <span className="history-status-sep" />
+            <button className={`st-paid ${historyPaidFilter === "paid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "paid" ? "all" : "paid")}>{t("已付款", "Paid")} <b>{historyList.filter(h => h.paid).length}</b></button>
+            <button className={`st-unpaid ${historyPaidFilter === "unpaid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "unpaid" ? "all" : "unpaid")}>{t("未付款", "Unpaid")} <b>{historyList.filter(h => !h.paid).length}</b></button>
             <GlassSelect
               className="history-sort-select"
               value={historySort}
@@ -5444,7 +5787,8 @@ function App() {
             ) : (() => {
               const typeFiltered = historyFilter === "all" ? historyList : historyList.filter(h => historyFilter === "import" ? h.doc_type === "import" : h.doc_type !== "import");
               const statusFiltered = typeFiltered.filter(h => historyStatusFilter === "all" ? true : historyStatusFilter === "pending" ? h.delete_requested_at != null : (h.final_decision || "") === historyStatusFilter);
-              const sorted = [...statusFiltered].sort((a, b) => {
+              const paidFiltered = statusFiltered.filter(h => historyPaidFilter === "all" ? true : historyPaidFilter === "paid" ? h.paid === true : h.paid !== true);
+              const sorted = [...paidFiltered].sort((a, b) => {
                 if (historySort === "label") return String(a.label || "").localeCompare(String(b.label || ""));
                 const at = a.ts ?? snapshotTs(a.created_at);
                 const bt = b.ts ?? snapshotTs(b.created_at);
@@ -5488,6 +5832,9 @@ function App() {
                   } catch { return [] as { label: string; value: string }[]; }
                 })();
                 const remInfo = snapInfo.find(r => r.label === t("剩余部分", "Remainder of"));
+                const paidInfo = h.paid
+                  ? [t("已付款", "Paid"), h.paid_at ? paidDateLabel(h.paid_at) : "", h.paid_by ? h.paid_by.split("@")[0] : ""].filter(Boolean).join(" · ")
+                  : t("未付款", "Not paid");
                 const snapCurrency = (() => {
                   try {
                     const p = JSON.parse(h.data_json || "{}");
@@ -5501,7 +5848,7 @@ function App() {
                   } catch { return "EGP"; }
                 })();
                 return (
-                <div key={h.id} className={`hc-item ${h.final_decision === "approve" ? "ap" : h.final_decision === "conditional" ? "co" : h.final_decision === "reject" ? "rj" : ""}${pendingDelete ? " pending" : ""}`}>
+                <div key={h.id} className={`hc-item ${h.final_decision === "approve" ? "ap" : h.final_decision === "conditional" ? "co" : h.final_decision === "reject" ? "rj" : ""}${pendingDelete ? " pending" : ""}${h.paid ? " paid-doc" : " unpaid-doc"}`}>
                   <span className="hc-bar" />
                   <div className="hc-row1">
                     <strong className="hc-serial">{h.label}</strong>
@@ -5510,12 +5857,14 @@ function App() {
                     {h.final_decision === "reject" && <span className="hc-pill hc-rj">{t("已拒绝", "Rejected")}</span>}
                     <span className={`hc-pill ${h.doc_type === "import" ? "hc-imp" : "hc-bank"}`}>{h.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
                     <span className={`hc-pill hc-cur${snapCurrency === "EGP" ? " egp" : ""}`} title={t("文档币种", "Document currency")}>{snapCurrency}</span>
+                    <span className={`hc-pill ${h.paid ? "hc-paid" : "hc-unpaid"}`}>{h.paid ? `✓ ${t("已付款", "Paid")}` : `○ ${t("未付款", "Unpaid")}`}</span>
                     {pendingDelete && <span className="hc-pill hc-del">{t("待删除", "Pending delete")}</span>}
                     <span className="hc-date">{h.created_at}</span>
                   </div>
                   <div className="hc-meta">
                     {isOwn ? t("我的", "Mine") : t("他人", "Other user")}
                     {auditorName ? ` · ${t("审核", "auditor")} ${auditorName}` : ""}
+                    <span className={h.paid ? " hc-paid-meta" : ""}> · {paidInfo}</span>
                     {remInfo ? ` · ⤷ ${t("剩余", "remainder of")} ${remInfo.value}` : ""}
                   </div>
                   {snapInfo.length > 0 && (
@@ -5530,6 +5879,12 @@ function App() {
                   )}
                   <div className="hc-actions">
                     <button className="hc-btn pri" onClick={() => loadSnapshot(h.id)}>Load</button>
+                    <button
+                      className={`hc-btn ${h.paid ? "hc-unpay" : "hc-pay"}`}
+                      onClick={() => requestPaidChange(!h.paid, { kind: "history", entry: h })}
+                    >
+                      {h.paid ? `↺ ${t("标记未付款", "Mark unpaid")}` : `✓ ${t("标记已付款", "Mark paid")}`}
+                    </button>
                     {isAdminUser && pendingDelete && (
                       <>
                         <button className="hc-btn hc-ok" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>

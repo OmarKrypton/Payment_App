@@ -88,6 +88,15 @@ pub struct FormData {
     pub reject_reason: String,
     #[serde(default)]
     pub auditor: String,
+    /// Payment status of the saved document. Stored in the snapshot itself so it
+    /// stays local-first and syncs through the existing snapshot table (no
+    /// schema migration). Older documents simply default to unpaid.
+    #[serde(default)]
+    pub paid: bool,
+    #[serde(default)]
+    pub paid_at: String,
+    #[serde(default)]
+    pub paid_by: String,
     pub audit_notes: String,
     pub vat_manual: bool,
     pub wht_manual: bool,
@@ -172,6 +181,9 @@ impl Default for FormData {
             conditional_reason: String::new(),
             reject_reason: String::new(),
             auditor: String::new(),
+            paid: false,
+            paid_at: String::new(),
+            paid_by: String::new(),
             audit_notes: String::new(),
             vat_manual: false,
             wht_manual: false,

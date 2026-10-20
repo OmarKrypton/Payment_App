@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vouchify — Paid / Unpaid Mockup</title>
+<style>
+  :root{
+    --bg-body:#eef1f6;
+    --bg-card:#fff;
+    --border:#e2e8f0;
+    --text-primary:#1e293b;
+    --text-secondary:#64748b;
+    --text-muted:#94a3b8;
+    --accent:#3b82f6;
+    --accent-hover:#2563eb;
+    --accent-light:#eff6ff;
+    --green:#16a34a;
+    --green-bg:#f0fdf4;
+    --orange:#ea580c;
+    --red:#dc2626;
+    --red-bg:#fef2f2;
+    --violet:#7c3aed;
+    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+    --mono:'JetBrains Mono','Fira Code','Consolas',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:var(--font);color:var(--text-primary);
+    background:
+      radial-gradient(900px 500px at 8% -5%,rgba(99,102,241,.18),transparent 55%),
+      radial-gradient(900px 600px at 100% 0%,rgba(59,130,246,.16),transparent 50%),
+      radial-gradient(700px 600px at 55% 110%,rgba(16,185,129,.10),transparent 55%),
+      #eef1f6;
+    min-height:100vh;padding:38px 30px 60px;
+  }
+  .wrap{max-width:1260px;margin:0 auto}
+  .page-title{font-size:26px;font-weight:800;letter-spacing:-.02em}
+  .page-sub{margin-top:6px;font-size:13px;color:var(--text-secondary);max-width:820px;line-height:1.55}
+  .tagrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .tag{font-size:10px;font-weight:750;letter-spacing:.04em;text-transform:uppercase;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.9);color:var(--text-secondary);box-shadow:0 2px 8px rgba(15,23,42,.05)}
+  .tag.rec{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+
+  .board{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,.88fr);gap:22px;margin-top:26px;align-items:start}
+  @media (max-width:1040px){.board{grid-template-columns:1fr}}
+  .panel{background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.85);border-radius:20px;padding:18px;box-shadow:0 22px 60px rgba(15,23,42,.12),inset 0 1px 0 rgba(255,255,255,.9);backdrop-filter:blur(20px) saturate(160%)}
+  .panel-label{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:0 0 13px 3px}
+  .num{width:20px;height:20px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#3b82f6,#2563eb);color:#fff;font-size:10px;box-shadow:0 3px 8px rgba(37,99,235,.35)}
+  .note{font-size:11.5px;line-height:1.55;color:var(--text-secondary);margin-top:12px;padding:10px 12px;border-radius:11px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.9)}
+  .note b{color:var(--text-primary)}
+
+  /* ─── history modal ─── */
+  .modal{background:linear-gradient(180deg,rgba(255,255,255,.82),rgba(255,255,255,.62));backdrop-filter:blur(26px) saturate(180%);border:1px solid rgba(255,255,255,.85);border-radius:18px;box-shadow:0 30px 70px rgba(15,23,42,.24),inset 0 1px 0 rgba(255,255,255,.95);overflow:hidden}
+  .modal-header{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid rgba(15,23,42,.06)}
+  .modal-header h3{font-size:15px;font-weight:750;display:flex;align-items:center;gap:7px}
+  .history-count{font-size:10px;font-weight:600;color:var(--text-muted)}
+  .x{width:27px;height:27px;border-radius:8px;border:1px solid rgba(255,255,255,.9);background:rgba(255,255,255,.6);color:var(--text-secondary);cursor:pointer;font-size:13px}
+  .modal-search{padding:12px 18px 10px}
+  .field{width:100%;padding:9px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.7);font-family:inherit;font-size:12px;color:var(--text-primary);outline:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.9)}
+  .field::placeholder{color:var(--text-muted)}
+  .filters{display:flex;gap:6px;flex-wrap:wrap;padding:0 18px;margin-bottom:8px}
+  .fbtn{border-radius:999px;padding:5px 12px;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.95);color:var(--text-secondary);font-size:11px;font-weight:650;font-family:inherit;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.9);transition:transform .22s cubic-bezier(.34,1.56,.64,1),box-shadow .2s}
+  .fbtn:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.13)}
+  .fbtn b{font-family:var(--mono);font-size:9.5px;opacity:.82;margin-left:3px}
+  .fbtn.active{background:rgba(37,99,235,.94);border-color:#2563eb;color:#fff}
+  .fbtn.paid{color:#15803d;background:#f0fdf4;border-color:#bbf7d0}
+  .fbtn.paid.active{background:var(--green);border-color:var(--green);color:#fff}
+  .fbtn.unpaid{color:#475569;background:#f8fafc;border-color:#e2e8f0}
+  .fbtn.unpaid.active{background:#475569;border-color:#475569;color:#fff}
+  .split{width:1px;height:18px;background:rgba(15,23,42,.08);margin:0 3px;align-self:center}
+  .sortwrap{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .sort{border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.65);border-radius:9px;padding:6px 10px;font-size:11px;color:var(--text-secondary);font-family:inherit}
+
+  .list{padding:12px 16px 16px;display:flex;flex-direction:column;gap:8px;max-height:610px;overflow-y:auto}
+  .list::-webkit-scrollbar{width:8px}
+  .list::-webkit-scrollbar-thumb{background:rgba(15,23,42,.2);border-radius:99px;border:2px solid transparent;background-clip:content-box}
+
+  .card{position:relative;border:1px solid rgba(255,255,255,.9);background:rgba(255,255,255,.58);border-radius:13px;padding:11px 12px 11px 14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 2px 8px rgba(15,23,42,.06);transition:box-shadow .18s,border-color .18s,transform .18s}
+  .card:hover{box-shadow:0 10px 24px rgba(15,23,42,.10),inset 0 1px 0 rgba(255,255,255,.95);transform:translateY(-1px)}
+  .bar{position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:3px;background:#cbd5e1}
+  .card.ap .bar{background:var(--green)}
+  .card.co .bar{background:var(--orange)}
+  .card.rj .bar{background:var(--red)}
+  .card.is-paid{background:linear-gradient(90deg,rgba(240,253,244,.72),rgba(255,255,255,.58) 45%);border-color:#d7f3df}
+  .card.is-paid .bar{background:var(--green)}
+  .card.is-unpaid .bar{background:#94a3b8}
+  .row1{display:flex;align-items:center;gap:7px;min-width:0;padding-left:6px}
+  .serial{font-family:var(--mono);font-weight:750;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .p-ap{color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0}
+  .p-co{color:#b45309;background:#fffbeb;border:1px solid #fde68a}
+  .p-bank{color:var(--text-secondary);background:#f1f5f9;border:1px solid #e2e8f0}
+  .p-cur{color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe}
+  .p-paid{color:#fff;background:linear-gradient(180deg,#22c55e,#16a34a);border:1px solid #15803d;box-shadow:0 3px 8px rgba(22,163,74,.28)}
+  .p-unpaid{color:#475569;background:#f1f5f9;border:1px solid #cbd5e1}
+  .p-warn{color:#b45309;background:#fffbeb;border:1px solid #fde68a}
+  .date{margin-left:auto;font-size:10.5px;color:var(--text-muted);white-space:nowrap}
+  .meta{font-size:10.5px;color:var(--text-secondary);margin-top:6px;padding-left:6px}
+  .meta .paynote{color:#15803d;font-weight:650}
+  .infos{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding-left:6px}
+  .info{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:var(--text-secondary);background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.95);border-radius:7px;padding:2px 8px;max-width:100%}
+  .info span{color:var(--text-muted)}
+  .info b{font-family:var(--mono);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .actions{display:flex;gap:6px;margin-top:10px;padding-left:6px;flex-wrap:wrap;align-items:center}
+  .btn{position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.68);color:var(--text-secondary);border-radius:8px;padding:6px 12px;font-size:11px;font-weight:650;font-family:inherit;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.9);transition:transform .22s cubic-bezier(.34,1.56,.64,1),box-shadow .2s,color .2s,border-color .2s}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(15,23,42,.14)}
+  .btn.pri{background:linear-gradient(180deg,#3b82f6,#2563eb);border-color:#2563eb;color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.35),inset 0 1px 0 rgba(255,255,255,.4)}
+  .btn.pay{background:linear-gradient(180deg,#22c55e,#16a34a);border-color:#15803d;color:#fff;box-shadow:0 4px 12px rgba(22,163,74,.28),inset 0 1px 0 rgba(255,255,255,.35)}
+  .btn.unpay{color:#475569;border-color:#cbd5e1}
+  .btn.danger{color:var(--red);border-color:#fecaca}
+  .btn.ghost{background:transparent;box-shadow:none}
+  .spacer{flex:1}
+  .hint{font-size:9.5px;color:var(--text-muted);margin-left:2px}
+
+  /* ─── sidebar / doc preview ─── */
+  .side-panel{background:linear-gradient(180deg,#16233a 0%,#141e30 55%,#101a2b 100%);border-radius:18px;padding:18px 16px;box-shadow:0 26px 60px rgba(15,23,42,.30);border:1px solid rgba(255,255,255,.06);color:#fff}
+  .side-brand{display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.07)}
+  .logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#3b82f6,#7c3aed);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;box-shadow:0 6px 16px rgba(59,130,246,.35)}
+  .side-brand h4{font-size:14px;font-weight:700}.side-brand p{font-size:9px;color:rgba(255,255,255,.45);text-transform:uppercase;letter-spacing:.06em}
+  .doc{background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(99,102,241,.06));border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:12px;margin-top:14px}
+  .doc-top{display:flex;align-items:center;gap:8px}
+  .doc-serial{font-family:var(--mono);font-size:12.5px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dpill{font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px}
+  .dpill.saved{color:#4ade80;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.35)}
+  .dpill.paid{color:#052e16;background:linear-gradient(180deg,#4ade80,#22c55e);border:1px solid #16a34a;box-shadow:0 3px 10px rgba(34,197,94,.35)}
+  .dpill.unpaid{color:#fbbf24;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35)}
+  .doc-context{font-size:10px;color:rgba(255,255,255,.45);margin-top:5px}
+  .doc-chips{display:flex;align-items:center;gap:6px;margin-top:9px}
+  .chip{font-size:8.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.62)}
+  .sync{display:flex;align-items:center;gap:5px;font-size:8.5px;color:rgba(255,255,255,.45);margin-left:auto}
+  .dot{width:6px;height:6px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.15)}
+  .pay-card{margin-top:12px;border-radius:12px;padding:11px 12px;background:rgba(255,255,255,.045);border:1px dashed rgba(255,255,255,.13)}
+  .pay-card .lab{font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.4)}
+  .pay-card .val{font-size:13px;font-weight:750;margin-top:4px;display:flex;align-items:center;gap:7px}
+  .pay-card .sub{font-size:9.5px;color:rgba(255,255,255,.42);margin-top:4px;line-height:1.45}
+  .side-btn{margin-top:10px;width:100%;border-radius:9px;padding:9px 12px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);color:#fff;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;transition:.18s}
+  .side-btn:hover{background:rgba(255,255,255,.13)}
+  .side-btn.green{background:linear-gradient(180deg,#22c55e,#16a34a);border-color:#16a34a;box-shadow:0 6px 16px rgba(22,163,74,.28)}
+  .side-btn.green:hover{filter:brightness(1.05)}
+  .stats{display:grid;gap:7px;margin-top:12px}
+  .stat{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:8px 10px}
+  .stat b{display:block;font-family:var(--mono);font-size:12px;color:#4ade80}
+  .stat span{font-size:8.5px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.38)}
+
+  /* ─── release / unclaim panel ─── */
+  .sheet{background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(255,255,255,.72));border:1px solid rgba(255,255,255,.95);border-radius:16px;box-shadow:0 20px 50px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.95);overflow:hidden}
+  .sheet-head{display:flex;align-items:center;gap:10px;padding:13px 15px;border-bottom:1px solid rgba(15,23,42,.06)}
+  .sheet-head h4{font-size:12.5px;font-weight:750}
+  .sheet-head p{font-size:10px;color:var(--text-muted);margin-top:2px}
+  .sheet-body{padding:13px 15px}
+  .inv-row{display:flex;align-items:center;gap:10px;padding:10px 11px;border-radius:11px;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.95);box-shadow:inset 0 1px 0 #fff;margin-bottom:7px}
+  .inv-row .att{font-size:9px;font-weight:750;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:2px 7px;white-space:nowrap}
+  .inv-main{min-width:0;flex:1}
+  .inv-main .n{font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .inv-main .s{font-size:9.5px;color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .amt{font-family:var(--mono);font-size:11px;font-weight:700}
+  .release{font-size:9.5px;font-weight:750;padding:5px 9px;border-radius:7px;border:1px solid #fde68a;background:#fffbeb;color:#b45309;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .release:hover{background:#fef3c7}
+  .released{font-size:9px;font-weight:800;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:999px;padding:3px 8px;white-space:nowrap}
+  .toast{margin-top:10px;display:none;align-items:center;gap:8px;padding:9px 11px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;font-size:10.5px;font-weight:600}
+  .toast.show{display:flex;animation:pop .35s cubic-bezier(.34,1.56,.64,1)}
+  @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+  /* ─── confirm dialog ─── */
+  .confirm{width:100%;background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.78));border:1px solid rgba(255,255,255,.98);border-radius:16px;box-shadow:0 20px 50px rgba(15,23,42,.18),inset 0 1px 0 #fff;padding:16px}
+  .confirm h4{font-size:13.5px;font-weight:750;display:flex;align-items:center;gap:9px}
+  .ico{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+  .ico.green{background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a}
+  .ico.amber{background:#fffbeb;border:1px solid #fde68a;color:#ea580c}
+  .confirm p{font-size:11.5px;color:var(--text-secondary);line-height:1.55;margin-top:10px}
+  .opt{display:flex;gap:9px;align-items:flex-start;margin-top:11px;padding:10px 11px;border-radius:10px;background:rgba(255,255,255,.65);border:1px solid rgba(15,23,42,.07);cursor:pointer}
+  .opt input{margin-top:2px;accent-color:var(--accent);width:14px;height:14px;flex:none}
+  .opt b{font-size:10.5px;display:block}
+  .opt span{font-size:9.5px;color:var(--text-muted);line-height:1.45;display:block;margin-top:2px}
+  .confirm-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:14px;flex-wrap:wrap}
+
+  .divider{height:1px;background:rgba(15,23,42,.07);margin:16px 0}
+  .caption{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin:0 0 9px 2px}
+  .legend{display:flex;flex-direction:column;gap:9px;margin-top:4px}
+  .legend .li{display:flex;gap:9px;align-items:flex-start;font-size:11.5px;color:var(--text-secondary);line-height:1.5}
+  .legend .k{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:999px;flex:none;margin-top:1px}
+  .k.g{color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0}
+  .k.s{color:#475569;background:#f1f5f9;border:1px solid #cbd5e1}
+  .k.b{color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe}
+  .k.a{color:#b45309;background:#fffbeb;border:1px solid #fde68a}
+  .legend b{color:var(--text-primary)}
+  .foot{margin-top:22px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;color:var(--text-muted);font-size:10.5px}
+  .foot .choice{display:flex;gap:8px}
+  .choice button{font-family:inherit;font-size:10.5px;font-weight:700;padding:7px 12px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:var(--text-secondary);cursor:pointer}
+  .choice button.on{background:#2563eb;border-color:#2563eb;color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="page-title">Paid / Unpaid document status</div>
+  <div class="page-sub">
+    A document can be marked <b>Paid</b> or <b>Unpaid</b> from the History Browser or from the open document.
+    The state is stored inside the snapshot itself, so it follows the document to every device and survives sync.
+    Releasing an invoice always refreshes the pool immediately — no app restart.
+  </div>
+  <div class="tagrow">
+    <span class="tag rec">Recommended · Option A</span>
+    <span class="tag">Status pill on every history card</span>
+    <span class="tag">Toggle in card actions</span>
+    <span class="tag">Paid / Unpaid filter</span>
+    <span class="tag">Live claim release</span>
+  </div>
+
+  <div class="board">
+    <!-- ══════════ left: history browser ══════════ -->
+    <div class="panel">
+      <div class="panel-label"><span class="num">1</span> History Browser — status pills, filters and toggle</div>
+      <div class="modal">
+        <div class="modal-header">
+          <h3>History Browser <span class="history-count">42 docs</span></h3>
+          <button class="x">✕</button>
+        </div>
+        <div class="modal-search"><input class="field" placeholder="Search snapshots..." /></div>
+
+        <div class="filters">
+          <button class="fbtn active">All <b>42</b></button>
+          <button class="fbtn">Bank <b>31</b></button>
+          <button class="fbtn">Import <b>11</b></button>
+        </div>
+        <div class="filters">
+          <button class="fbtn paid active" id="fPaid">● Paid <b>18</b></button>
+          <button class="fbtn unpaid" id="fUnpaid">○ Unpaid <b>24</b></button>
+          <span class="split"></span>
+          <button class="fbtn">Approved</button>
+          <button class="fbtn">Conditional</button>
+          <button class="fbtn">Pending delete</button>
+          <div class="sortwrap"><select class="sort"><option>Newest first</option><option>Oldest first</option><option>Serial A–Z</option></select></div>
+        </div>
+
+        <div class="list">
+          <!-- PAID CARD -->
+          <div class="card ap is-paid" id="card1">
+            <span class="bar"></span>
+            <div class="row1">
+              <strong class="serial">ADT-D02M-2026-000481</strong>
+              <span class="pill p-ap">Approved</span>
+              <span class="pill p-bank">Bank</span>
+              <span class="pill p-cur">EGP</span>
+              <span class="pill p-paid" id="pill1">✓ Paid</span>
+              <span class="date">14 Oct 2026</span>
+            </div>
+            <div class="meta"><span class="paynote" id="paynote1">Paid 18 Oct 2026 · Omar</span> · Mine · auditor omar</div>
+            <div class="infos">
+              <span class="info"><span>Seller TAX ID</span><b>100-203-441</b></span>
+              <span class="info"><span>Invoices</span><b>INV-2026-0184</b></span>
+            </div>
+            <div class="actions">
+              <button class="btn pri">Load</button>
+              <button class="btn unpay" id="toggle1" onclick="toggleCard(1)">↺ Mark unpaid</button>
+              <span class="spacer"></span>
+              <span class="hint">2 invoices claimed</span>
+            </div>
+          </div>
+
+          <!-- UNPAID, WITH WARNING -->
+          <div class="card co is-unpaid" id="card2">
+            <span class="bar"></span>
+            <div class="row1">
+              <strong class="serial">ADT-IMP-2026-000117</strong>
+              <span class="pill p-co">Conditional</span>
+              <span class="pill p-bank">Bank</span>
+              <span class="pill p-cur">USD</span>
+              <span class="pill p-unpaid" id="pill2">○ Unpaid</span>
+              <span class="date">11 Oct 2026</span>
+            </div>
+            <div class="meta"><span id="paynote2">Not paid</span> · Mine · auditor omar</div>
+            <div class="infos">
+              <span class="info"><span>Seller TAX ID</span><b>100-884-120</b></span>
+              <span class="info"><span>Invoices</span><b>INV-8831</b></span>
+            </div>
+            <div class="actions">
+              <button class="btn pri">Load</button>
+              <button class="btn pay" id="toggle2" onclick="toggleCard(2)">✓ Mark paid</button>
+              <button class="btn danger" onclick="releaseInvoice()">Release invoices</button>
+              <span class="spacer"></span>
+              <span class="hint">1 invoice claimed</span>
+            </div>
+          </div>
+
+          <!-- PLAIN UNPAID -->
+          <div class="card is-unpaid">
+            <span class="bar"></span>
+            <div class="row1">
+              <strong class="serial">ADT-D02M-2026-000462</strong>
+              <span class="pill p-bank">Bank</span>
+              <span class="pill p-cur">EGP</span>
+              <span class="pill p-unpaid">○ Unpaid</span>
+              <span class="date">08 Oct 2026</span>
+            </div>
+            <div class="meta">Not paid · Mine · auditor sara</div>
+            <div class="actions">
+              <button class="btn pri">Load</button>
+              <button class="btn pay">✓ Mark paid</button>
+              <span class="spacer"></span>
+              <span class="hint">3 invoices claimed</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="note">
+        <b>Filters:</b> Paid / Unpaid sits beside the existing decision filters and combines with them
+        (e.g. Approved + Unpaid). The card itself gets a green tint only when paid; unpaid stays neutral so
+        the history list does not look alarming.
+      </div>
+    </div>
+
+    <!-- ══════════ right: open document + release ══════════ -->
+    <div style="display:flex;flex-direction:column;gap:22px">
+      <div class="panel">
+        <div class="panel-label"><span class="num">2</span> Open document — sidebar status &amp; toggle</div>
+        <div class="side-panel">
+          <div class="side-brand">
+            <div class="logo">V</div>
+            <div><h4>Vouchify</h4><p>Payment Voucher</p></div>
+          </div>
+          <div class="doc">
+            <div class="doc-top">
+              <span class="doc-serial">ADT-D02M-2026-000481</span>
+              <span class="dpill saved">Saved</span>
+              <span class="dpill paid" id="sidePill">✓ Paid</span>
+            </div>
+            <div class="doc-context">2 invoices · 100-203-441</div>
+            <div class="doc-chips"><span class="chip">Bank</span><span class="sync"><span class="dot"></span>Synced</span></div>
+
+            <div class="pay-card">
+              <div class="lab">Payment status</div>
+              <div class="val" id="sideTitle">Paid on 18 Oct 2026</div>
+              <div class="sub" id="sideSub">Marked by Omar · invoices stay claimed to this document.</div>
+              <button class="side-btn" id="sideBtn" onclick="toggleSide()">↺ Mark as unpaid</button>
+            </div>
+          </div>
+          <div class="stats">
+            <div class="stat"><b>EGP 146,250.00</b><span>Net payable</span></div>
+            <div class="stat"><b>EGP 20,475.00</b><span>Deductions</span></div>
+          </div>
+        </div>
+        <div class="note">
+          The sidebar status is the one source of truth while editing. Toggling it saves the snapshot and syncs
+          the status immediately — the document does not need to be re-saved.
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-label"><span class="num">3</span> Releasing invoices — the unclaim fix</div>
+        <div class="sheet">
+          <div class="sheet-head">
+            <div class="ico amber">↺</div>
+            <div><h4>Invoices in this document</h4><p>Releasing an invoice returns it to the pool instantly.</p></div>
+          </div>
+          <div class="sheet-body">
+            <div class="inv-row">
+              <span class="att">✓ INV-8831</span>
+              <div class="inv-main"><div class="n">Delta Trading Co.</div><div class="s">Seller 100-884-120 · USD @ 48.55</div></div>
+              <span class="amt">USD 3,000.00</span>
+              <button class="release" onclick="releaseInvoice()">Release</button>
+            </div>
+            <div class="inv-row" id="releasedRow" style="display:none">
+              <span class="released">✓ Released to pool</span>
+              <div class="inv-main"><div class="n">Delta Trading Co.</div><div class="s">Seller 100-884-120 · USD @ 48.55</div></div>
+              <span class="amt">USD 3,000.00</span>
+              <button class="btn" style="font-size:9.5px;padding:5px 9px" onclick="reclaim()">Claim again</button>
+            </div>
+            <div class="toast" id="toast">✓ Invoice released — now <b>Unclaimed</b> and available in the pool.</div>
+            <div class="note" style="margin-top:10px">
+              Fixes the current bug: deleting an invoice from a document updated SQLite/Supabase but never
+              refreshed the in-memory pool, so it still looked claimed until an app restart. The new action
+              updates the local row, the cloud row and the visible list in one step.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-label"><span class="num">4</span> Mark unpaid — offers to release claims</div>
+        <div class="confirm">
+          <h4><span class="ico green">✓</span> Mark ADT-IMP-2026-000117 as paid?</h4>
+          <p>The document will be marked <b>Paid</b> on 20 Oct 2026 by you. Paid documents are filtered separately and keep their invoices claimed.</p>
+          <div class="opt"><input type="checkbox" disabled /><div><b>Keep invoices claimed to this document</b><span>Default for paid documents. Prevents the same invoice from being claimed on another document.</span></div></div>
+          <div class="confirm-actions">
+            <button class="btn ghost">Cancel</button>
+            <button class="btn pay">✓ Mark as paid</button>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="confirm">
+          <h4><span class="ico amber">↺</span> Mark ADT-IMP-2026-000117 as unpaid?</h4>
+          <p>This document will return to <b>Unpaid</b>. You can release its invoices so they can be claimed on the replacement document.</p>
+          <label class="opt"><input type="checkbox" checked /><div><b>Release its 1 invoice back to the pool</b><span>The invoice becomes Unclaimed immediately on this device and in the cloud, ready to attach to the new document.</span></div></label>
+          <div class="confirm-actions">
+            <button class="btn ghost">Cancel</button>
+            <button class="btn unpay">Mark unpaid &amp; release</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:22px">
+    <div class="panel-label"><span class="num">i</span> Behaviour summary</div>
+    <div class="legend">
+      <div class="li"><span class="k g">Paid</span><div><b>Stored with the document:</b> <code>paid: true</code>, <code>paid_at</code>, <code>paid_by</code> inside the snapshot JSON. No Supabase schema migration; the existing snapshot update/sync carries it to every device.</div></div>
+      <div class="li"><span class="k s">Unpaid</span><div><b>Default for every existing document</b> — no flag needed. Legacy snapshots show as Unpaid without being rewritten.</div></div>
+      <div class="li"><span class="k b">Toggle</span><div><b>Where:</b> history card action, open-document sidebar, and (optional) a compact switch in the document toolbar. The two views stay in sync because both write the snapshot and refresh the list.</div></div>
+      <div class="li"><span class="k a">Release</span><div><b>When marking unpaid</b> the dialog offers “Release invoices back to the pool”. Releasing updates local SQLite, Supabase and the rendered pool list in one action, so the invoice is immediately claimable elsewhere.</div></div>
+      <div class="li"><span class="k g">Guard</span><div>Marking paid keeps claims locked to the document; the existing double-pay warning still flags an invoice that also appears in another document.</div></div>
+    </div>
+    <div class="foot">
+      <span>Mockup only — no code changes yet. Tell me which option you prefer, or what to adjust.</span>
+      <div class="choice">
+        <button class="on">Option A · pill + toggle</button>
+        <button>Option B · switch only</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const state = {1:true, 2:false};
+
+  function toggleCard(n){
+    state[n] = !state[n];
+    const card = document.getElementById('card' + n);
+    const pill = document.getElementById('pill' + n);
+    const btn  = document.getElementById('toggle' + n);
+    const note = document.getElementById('paynote' + n);
+    card.classList.toggle('is-paid', state[n]);
+    card.classList.toggle('is-unpaid', !state[n]);
+    pill.className = 'pill ' + (state[n] ? 'p-paid' : 'p-unpaid');
+    pill.textContent = state[n] ? '✓ Paid' : '○ Unpaid';
+    btn.className = 'btn ' + (state[n] ? 'unpay' : 'pay');
+    btn.textContent = state[n] ? '↺ Mark unpaid' : '✓ Mark paid';
+    note.textContent = state[n] ? 'Paid 20 Oct 2026 · Omar' : 'Not paid';
+    note.className = state[n] ? 'paynote' : '';
+  }
+
+  let sidePaid = true;
+  function toggleSide(){
+    sidePaid = !sidePaid;
+    const p = document.getElementById('sidePill');
+    p.className = 'dpill ' + (sidePaid ? 'paid' : 'unpaid');
+    p.textContent = sidePaid ? '✓ Paid' : '○ Unpaid';
+    document.getElementById('sideTitle').textContent = sidePaid ? 'Paid on 20 Oct 2026' : 'Not paid';
+    document.getElementById('sideSub').textContent = sidePaid
+      ? 'Marked by Omar · invoices stay claimed to this document.'
+      : 'Unpaid · release its invoices to claim them on another document.';
+    document.getElementById('sideBtn').textContent = sidePaid ? '↺ Mark as unpaid' : '✓ Mark as paid';
+  }
+
+  function releaseInvoice(){
+    document.getElementById('toast').classList.add('show');
+    const row = document.querySelector('.inv-row');
+    if (row) row.style.display = 'none';
+    document.getElementById('releasedRow').style.display = 'flex';
+  }
+  function reclaim(){
+    document.getElementById('toast').classList.remove('show');
+    document.getElementById('releasedRow').style.display = 'none';
+    document.querySelector('.inv-row').style.display = 'flex';
+  }
+
+  document.getElementById('fPaid').addEventListener('click', e => e.currentTarget.classList.toggle('active'));
+  document.getElementById('fUnpaid').addEventListener('click', e => e.currentTarget.classList.toggle('active'));
+</script>
+</body>
+</html>

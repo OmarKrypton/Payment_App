@@ -354,6 +354,30 @@ body {
 .doc-pill.dirty { color: #fff; background: var(--red); border: 1px solid var(--red); }
 .doc-context { font-size: 10.5px; color: rgba(255,255,255,0.5); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-chips { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.doc-pill.paid { color: #052e16; background: linear-gradient(180deg, #4ade80, #22c55e); border: 1px solid #16a34a; box-shadow: 0 3px 10px rgba(34,197,94,0.3); }
+.doc-pay-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 9px;
+  padding-top: 8px; border-top: 1px dashed rgba(255,255,255,0.09);
+}
+.doc-pay-state {
+  flex: 1; min-width: 0; font-size: 9px; font-weight: 700; letter-spacing: 0.03em;
+  text-transform: uppercase; color: rgba(255,255,255,0.42);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.doc-pay-row.is-paid .doc-pay-state { color: #4ade80; }
+.doc-pay-btn {
+  flex: none; padding: 4px 9px; border-radius: 7px; cursor: pointer;
+  font-family: inherit; font-size: 9px; font-weight: 750;
+  color: #052e16; background: linear-gradient(180deg, #4ade80, #22c55e);
+  border: 1px solid #16a34a; box-shadow: 0 3px 8px rgba(34,197,94,0.2);
+  transition: filter 0.15s, transform 0.15s;
+}
+.doc-pay-btn:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.doc-pay-btn.unpay {
+  color: rgba(255,255,255,0.72); background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.16); box-shadow: none;
+}
+.doc-pay-btn.unpay:hover { background: rgba(255,255,255,0.14); color: #fff; }
 .chip { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); padding: 2px 7px; border-radius: 6px; }
 .doc-sync { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--green); margin-left: auto; }
 .doc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 5px var(--green); }
@@ -2523,6 +2547,13 @@ body {
 .history-modal .history-status .st-reject.active { background: var(--red); border-color: var(--red); color: #fff; }
 .history-modal .history-status .st-pending { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
 .history-modal .history-status .st-pending.active { background: var(--red); border-color: var(--red); color: #fff; }
+.history-status-sep { align-self: center; width: 1px; height: 18px; background: rgba(15, 23, 42, 0.1); margin: 0 2px; }
+.history-modal .history-status .st-paid { color: #15803d; background: #f0fdf4; border-color: #bbf7d0; }
+.history-modal .history-status .st-paid.active { background: var(--green); border-color: var(--green); color: #fff; }
+.history-modal .history-status .st-unpaid { color: #475569; background: #f8fafc; border-color: #e2e8f0; }
+.history-modal .history-status .st-unpaid.active { background: #475569; border-color: #475569; color: #fff; }
+.history-modal .history-status .st-paid b,
+.history-modal .history-status .st-unpaid b { font-family: var(--font-mono); font-size: 9.5px; opacity: 0.8; margin-left: 3px; }
 
 .history-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 16px 16px; gap: 8px; }
 .hc-item {
@@ -2553,6 +2584,19 @@ body {
 .hc-cur { color: #15803d; background: var(--green-bg); border: 1px solid #bbf7d0; }
 .hc-cur.egp { color: #1d4ed8; background: var(--accent-light); border-color: #bfdbfe; }
 .hc-del { color: #fff; background: var(--red); border: 1px solid var(--red); }
+.hc-paid { color: #fff; background: linear-gradient(180deg, #22c55e, #16a34a); border: 1px solid #15803d; box-shadow: 0 3px 8px rgba(22, 163, 74, 0.25); }
+.hc-unpaid { color: #475569; background: #f1f5f9; border: 1px solid #cbd5e1; }
+.hc-item.paid-doc {
+  background: linear-gradient(90deg, rgba(240, 253, 244, 0.78), rgba(255, 255, 255, 0.52) 46%);
+  border-color: #d7f3df;
+}
+.hc-item.paid-doc .hc-bar { background: var(--green); }
+.hc-item.paid-doc.pending {
+  background: rgba(254, 242, 242, 0.78);
+  border-color: #fecaca;
+}
+.hc-item.paid-doc.pending .hc-bar { background: var(--red); }
+.hc-paid-meta { color: #15803d; font-weight: 650; }
 .hc-date { margin-left: auto; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .hc-meta { font-size: 11px; color: var(--text-secondary); margin-top: 6px; padding-left: 8px; }
 .hc-infos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-left: 8px; }
@@ -2581,6 +2625,12 @@ body {
 .hc-btn.pri { background: linear-gradient(180deg, #3b82f6, #2563eb); border-color: #2563eb; color: #fff; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
 .hc-btn.hc-ok { color: var(--green); }
 .hc-btn.hc-danger { color: var(--red); border-color: rgba(254, 202, 202, 0.95); }
+.hc-btn.hc-pay {
+  color: #fff; border-color: #15803d;
+  background: linear-gradient(180deg, #22c55e, #16a34a);
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.hc-btn.hc-unpay { color: #475569; border-color: #cbd5e1; background: rgba(248, 250, 252, 0.85); }
 .history-modal .history-filters button::after,
 .hc-btn::after {
   content: "";
@@ -2775,6 +2825,50 @@ body {
 .alert-modal .alert-ic.info { background: var(--accent-light); border: 1px solid #bfdbfe; color: var(--accent); }
 .alert-modal .alert-ttl { font-size: 14px; font-weight: 700; }
 .alert-modal .alert-msg { font-size: 13px; color: var(--text-secondary); line-height: 1.55; white-space: pre-wrap; }
+
+/* ── Paid / Unpaid confirmation (glass) ── */
+.history-modal.paid-confirm-modal {
+  width: min(460px, 94vw);
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+}
+.paid-confirm-head {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 18px 20px 0;
+}
+.paid-confirm-ico {
+  width: 40px; height: 40px; border-radius: 12px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; font-weight: 800;
+}
+.paid-confirm-ico.paid { background: var(--green-bg); border: 1px solid #bbf7d0; color: var(--green); }
+.paid-confirm-ico.unpaid { background: #fffbeb; border: 1px solid #fde68a; color: var(--orange); }
+.paid-confirm-title { min-width: 0; }
+.paid-confirm-title h3 { font-size: 15px; font-weight: 750; color: var(--text-primary); line-height: 1.25; }
+.paid-confirm-serial {
+  margin-top: 3px; font-family: var(--font-mono); font-size: 11px; font-weight: 650;
+  color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.paid-confirm-msg {
+  padding: 12px 20px 0; font-size: 12px; line-height: 1.6; color: var(--text-secondary);
+}
+.paid-confirm-opt {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  margin: 13px 20px 0; padding: 11px 12px; border-radius: 11px;
+  background: rgba(255, 251, 235, 0.7); border: 1px solid #fde68a;
+}
+.paid-confirm-opt input { margin-top: 2px; width: 15px; height: 15px; accent-color: var(--green); flex: none; cursor: pointer; }
+.paid-confirm-opt span { min-width: 0; }
+.paid-confirm-opt b { display: block; font-size: 11px; color: #92400e; }
+.paid-confirm-opt em { display: block; margin-top: 2px; font-size: 10px; font-style: normal; line-height: 1.45; color: #a16207; }
+.paid-confirm-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 16px 20px 18px; margin-top: 4px; flex-wrap: wrap;
+}
+.paid-confirm-actions .hc-btn { padding: 8px 15px; font-size: 12px; }
+.history-modal.paid-confirm-modal .paid-confirm-actions .hc-pay:disabled,
+.history-modal.paid-confirm-modal .paid-confirm-actions .hc-unpay:disabled { opacity: 0.55; }
 
 /* ── ETA validation result (glass, card list) ── */
 .history-modal.eta-result-modal { width: min(720px, 94vw); }

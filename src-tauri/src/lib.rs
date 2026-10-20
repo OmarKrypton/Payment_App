@@ -75,6 +75,15 @@ fn update_history(
     history::update_snapshot(conn, id, &label, &notes, &data_json)
 }
 
+/// Metadata-only snapshot update (Paid/Unpaid toggle). Keeps created_at intact
+/// so the document does not jump to the top of the History Browser.
+#[tauri::command]
+fn update_history_data(state: tauri::State<'_, DbState>, id: i64, data_json: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::update_snapshot_data(conn, id, &data_json)
+}
+
 #[tauri::command]
 fn load_history(state: tauri::State<'_, DbState>, id: i64) -> Result<String, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
@@ -614,6 +623,7 @@ pub fn run() {
             list_history,
             save_history,
             update_history,
+            update_history_data,
             load_history,
             delete_history,
             check_serial_exists,
