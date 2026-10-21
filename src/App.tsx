@@ -2270,6 +2270,26 @@ function App() {
               {t("警告: 汇率与其他发票不一致!", "Warning: Rate differs from other invoices!")}
             </div>
           )}
+          {(() => {
+            const missing = (data.import_entries ?? []).filter((e: any) => {
+              if (!e.attached_invoice || toNum(e.rate) > 0) return false;
+              const row = e.attached_uuid
+                ? poolList.find((x: any) => x.uuid === e.attached_uuid)
+                : poolList.find((x: any) => x.invoice_id === e.attached_invoice &&
+                    (!e.seller_tax_id || !x.seller_tax_id || x.seller_tax_id === e.seller_tax_id));
+              return row && String(row.currency || "EGP").toUpperCase() !== "EGP";
+            });
+            if (missing.length === 0) return null;
+            return (
+              <div className="field-warning" style={{color:'var(--orange)',marginBottom:12}}>
+                {t(
+                  "警告: 已附加外币发票但没有汇率，请手动填写汇率。",
+                  "Warning: foreign-currency invoice(s) are attached without an exchange rate — enter the rate manually."
+                )}{" "}
+                <b>{missing.map((e: any) => e.attached_invoice).join(", ")}</b>
+              </div>
+            );
+          })()}
 
           {/* Cost Breakdown */}
           <div style={{borderTop:'1px solid var(--border)',paddingTop:14,marginTop:4}}>
@@ -4692,6 +4712,20 @@ function App() {
     loadPool(false);
   };
 
+  // The Import tab treats `amount × rate` as EGP. A pool invoice's amount is in
+  // its sold currency, so a foreign invoice must carry the document's
+  // commercial rate (or its own ETA rate as a fallback) when attached. Leaving
+  // the rate blank used to make a USD invoice behave as if it were EGP.
+  const importRateForPoolInvoice = (p: any): string => {
+    const currency = String(p?.currency || "EGP").trim().toUpperCase();
+    if (currency === "EGP") return "";
+    const docRate = toNum(formRef.current.import_commercial_rate);
+    const invoiceRate = Number(p?.exchange_rate) || 0;
+    const rate = docRate > 0 ? docRate : invoiceRate;
+    if (!(rate > 0) || !Number.isFinite(rate)) return "";
+    return String(Number(rate.toFixed(4)));
+  };
+
   const poolToImportEntry = (p: any) => {
     const net = p.net_amount ?? 0;
     const vatPct = net > 0 ? Math.round(((p.total_vat ?? 0) / net) * 100) : 14;
@@ -4699,7 +4733,7 @@ function App() {
     return {
       service_name: `${p.seller_name || p.invoice_id} ${p.invoice_id}`.trim(),
       amount: net.toFixed(2),
-      rate: "",
+      rate: importRateForPoolInvoice(p),
       free_wht: false,
       wht_rate: `${whtPct}%`,
       vat_rate: `${vatPct}%`,
