@@ -30,6 +30,9 @@ create table if not exists public.pool_invoices (
   doc_status text not null default 'Valid',
   status text not null default 'available',
   used_by_label text not null default '',
+  -- A pending delete request uses the requester's id. An approved delete uses
+  -- the app's reserved "__vouchify_deleted__" marker as a soft-delete tombstone,
+  -- so every device can remove its local copy without re-uploading it.
   delete_requested_at timestamptz,
   delete_requested_by text,
   created_at timestamptz not null default now()

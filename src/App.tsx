@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -203,6 +203,11 @@ function formatNumberInput(raw: string, maxDecimals = 2): string {
 // Parse a value (which may contain thousand-separator commas) as a number.
 const toNum = (s: string): number => parseFloat(String(s).replace(/,/g, "")) || 0;
 
+// Local calendar date for <input type="date"> defaults. Using toISOString()
+// here can move the date one day back in non-UTC timezones.
+const localDateInput = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 // Egyptian tax IDs are exactly nine digits. Inputs are normalised to digits as
 // the user types (so pasted "205-174-078" becomes "205174078"), and every save
 // path rejects any non-empty ID whose digit count is not nine.
@@ -277,6 +282,13 @@ const dedupeTaxIds = (set: Set<string>): string[] => {
   const arr = Array.from(new Set(Array.from(set).map(taxIdDigits).filter(Boolean)));
   return arr.filter(a => !arr.some(b => b.length > a.length && (b.startsWith(a) || b.endsWith(a))));
 };
+
+// A document stores both tab shapes while editing, but only the active one is
+// part of the document. Claim, release, validation and export paths must use
+// this helper instead of reading `invoices` and `import_entries` together.
+const isImportDocument = (doc: any): boolean => doc?.doc_type === "import";
+const activeDocumentInvoices = (doc: any): any[] =>
+  (isImportDocument(doc) ? (doc?.import_entries || []) : (doc?.invoices || []));
 
 // ── Suppliers aggregation ──
 // Builds a per-supplier profile from saved snapshots + the invoice pool.
@@ -1025,6 +1037,8 @@ const poolDocKind = (p: any): string => {
 const isCreditNote = (p: any): boolean => poolDocKind(p) === "C";
 const isDebitNote = (p: any): boolean => poolDocKind(p) === "D";
 const isCancelledByCredit = (p: any): boolean => !!p?.cancelled;
+const isPoolDeletedRow = (p: any): boolean =>
+  String(p?.delete_requested_by || "") === POOL_DELETED_MARKER;
 // Only real, valid, unclaimed-or-claimed invoices can be attached. Credit
 // notes, invoices cancelled by a credit note, rejected/cancelled ETA documents
 // and rows pending deletion are all blocked.
@@ -1067,11 +1081,11 @@ function App() {
   const [bankSection, setBankSection] = useState("sec-info");
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [invoiceExportFrom, setInvoiceExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
-  const [invoiceExportTo, setInvoiceExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
+  const [invoiceExportFrom, setInvoiceExportFrom] = useState(localDateInput(new Date(new Date().getFullYear(), 0, 1))); // Jan 1 of current year
+  const [invoiceExportTo, setInvoiceExportTo] = useState(localDateInput(new Date())); // Today
   const [showHistoryExport, setShowHistoryExport] = useState(false);
-  const [historyExportFrom, setHistoryExportFrom] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1 of current year
-  const [historyExportTo, setHistoryExportTo] = useState(new Date().toISOString().slice(0, 10)); // Today
+  const [historyExportFrom, setHistoryExportFrom] = useState(localDateInput(new Date(new Date().getFullYear(), 0, 1))); // Jan 1 of current year
+  const [historyExportTo, setHistoryExportTo] = useState(localDateInput(new Date())); // Today
   const [historyExportProgress, setHistoryExportProgress] = useState<number | null>(null);
   const [historyExportStatus, setHistoryExportStatus] = useState("");
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
@@ -2265,7 +2279,9 @@ function App() {
             </div>
           </div>
 
-          {data.import_commercial_rate && (data.import_entries ?? []).some((e: any) => e.rate && e.rate !== data.import_commercial_rate) && (
+          {toNum(data.import_commercial_rate) > 0 && (data.import_entries ?? []).some((e: any) =>
+            toNum(e.rate) > 0 && Math.abs(toNum(e.rate) - toNum(data.import_commercial_rate)) > 0.00005
+          ) && (
             <div className="field-warning" style={{color:'var(--red)',marginBottom:12}}>
               {t("警告: 汇率与其他发票不一致!", "Warning: Rate differs from other invoices!")}
             </div>
@@ -2979,44 +2995,73 @@ function App() {
     const endDate = new Date(invoiceExportTo);
     // Set endDate to end of that day
     endDate.setHours(23, 59, 59, 999);
-    const startStr = startDate.toISOString();
-    const endStr = endDate.toISOString();
+    type InvoiceExportRow = {
+      serial: string;
+      invoice_no: string;
+      seller_tax_id: string;
+      amount: number;
+      currency: string;
+      amount_egp: number;
+      doc_type: string;
+    };
+    let allInvoices: InvoiceExportRow[] = [];
 
-    let allInvoices: { serial: string; invoice_no: string; seller_tax_id: string; amount: number; doc_type: string }[] = [];
+    // Only the active tab's rows belong to a document. This also prevents a
+    // stale Bank array from being exported after the document was switched to
+    // Import (and vice versa).
+    const collectDocRows = (parsed: any, serial: string, dt: string): InvoiceExportRow[] => {
+      const rows: InvoiceExportRow[] = [];
+      if (dt === "import") {
+        for (const e of parsed.import_entries || []) {
+          const amount = toNum(e.amount);
+          const poolRow = poolForInvoice(e);
+          const rate = toNum(e.rate) || Number(poolRow?.exchange_rate) || 0;
+          const currency = String(e.currency || poolRow?.currency || (rate > 0 ? "USD" : "EGP")).trim().toUpperCase();
+          const amountEgp = currency === "EGP" ? amount : (rate > 0 ? amount * rate : 0);
+          rows.push({
+            serial,
+            invoice_no: e.service_name || e.attached_invoice || "",
+            seller_tax_id: e.seller_tax_id || extractTaxIdFromName(e.service_name) || "",
+            amount,
+            currency,
+            amount_egp: amountEgp,
+            doc_type: "import",
+          });
+        }
+      } else {
+        for (const inv of parsed.invoices || []) {
+          const amount = toNum(inv.amount);
+          const currency = invoiceCurrency(inv);
+          const rate = invoiceExchangeRate(inv);
+          const amountEgp = currency === "EGP" ? amount : (rate > 0 ? amount * rate : 0);
+          rows.push({
+            serial,
+            invoice_no: inv.invoice_no || "",
+            seller_tax_id: inv.seller_tax_id || "",
+            amount,
+            currency,
+            amount_egp: amountEgp,
+            doc_type: dt,
+          });
+        }
+      }
+      return rows;
+    };
 
+    const remoteSerials = new Set<string>();
     // If logged in, query Supabase
     if (authUser) {
       try {
         const rows = await listSnapshotsRemote("");
         for (const r of rows) {
-          if (r.created_at >= startStr && r.created_at <= endStr) {
+          const created = new Date(r.created_at);
+          if (!Number.isNaN(created.getTime()) && created >= startDate && created <= endDate) {
             try {
               const parsed = JSON.parse(r.data_json);
               const serial = parsed.doc_serial || r.label;
-              const invs = parsed.invoices || [];
+              remoteSerials.add(serial);
               const dt = parsed.doc_type || "bank";
-              for (const inv of invs) {
-                allInvoices.push({
-                  serial,
-                  invoice_no: inv.invoice_no || "",
-                  seller_tax_id: inv.seller_tax_id || "",
-                  amount: toNum(inv.amount),
-                  doc_type: dt,
-                });
-              }
-              // For import entries, also include them
-              const entries = parsed.import_entries || [];
-              if (entries.length > 0 && dt === "import") {
-                for (const e of entries) {
-                  allInvoices.push({
-                    serial,
-                    invoice_no: e.service_name || "",
-                    seller_tax_id: "",
-                    amount: toNum(e.amount),
-                    doc_type: "import",
-                  });
-                }
-              }
+              allInvoices.push(...collectDocRows(parsed, serial, dt));
             } catch {}
           }
         }
@@ -3034,32 +3079,12 @@ function App() {
           const parsed = JSON.parse(dataJson);
           const entryDate = new Date(entry.created_at);
           if (entryDate >= startDate && entryDate <= endDate) {
-            // Check if already in Supabase (avoid duplicates)
-            if (authUser && allInvoices.some(i => i.serial === (parsed.doc_serial || entry.label))) continue;
             const serial = parsed.doc_serial || entry.label;
-            const invs = parsed.invoices || [];
+            // The cloud snapshot is authoritative even when this document has
+            // no rows in the selected period.
+            if (authUser && remoteSerials.has(serial)) continue;
             const dt = parsed.doc_type || "bank";
-            for (const inv of invs) {
-              allInvoices.push({
-                serial,
-                invoice_no: inv.invoice_no || "",
-                seller_tax_id: inv.seller_tax_id || "",
-                amount: toNum(inv.amount),
-                doc_type: dt,
-              });
-            }
-            const entries = parsed.import_entries || [];
-            if (entries.length > 0 && dt === "import") {
-              for (const e of entries) {
-                allInvoices.push({
-                  serial,
-                  invoice_no: e.service_name || "",
-                  seller_tax_id: "",
-                  amount: toNum(e.amount),
-                  doc_type: "import",
-                });
-              }
-            }
+            allInvoices.push(...collectDocRows(parsed, serial, dt));
           }
         } catch {}
       }
@@ -3269,17 +3294,20 @@ function App() {
     (data.seller_tax_ids || []).forEach((x, i) => {
       if (x) taxIdChecks.push([`${t("卖方税号", "Seller TAX ID")} ${i + 1}`, x]);
     });
-    (data.invoices || []).forEach((inv, i) => {
-      if (inv.seller_tax_id) taxIdChecks.push([`${t("发票", "Invoice")} ${i + 1}`, inv.seller_tax_id]);
-    });
-    (data.import_entries || []).forEach((e, i) => {
-      // The hidden seller id is only authoritative when the row is attached to
-      // a pool invoice; a stale value on a free-text service must not block a
-      // save the user cannot fix from this form.
-      if (e.seller_tax_id && (e.attached_invoice || e.attached_uuid)) {
-        taxIdChecks.push([`${t("服务商", "Provider")} ${i + 1}`, e.seller_tax_id]);
-      }
-    });
+    if (isImportDocument(data)) {
+      (data.import_entries || []).forEach((e, i) => {
+        // The hidden seller id is only authoritative when the row is attached
+        // to a pool invoice; a stale value on a free-text service must not
+        // block a save the user cannot fix from this form.
+        if (e.seller_tax_id && (e.attached_invoice || e.attached_uuid)) {
+          taxIdChecks.push([`${t("服务商", "Provider")} ${i + 1}`, e.seller_tax_id]);
+        }
+      });
+    } else {
+      (data.invoices || []).forEach((inv, i) => {
+        if (inv.seller_tax_id) taxIdChecks.push([`${t("发票", "Invoice")} ${i + 1}`, inv.seller_tax_id]);
+      });
+    }
     const badTaxId = taxIdChecks.find(([, value]) => !isNineDigitTaxId(value));
     if (badTaxId) {
       showAlert(`${t("税号必须正好是 9 位数字", "TAX ID must be exactly 9 digits")}: ${badTaxId[0]} (${badTaxId[1]})`);
@@ -3290,6 +3318,13 @@ function App() {
       // separate "Overwrite" action). The label follows the serial when one is
       // set, but a serial already used by a *different* snapshot is rejected.
       const target = overwriteTarget;
+      if (target.remote && !authUser) {
+        showAlert(t(
+          "会话已失效，无法保存云端快照。请重新登录后再保存。",
+          "Your session has expired, so the cloud snapshot cannot be saved. Please sign in again."
+        ));
+        return false;
+      }
       const newLabel = (data.doc_serial || "").trim() || target.label;
       const dupMsg = t("该文档编号已存在，无法重复保存", "This document serial already exists, cannot save duplicate");
       if (newLabel) {
@@ -3640,6 +3675,22 @@ function App() {
     return null;
   };
 
+  const restoreKeysForDocument = (doc: any): Set<string> => {
+    const keys = new Set<string>();
+    if (isImportDocument(doc)) {
+      (doc?.import_entries || []).forEach((e: any) => {
+        const k = buildRestoreKey(e?.attached_invoice, e?.seller_tax_id, e?.attached_uuid);
+        if (k) keys.add(k);
+      });
+    } else {
+      (doc?.invoices || []).forEach((inv: any) => {
+        const k = buildRestoreKey(inv?.invoice_no, inv?.seller_tax_id, inv?.attached_uuid);
+        if (k) keys.add(k);
+      });
+    }
+    return keys;
+  };
+
   const buildRestorePoolMaps = (list: any[]) => {
     const byUuid = new Map<string, any>();
     const byComposite = new Map<string, any[]>();
@@ -3697,9 +3748,7 @@ function App() {
     const form = formRef.current;
     await ensureDraftNo();
     const serial = ((form.doc_serial) || draftLabel(form.draft_no ?? draftNo)).trim();
-    const keys = new Set<string>();
-    (form.invoices || []).forEach((inv: any) => { const k = buildRestoreKey(inv?.invoice_no, inv?.seller_tax_id, inv?.attached_uuid); if (k) keys.add(k); });
-    (form.import_entries || []).forEach((e: any) => { const k = buildRestoreKey(e?.attached_invoice, e?.seller_tax_id, e?.attached_uuid); if (k) keys.add(k); });
+    const keys = restoreKeysForDocument(form);
     if (keys.size === 0) return 0;
     let list: any[] = [];
     try { list = await invoke<any[]>("list_invoice_pool_summary"); } catch { return 0; }
@@ -3728,9 +3777,7 @@ function App() {
           const json = await invoke<string>("load_history", { id: h.id });
           const parsed = JSON.parse(json);
           const serial = ((parsed.doc_serial) || h.label || "draft").trim();
-          const keys = new Set<string>();
-          (parsed.invoices || []).forEach((inv: any) => { const k = buildRestoreKey(inv?.invoice_no, inv?.seller_tax_id, inv?.attached_uuid); if (k) keys.add(k); });
-          (parsed.import_entries || []).forEach((e: any) => { const k = buildRestoreKey(e?.attached_invoice, e?.seller_tax_id, e?.attached_uuid); if (k) keys.add(k); });
+          const keys = restoreKeysForDocument(parsed);
           if (keys.size > 0) docs.push({ serial, keys });
         } catch (e) { console.error("parse local snapshot failed", h.id, e); }
       }
@@ -3743,9 +3790,7 @@ function App() {
           try {
             const parsed = JSON.parse(r.data_json);
             const serial = ((parsed.doc_serial) || r.label || "draft").trim();
-            const keys = new Set<string>();
-            (parsed.invoices || []).forEach((inv: any) => { const k = buildRestoreKey(inv?.invoice_no, inv?.seller_tax_id, inv?.attached_uuid); if (k) keys.add(k); });
-            (parsed.import_entries || []).forEach((e: any) => { const k = buildRestoreKey(e?.attached_invoice, e?.seller_tax_id, e?.attached_uuid); if (k) keys.add(k); });
+            const keys = restoreKeysForDocument(parsed);
             if (keys.size > 0) docs.push({ serial, keys });
           } catch (e) { console.error("parse remote snapshot failed", r.id, e); }
         }
@@ -3841,20 +3886,38 @@ function App() {
       // not uploaded as a second copy of a document the cloud already holds
       // under its real uuid (the pull below then adopts the real uuid).
       const remoteRealByDoc = new Map<string, any>();
+      const tombstonedSyntheticDocs = new Set<string>();
+      const tombstonedRealDocs = new Set<string>();
       for (const r of remoteMeta) {
-        if (!isSyntheticPoolUuid(r.uuid)) remoteRealByDoc.set(`${r.invoice_id}|${r.seller_tax_id}`, r);
+        if (isPoolDeletedRow(r)) {
+          const key = `${r.invoice_id}|${r.seller_tax_id}`;
+          if (isSyntheticPoolUuid(r.uuid)) tombstonedSyntheticDocs.add(key);
+          else tombstonedRealDocs.add(key);
+        } else if (!isSyntheticPoolUuid(r.uuid)) {
+          remoteRealByDoc.set(`${r.invoice_id}|${r.seller_tax_id}`, r);
+        }
       }
       const newRows: any[] = [];
       const claimRows: any[] = [];
       let conflicts = 0;
       for (const l of localAll) {
-        if (unclaimBlocked.has(l.uuid)) continue;
+        if (unclaimBlocked.has(l.uuid) || l.delete_requested_at || isPoolDeletedRow(l)) continue;
         const r = l.uuid ? remoteByUuid.get(l.uuid) : undefined;
         if (!r) {
-          if (isSyntheticPoolUuid(l.uuid) && remoteRealByDoc.has(`${l.invoice_id}|${l.seller_tax_id}`)) continue;
+          const docKey = `${l.invoice_id}|${l.seller_tax_id}`;
+          if (isSyntheticPoolUuid(l.uuid)) {
+            if (tombstonedSyntheticDocs.has(docKey) || tombstonedRealDocs.has(docKey)) continue;
+            if (remoteRealByDoc.has(docKey)) continue;
+          } else if (tombstonedSyntheticDocs.has(docKey)) {
+            continue;
+          }
           newRows.push(l);
           continue;
         }
+        // A cloud tombstone wins; the pull below removes the local copy. Never
+        // re-upload it as a new invoice or re-claim it. A pending delete
+        // request is also not claimable.
+        if (isPoolDeletedRow(r) || r.delete_requested_at) continue;
         if (l.status === "used") {
           const remoteOwner = String(r.used_by_label || "").trim();
           if ((r.status || "available") !== "used" || !remoteOwner) {
@@ -3874,6 +3937,25 @@ function App() {
       }
       let pushed = 0;
       let pushFailed = false;
+      // Re-send delete requests that were made locally but never reached the
+      // cloud (e.g. an offline request). Without this, the pull would see the
+      // cloud's empty request and silently clear the local one.
+      for (const l of localAll) {
+        if (!l.delete_requested_at || isPoolDeletedRow(l) || !l.uuid) continue;
+        const r = remoteByUuid.get(l.uuid);
+        if (!r || r.delete_requested_at || isPoolDeletedRow(r)) continue;
+        try {
+          await requestPoolDeleteRemote(l.uuid);
+          const now = new Date().toISOString();
+          r.delete_requested_at = now;
+          r.delete_requested_by = authUserId || authUser || "";
+          pushed += 1;
+        } catch (e) {
+          console.error("retry pool delete request failed", l.uuid, e);
+          unclaimBlocked.add(l.uuid);
+          info.error = `delete request: ${(e as any)?.message || e}`;
+        }
+      }
       if (newRows.length > 0) {
         const pushNew = async () => {
           // Fetch the full rows (with raw_xml/lines_json) only for what we push,
@@ -3919,6 +4001,7 @@ function App() {
       //     duplicates. They are excluded from the pull below.
       const purgedSynthetic = new Set<string>();
       const staleCloudSynthetic = remoteMeta.filter((r) =>
+        !isPoolDeletedRow(r) &&
         isSyntheticPoolUuid(r.uuid) &&
         localAll.some((l) => !isSyntheticPoolUuid(l.uuid) && l.invoice_id === r.invoice_id && l.seller_tax_id === r.seller_tax_id)
       );
@@ -3937,10 +4020,21 @@ function App() {
         const changed = remoteMeta.filter((r) => {
           if (purgedSynthetic.has(r.uuid) || applied.has(r.uuid) || unclaimBlocked.has(r.uuid)) return false;
           const l = r.uuid ? localByUuid.get(r.uuid) : undefined;
-          if (!l) return true;
+          // A tombstone only matters on a device that still has the row.
+          if (!l) {
+            if (!isPoolDeletedRow(r)) return true;
+            return localNow.some((x: any) =>
+              (isSyntheticPoolUuid(x.uuid) || isSyntheticPoolUuid(r.uuid)) &&
+              x.invoice_id === r.invoice_id &&
+              (x.seller_tax_id || "") === (r.seller_tax_id || "")
+            );
+          }
+          if (isPoolDeletedRow(r)) return true;
           return (l.status || "available") !== (r.status || "available") ||
                  (l.used_by_label || "") !== (r.used_by_label || "") ||
-                 (l.doc_status || "Valid") !== (r.doc_status || "Valid");
+                 (l.doc_status || "Valid") !== (r.doc_status || "Valid") ||
+                 (l.delete_requested_at || "") !== (r.delete_requested_at || "") ||
+                 (l.delete_requested_by || "") !== (r.delete_requested_by || "");
         });
         if (changed.length === 0) return;
         let fetched: any[] = [];
@@ -3951,7 +4045,28 @@ function App() {
           info.error = `pull: ${(e as any)?.message || e}`;
           return;
         }
-        const mapped = fetched.map((r: any) => ({
+        // Cloud tombstones remove the local copy; they must not be inserted as
+        // rows (and therefore must never be re-uploaded by this device).
+        for (const r of fetched.filter(isPoolDeletedRow)) {
+          const direct = r.uuid ? localByUuid.get(r.uuid) : undefined;
+          const locals = direct
+            ? [direct]
+            : localNow.filter((l: any) =>
+                (isSyntheticPoolUuid(l.uuid) || isSyntheticPoolUuid(r.uuid)) &&
+                l.invoice_id === r.invoice_id &&
+                (l.seller_tax_id || "") === (r.seller_tax_id || "")
+              );
+          let allDeleted = true;
+          for (const local of locals) {
+            try { await invoke("delete_pool_invoice", { id: local.id }); }
+            catch (e) {
+              allDeleted = false;
+              console.error("delete tombstoned pool invoice failed", r.uuid, e);
+            }
+          }
+          if (allDeleted) applied.add(r.uuid);
+        }
+        const mapped = fetched.filter((r: any) => !isPoolDeletedRow(r)).map((r: any) => ({
           invoice_id: r.invoice_id,
           uuid: r.uuid || "",
           seller_tax_id: r.seller_tax_id || "",
@@ -4005,7 +4120,7 @@ function App() {
       if (cleaned > 0) console.log(`downgraded ${cleaned} unlabelled claims to available`);
       const claimedUuids = new Set(claimRows.map((l: any) => l.uuid));
       const unlabelledRemote = remoteMeta.filter((r) =>
-        !claimedUuids.has(r.uuid) && r.status === "used" && !(r.used_by_label || "")
+        !isPoolDeletedRow(r) && !claimedUuids.has(r.uuid) && r.status === "used" && !(r.used_by_label || "")
       );
       for (const u of unlabelledRemote) {
         try { await markPoolAvailableRemoteIfOwner(u.uuid, ""); }
@@ -4168,7 +4283,12 @@ function App() {
   // without restarting. A cheap change token skips the larger per-key metadata
   // fetch when the cloud is unchanged, and pending deletions are flushed first.
   const deSyncRef = useRef<{ token: string; at: number } | null>(null);
+  const deLocalDirtyRef = useRef(false);
   const deSyncingRef = useRef(false);
+  // A different account (or a fresh sign-in) must not inherit the previous
+  // session's cloud token; otherwise the unchanged-cloud fast path could skip
+  // local entries imported while signed out.
+  useEffect(() => { deSyncRef.current = null; }, [authUser]);
   useEffect(() => {
     if (tab !== "entries" || !authUser) return;
     let cancelled = false;
@@ -4195,7 +4315,9 @@ function App() {
         }
         const token = await dailyEntriesSyncToken();
         const last = deSyncRef.current;
-        if (last && last.token === token) return; // cloud unchanged since last sync
+        // Local edits/imports must force a comparison even when the cloud token
+        // is unchanged; otherwise a failed push can stay local forever.
+        if (!deLocalDirtyRef.current && last && last.token === token) return;
         setDeSyncing(true);
         const [remoteMeta, localMeta] = await Promise.all([
           listDailyEntriesRemoteMeta(),
@@ -4235,6 +4357,7 @@ function App() {
           if (rows.length) await upsertDailyEntriesRemote(rows);
         }
         deSyncRef.current = { token, at: Date.now() };
+        deLocalDirtyRef.current = false;
         if (deletedKeys.length > 0 || toPull.length > 0 || toPush.length > 0) setDeRefresh(v => v + 1);
       } catch (e) {
         console.error("daily entries sync failed", e);
@@ -4284,6 +4407,7 @@ function App() {
     setDeImportInfo(null);
     try {
       const info: any = await invoke("import_daily_entries", { filePath: path });
+      deLocalDirtyRef.current = true;
       setDeImportInfo(info);
       await loadDeFiles();
       if (authUser) {
@@ -4323,6 +4447,7 @@ function App() {
       // The command records a local tombstone and returns the removed entry
       // keys, so the deletion can be propagated (soft-deleted) to the cloud.
       const keys: string[] = await invoke("delete_daily_entry_file", { sourceFile: file });
+      deLocalDirtyRef.current = true;
       if (authUser && keys.length > 0) {
         try {
           await softDeleteDailyEntriesRemoteByKeys(keys);
@@ -4370,6 +4495,7 @@ function App() {
   const saveEntryLines = async (entryKey: string, lines: any[]) => {
     try {
       await invoke("update_daily_entry_lines", { entryKey, linesJson: JSON.stringify(lines) });
+      deLocalDirtyRef.current = true;
       if (authUser) {
         try {
           const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: [entryKey] });
@@ -4680,12 +4806,15 @@ function App() {
   // present, otherwise on (invoice id + seller tax id) — never the id alone.
   const currentSqlDefault = (formRef.current.doc_serial || "").trim();
   const currentInvs: { no: string; seller: string; uuid: string }[] = [];
-  (formRef.current.invoices || []).forEach((inv: any) => {
-    if (inv.invoice_no) currentInvs.push({ no: String(inv.invoice_no), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
-  });
-  (formRef.current.import_entries || []).forEach((e: any) => {
-    if (e.attached_invoice) currentInvs.push({ no: String(e.attached_invoice), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
-  });
+  if (isImportDocument(formRef.current)) {
+    (formRef.current.import_entries || []).forEach((e: any) => {
+      if (e.attached_invoice) currentInvs.push({ no: String(e.attached_invoice), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
+    });
+  } else {
+    (formRef.current.invoices || []).forEach((inv: any) => {
+      if (inv.invoice_no) currentInvs.push({ no: String(inv.invoice_no), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
+    });
+  }
   const sameInvoiceRef = (a: { no: string; seller: string; uuid: string }, b: any): boolean => {
     const bu = String(b?.uuid || "").trim();
     const bs = String(b?.seller || "").trim();
@@ -5145,22 +5274,23 @@ function App() {
         rows.push(m);
       }
     };
-    (doc?.invoices || []).forEach((inv: any) => add(inv.attached_uuid, inv.attached_invoice || inv.invoice_no, inv.seller_tax_id));
-    (doc?.import_entries || []).forEach((e: any) => add(e.attached_uuid, e.attached_invoice, e.seller_tax_id));
+    if (isImportDocument(doc)) {
+      (doc?.import_entries || []).forEach((e: any) => add(e.attached_uuid, e.attached_invoice, e.seller_tax_id));
+    } else {
+      (doc?.invoices || []).forEach((inv: any) => add(inv.attached_uuid, inv.attached_invoice || inv.invoice_no, inv.seller_tax_id));
+    }
     return rows;
   };
 
-  const paidClaimCount = (doc: any): number => {
-    const bank = (doc?.invoices || []).filter((i: any) => i?.attached_invoice).length;
-    const imp = (doc?.import_entries || []).filter((e: any) => e?.attached_invoice).length;
-    return bank + imp;
-  };
+  const paidClaimCount = (doc: any): number =>
+    activeDocumentInvoices(doc).filter((i: any) => i?.attached_invoice).length;
 
-  const detachAttachedInvoices = (doc: any): any => ({
-    ...doc,
-    invoices: (doc?.invoices || []).filter((i: any) => !i?.attached_invoice),
-    import_entries: (doc?.import_entries || []).filter((e: any) => !e?.attached_invoice),
-  });
+  const detachAttachedInvoices = (doc: any): any => {
+    if (isImportDocument(doc)) {
+      return { ...doc, import_entries: (doc?.import_entries || []).filter((e: any) => !e?.attached_invoice) };
+    }
+    return { ...doc, invoices: (doc?.invoices || []).filter((i: any) => !i?.attached_invoice) };
+  };
 
   const paidDateLabel = (at: string): string => {
     if (!at) return "";
@@ -5202,6 +5332,13 @@ function App() {
       let changedLabel = "";
 
       if (target.kind === "current") {
+        if (overwriteTarget?.remote && !authUser) {
+          showAlert(t(
+            "会话已失效，无法更新云端快照。请重新登录后再试。",
+            "Your session has expired, so the cloud snapshot cannot be updated. Please sign in again."
+          ));
+          return;
+        }
         const current = formRef.current;
         const label = (current.doc_serial || "").trim() || currentClaimLabel();
         changedLabel = label;
@@ -5239,6 +5376,13 @@ function App() {
         releaseLabel = label;
       } else {
         const h = target.entry;
+        if (h.remote && !authUser) {
+          showAlert(t(
+            "会话已失效，无法更新云端快照。请重新登录后再试。",
+            "Your session has expired, so the cloud snapshot cannot be updated. Please sign in again."
+          ));
+          return;
+        }
         const parsed: any = JSON.parse(h.data_json || "{}");
         const label = String(parsed.doc_serial || h.label || "").trim();
         changedLabel = h.label;
@@ -5391,6 +5535,12 @@ function App() {
           const uuids = imported.map((i: any) => i.uuid).filter(Boolean);
           const rows = await invoke<any[]>("get_pool_invoices_by_uuids", { uuids });
           await upsertPoolInvoicesRemote(rows);
+          // Re-importing a previously deleted invoice deliberately revives it.
+          for (const row of rows) {
+            if (!row?.invoice_id) continue;
+            try { await clearPoolDeletedForDocumentRemote(row.invoice_id, row.seller_tax_id || ""); }
+            catch (e) { console.error("clear pool tombstone failed", row.invoice_id, e); }
+          }
         } catch (e) { console.error("upsert pool remote failed", e); }
       }
       loadPool();
@@ -5445,10 +5595,11 @@ function App() {
 
   const exportHistoryRegistry = async () => {
     try {
-      const startStr = historyExportFrom;
-      const endStr = historyExportTo + "T23:59:59.999Z";
+      const startDate = new Date(historyExportFrom + "T00:00:00");
+      const endDate = new Date(historyExportTo + "T23:59:59.999");
       const rows: {
         serial: string;
+        doc_type: string;
         seller_tax_id: string;
         company: string;
         invoices: string;
@@ -5460,7 +5611,7 @@ function App() {
       const addCandidate = (label: string, dataJson: string, createdAt?: string) => {
         if (createdAt) {
           const c = new Date(createdAt);
-          if (Number.isNaN(c.getTime()) || c.toISOString() < new Date(startStr).toISOString() || c.toISOString() > new Date(endStr).toISOString()) return;
+          if (Number.isNaN(c.getTime()) || c < startDate || c > endDate) return;
         }
         let parsed: any;
         try { parsed = JSON.parse(dataJson); } catch { return; }
@@ -5474,6 +5625,7 @@ function App() {
         if (isImport) {
           (parsed.import_entries || []).forEach((e: any) => {
             if (e.attached_invoice) invSet.add(e.attached_invoice);
+            if (e.company_name) coSet.add(e.company_name);
             const tax = extractTaxIdFromName(e.service_name) || e.seller_tax_id;
             if (tax) taxSet.add(tax);
           });
@@ -5498,6 +5650,16 @@ function App() {
         });
       };
 
+      // Cloud rows are the shared source of truth; only use a local copy when
+      // the same serial is not available in the cloud.
+      if (authUser) {
+        try {
+          const remote = await listSnapshotsRemote("");
+          for (const r of remote) {
+            addCandidate(r.label || "", r.data_json || "", r.created_at);
+          }
+        } catch {}
+      }
       try {
         const local = await invoke<HistoryEntry[]>("list_history", { search: "" });
         for (const entry of local) {
@@ -5507,14 +5669,6 @@ function App() {
           } catch {}
         }
       } catch {}
-      if (authUser) {
-        try {
-          const remote = await listSnapshotsRemote("");
-          for (const r of remote) {
-            addCandidate(r.label || "", r.data_json || "", r.created_at);
-          }
-        } catch {}
-      }
 
       if (candidates.length === 0) {
         setHistoryExportProgress(null);
@@ -5527,11 +5681,18 @@ function App() {
       let done = 0;
       for (const cand of candidates) {
         let net = 0, paid = 0;
+        let docType = "bank";
         try {
           const parsed = JSON.parse(cand.dataJson);
+          docType = parsed.doc_type === "import" ? "import" : "bank";
           const calc = await invoke<CalcResult>("recalculate", { data: parsed });
-          net = calc.c_9A ?? 0;
-          paid = calc.c_10A ?? 0;
+          if (docType === "import") {
+            net = calc.import_grand_net ?? 0;
+            paid = 0; // no import "current paid" field
+          } else {
+            net = calc.c_9A ?? 0;
+            paid = calc.c_10A ?? 0;
+          }
         } catch {}
         const c = cand.entries as any[];
         const tax = (c.find((x: any) => x.label.includes("TAX ID") || x.label.includes("税号")) || {}).value || "";
@@ -5539,6 +5700,7 @@ function App() {
         const inv = (c.find((x: any) => x.label.includes("Invoices") || x.label.includes("发票")) || {}).value || "";
         rows.push({
           serial: cand.seriesNo,
+          doc_type: docType,
           seller_tax_id: tax,
           company: co,
           invoices: inv,
@@ -5579,8 +5741,11 @@ function App() {
       const invUuid = p?.uuid;
       if (authUser) {
         if (isAdminUser) {
+          if (!invUuid) throw new Error("Missing invoice uuid");
+          // Soft-delete in the cloud first: other devices need the tombstone
+          // to remove their local copy instead of re-uploading it.
+          await markPoolInvoiceDeletedRemote(invUuid);
           await invoke("delete_pool_invoice", { id });
-          try { if (invUuid) await deletePoolInvoiceRemote(invUuid); } catch (e) { console.error("deletePoolInvoiceRemote failed", e); }
           showAlert(t("发票已删除", "Invoice deleted"));
         } else {
           await invoke("request_pool_delete", { id, requestedBy: authUserId || authUser });

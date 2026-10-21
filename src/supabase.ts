@@ -92,13 +92,13 @@ export async function loadSnapshotRemote(id: number): Promise<string> {
 }
 
 export async function deleteSnapshotRemote(id: number): Promise<void> {
-  const { error, count } = await supabase
+  const { data, error } = await supabase
     .from("snapshots")
     .delete()
     .eq("id", id)
     .select("id");
   if (error) throw error;
-  if (count === 0) throw new Error("Delete had no effect — row may not exist or RLS blocked it");
+  if (!data || data.length === 0) throw new Error("Delete had no effect — row may not exist or RLS blocked it");
 }
 
 export async function updateSnapshotRemote(id: number, label: string, notes: string, dataJson: string): Promise<void> {
@@ -244,10 +244,19 @@ export async function listPoolRemoteByIds(uuids: string[]): Promise<PoolInvoiceR
   return all;
 }
 
-export async function listPoolRemoteMeta(): Promise<{ uuid: string; invoice_id: string; seller_tax_id: string; doc_status?: string; status: string; used_by_label: string }[]> {
+export async function listPoolRemoteMeta(): Promise<{
+  uuid: string;
+  invoice_id: string;
+  seller_tax_id: string;
+  doc_status?: string;
+  status: string;
+  used_by_label: string;
+  delete_requested_at: string | null;
+  delete_requested_by: string | null;
+}[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const COLS = "uuid, invoice_id, seller_tax_id, status, used_by_label";
+  const COLS = "uuid, invoice_id, seller_tax_id, status, used_by_label, delete_requested_at, delete_requested_by";
   const build = (from: number, to: number) =>
     supabase
       .from("pool_invoices")
@@ -448,6 +457,46 @@ export async function markPoolUsedRemoteIfFree(uuid: string, usedByLabel: string
   return !row;
 }
 
+// Soft-delete marker kept in the existing delete-request columns. Other
+// devices see the tombstone, remove their local copy, and never re-upload it.
+export const POOL_DELETED_MARKER = "__vouchify_deleted__";
+
+export async function markPoolInvoiceDeletedRemote(uuid: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (!uuid) throw new Error("Missing invoice uuid");
+  const { data, error } = await supabase
+    .from("pool_invoices")
+    .update({
+      delete_requested_at: new Date().toISOString(),
+      delete_requested_by: POOL_DELETED_MARKER,
+    })
+    .eq("uuid", uuid)
+    .select("uuid");
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("Invoice was not found in the shared pool");
+  }
+}
+
+/**
+ * Re-importing a document may derive a different (synthetic) uuid than the
+ * tombstone the admin deleted. Clear the tombstone by document identity too so
+ * the revived invoice is not deleted again on the next sync.
+ */
+export async function clearPoolDeletedForDocumentRemote(invoiceId: string, sellerTaxId: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (!invoiceId) return;
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ delete_requested_at: null, delete_requested_by: null })
+    .eq("invoice_id", invoiceId)
+    .eq("seller_tax_id", sellerTaxId || "")
+    .eq("delete_requested_by", POOL_DELETED_MARKER);
+  if (error) throw error;
+}
+
 export async function deletePoolInvoiceRemote(uuid: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
@@ -464,7 +513,9 @@ export async function requestPoolDeleteRemote(uuid: string): Promise<void> {
   const { error } = await supabase
     .from("pool_invoices")
     .update({ delete_requested_at: new Date().toISOString(), delete_requested_by: session.user.id })
-    .eq("uuid", uuid);
+    .eq("uuid", uuid)
+    // Never overwrite an existing request or an approved soft-delete tombstone.
+    .is("delete_requested_at", null);
   if (error) throw error;
 }
 

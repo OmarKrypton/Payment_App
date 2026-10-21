@@ -695,6 +695,61 @@ mod export_tests {
     }
 
     #[test]
+    fn exports_invoice_and_history_registries() {
+        let _ = std::fs::create_dir_all("/tmp/opencode");
+        let invoices = vec![
+            excel::InvoiceSummaryRow {
+                serial: "DOC-1".into(),
+                invoice_no: "INV-1".into(),
+                seller_tax_id: "123456789".into(),
+                amount: 100.0,
+                currency: "USD".into(),
+                amount_egp: 5_000.0,
+                doc_type: "bank".into(),
+            },
+            excel::InvoiceSummaryRow {
+                serial: "DOC-2".into(),
+                invoice_no: "A1 Transport".into(),
+                seller_tax_id: "987654321".into(),
+                amount: 50.0,
+                currency: "EGP".into(),
+                amount_egp: 50.0,
+                doc_type: "import".into(),
+            },
+        ];
+        excel::export_invoice_summary(
+            &invoices,
+            "2026-01-01",
+            "2026-12-31",
+            "/tmp/opencode/invoice_summary_test.xlsx",
+        )
+        .expect("invoice registry export");
+
+        let history = vec![
+            excel::HistoryExportRow {
+                serial: "DOC-1".into(),
+                doc_type: "bank".into(),
+                seller_tax_id: "123456789".into(),
+                company: "Bank Co".into(),
+                invoices: "INV-1".into(),
+                net_payable: 1_000.0,
+                current_paid: 0.0,
+            },
+            excel::HistoryExportRow {
+                serial: "DOC-2".into(),
+                doc_type: "import".into(),
+                seller_tax_id: "987654321".into(),
+                company: "Import Co".into(),
+                invoices: "A1 Transport".into(),
+                net_payable: 50.0,
+                current_paid: 0.0,
+            },
+        ];
+        excel::export_history_registry(&history, "/tmp/opencode/history_registry_test.xlsx")
+            .expect("history registry export");
+    }
+
+    #[test]
     fn repro_export_from_real_snapshot() {
         let Ok(path) = std::env::var("VOUCHIFY_REPRO") else {
             eprintln!("skipped: VOUCHIFY_REPRO not set");

@@ -9,12 +9,15 @@ pub struct InvoiceSummaryRow {
     pub invoice_no: String,
     pub seller_tax_id: String,
     pub amount: f64,
+    pub currency: String,
+    pub amount_egp: f64,
     pub doc_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryExportRow {
     pub serial: String,
+    pub doc_type: String,
     pub seller_tax_id: String,
     pub company: String,
     pub invoices: String,
@@ -300,7 +303,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             sheet2
                 .write_with_format(r, 1, &inv.seller_tax_id, &normal_fmt)
                 .map_err(|e| e.to_string())?;
-            let amt: f64 = inv.amount.parse().unwrap_or(0.0);
+            let amt: f64 = parse_amt(&inv.amount);
             sheet2
                 .write_with_format(r, 2, amt, &normal_fmt)
                 .map_err(|e| e.to_string())?;
@@ -804,12 +807,14 @@ pub fn export_invoice_summary(
     sheet.set_name("Invoice Summary").map_err(|e| e.to_string())?;
     sheet.set_column_width(0, 35).map_err(|e| e.to_string())?;
     sheet.set_column_width(1, 30).map_err(|e| e.to_string())?;
-    sheet.set_column_width(2, 25).map_err(|e| e.to_string())?;
-    sheet.set_column_width(3, 18).map_err(|e| e.to_string())?;
-    sheet.set_column_width(4, 12).map_err(|e| e.to_string())?;
+    sheet.set_column_width(2, 20).map_err(|e| e.to_string())?;
+    sheet.set_column_width(3, 10).map_err(|e| e.to_string())?;
+    sheet.set_column_width(4, 16).map_err(|e| e.to_string())?;
+    sheet.set_column_width(5, 16).map_err(|e| e.to_string())?;
+    sheet.set_column_width(6, 10).map_err(|e| e.to_string())?;
 
     // Title
-    sheet.merge_range(0, 0, 0, 4, "Vouchify - Invoice Registry", &title_fmt)
+    sheet.merge_range(0, 0, 0, 6, "Vouchify - Invoice Registry", &title_fmt)
         .map_err(|e| e.to_string())?;
 
     // Period info
@@ -819,7 +824,7 @@ pub fn export_invoice_summary(
 
     // Header row
     let mut r = 3u32;
-    let headers = ["Serial No", "Invoice No / Service", "Seller TAX ID", "Amount", "Type"];
+    let headers = ["Serial No", "Invoice No / Service", "Seller TAX ID", "Currency", "Amount", "Amount (EGP)", "Type"];
     for (ci, h) in headers.iter().enumerate() {
         sheet.write_with_format(r, ci as u16, *h, &section_fmt)
             .map_err(|e| e.to_string())?;
@@ -871,17 +876,21 @@ pub fn export_invoice_summary(
                 .map_err(|e| e.to_string())?;
             sheet.write_with_format(r, 2, &inv.seller_tax_id, &normal_fmt)
                 .map_err(|e| e.to_string())?;
-            sheet.write_with_format(r, 3, inv.amount, &wrap_val_fmt)
+            sheet.write_with_format(r, 3, &inv.currency, &normal_fmt)
+                .map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 4, inv.amount, &wrap_val_fmt)
+                .map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 5, inv.amount_egp, &wrap_val_fmt)
                 .map_err(|e| e.to_string())?;
             // Only write doc_type on first row of group
             if j == 0 {
-                sheet.write_with_format(r, 4, &inv.doc_type, &normal_fmt)
+                sheet.write_with_format(r, 6, &inv.doc_type, &normal_fmt)
                     .map_err(|e| e.to_string())?;
             }
             if inv.doc_type == "import" {
-                total_import += inv.amount;
+                total_import += inv.amount_egp;
             } else {
-                total_bank += inv.amount;
+                total_bank += inv.amount_egp;
             }
             r += 1;
         }
@@ -890,19 +899,19 @@ pub fn export_invoice_summary(
     r += 1;
 
     // Totals
-    sheet.write_with_format(r, 0, "Total (Bank)", &bold_fmt)
+    sheet.write_with_format(r, 0, "Total (Bank, EGP)", &bold_fmt)
         .map_err(|e| e.to_string())?;
-    sheet.write_with_format(r, 3, total_bank, &calc_fmt)
-        .map_err(|e| e.to_string())?;
-    r += 1;
-    sheet.write_with_format(r, 0, "Total (Import)", &bold_fmt)
-        .map_err(|e| e.to_string())?;
-    sheet.write_with_format(r, 3, total_import, &calc_fmt)
+    sheet.write_with_format(r, 5, total_bank, &calc_fmt)
         .map_err(|e| e.to_string())?;
     r += 1;
-    sheet.write_with_format(r, 0, "Grand Total", &bold_fmt)
+    sheet.write_with_format(r, 0, "Total (Import, EGP)", &bold_fmt)
         .map_err(|e| e.to_string())?;
-    sheet.write_with_format(r, 3, total_bank + total_import, &calc_fmt)
+    sheet.write_with_format(r, 5, total_import, &calc_fmt)
+        .map_err(|e| e.to_string())?;
+    r += 1;
+    sheet.write_with_format(r, 0, "Grand Total (EGP)", &bold_fmt)
+        .map_err(|e| e.to_string())?;
+    sheet.write_with_format(r, 5, total_bank + total_import, &calc_fmt)
         .map_err(|e| e.to_string())?;
 
     workbook.save(path).map_err(|e| e.to_string())?;
@@ -1060,17 +1069,18 @@ pub fn export_history_registry(rows: &[HistoryExportRow], path: &str) -> Result<
     let sheet = workbook.add_worksheet();
     sheet.set_name("History").map_err(|e| e.to_string())?;
     sheet.set_column_width(0, 30).map_err(|e| e.to_string())?;
-    sheet.set_column_width(1, 22).map_err(|e| e.to_string())?;
-    sheet.set_column_width(2, 30).map_err(|e| e.to_string())?;
-    sheet.set_column_width(3, 40).map_err(|e| e.to_string())?;
-    sheet.set_column_width(4, 18).map_err(|e| e.to_string())?;
+    sheet.set_column_width(1, 10).map_err(|e| e.to_string())?;
+    sheet.set_column_width(2, 22).map_err(|e| e.to_string())?;
+    sheet.set_column_width(3, 30).map_err(|e| e.to_string())?;
+    sheet.set_column_width(4, 40).map_err(|e| e.to_string())?;
     sheet.set_column_width(5, 18).map_err(|e| e.to_string())?;
+    sheet.set_column_width(6, 18).map_err(|e| e.to_string())?;
 
-    sheet.merge_range(0, 0, 0, 5, "Vouchify - History Registry", &title_fmt)
+    sheet.merge_range(0, 0, 0, 6, "Vouchify - History Registry", &title_fmt)
         .map_err(|e| e.to_string())?;
 
     let mut r = 2u32;
-    let headers = ["Serial No", "Seller TAX ID", "Company", "Invoices", "Net Payable", "Current Paid"];
+    let headers = ["Serial No", "Type", "Seller TAX ID", "Company", "Invoices", "Net Payable", "Current Paid"];
     for (ci, h) in headers.iter().enumerate() {
         sheet.write_with_format(r, ci as u16, *h, &section_fmt)
             .map_err(|e| e.to_string())?;
@@ -1082,11 +1092,12 @@ pub fn export_history_registry(rows: &[HistoryExportRow], path: &str) -> Result<
 
     for row in &sorted {
         sheet.write_with_format(r, 0, &row.serial, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 1, &row.seller_tax_id, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 2, &row.company, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 3, &row.invoices, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 4, row.net_payable, &money_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 5, row.current_paid, &money_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 1, if row.doc_type == "import" { "Import" } else { "Bank" }, &normal_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 2, &row.seller_tax_id, &normal_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 3, &row.company, &normal_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 4, &row.invoices, &normal_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 5, row.net_payable, &money_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(r, 6, row.current_paid, &money_fmt).map_err(|e| e.to_string())?;
         r += 1;
     }
 
