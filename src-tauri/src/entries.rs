@@ -882,6 +882,18 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
     }
 
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    // Remember what this file used to contain. If a corrected report drops a
+    // document, its key must be tombstoned below; otherwise the next cloud sync
+    // sees it missing locally and pulls the old row straight back.
+    let previous_keys: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT entry_key FROM daily_entries WHERE source_file = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![base], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
     // Re-uploading this same file: drop the documents currently attributed to it.
     tx.execute("DELETE FROM daily_entries WHERE source_file = ?1", params![base])
         .map_err(|e| e.to_string())?;
@@ -915,6 +927,27 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
         inserted += 1;
         lines += e.lines.len();
         refs += invoice_refs_of(e).len();
+    }
+    // Tombstone documents that disappeared from this report. A key that is
+    // still present (reinserted here, or supplied by a newer overlapping
+    // report) must not be deleted.
+    let tombstone_at = now_utc();
+    for key in &previous_keys {
+        let still_exists: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM daily_entries WHERE entry_key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if still_exists.is_none() {
+            tx.execute(
+                "INSERT OR REPLACE INTO daily_deletions (entry_key, deleted_at) VALUES (?1, ?2)",
+                params![key, tombstone_at],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     tx.commit().map_err(|e| e.to_string())?;
 

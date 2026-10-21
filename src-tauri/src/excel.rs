@@ -670,18 +670,13 @@ fn parse_exchange_rate(s: &str) -> f64 {
 }
 
 // ── Import EGP/USD split helpers (mirror the app) ──────────────────────────
-// True when the string contains a run of at least nine consecutive digits.
+// True when the value contains exactly nine digits and nothing but digits,
+// whitespace or separators (matches the app's tax-id validation).
 fn has_nine_digit_run(s: &str) -> bool {
-    let mut count = 0;
-    for b in s.bytes() {
-        if b.is_ascii_digit() {
-            count += 1;
-            if count >= 9 { return true; }
-        } else {
-            count = 0;
-        }
-    }
-    false
+    let raw = s.trim();
+    !raw.is_empty()
+        && raw.chars().all(|c| c.is_ascii_digit() || c.is_whitespace() || c == '-')
+        && raw.chars().filter(|c| c.is_ascii_digit()).count() == 9
 }
 
 // "TAX ID: 123456789" — nine digits somewhere after the words "tax id".
@@ -698,7 +693,9 @@ fn has_nine_digit_after_tax_id(name: &str) -> bool {
                 while k < bytes.len() {
                     if bytes[k].is_ascii_digit() {
                         count += 1;
-                        if count >= 9 { return true; }
+                        if count == 9 && (k + 1 >= bytes.len() || !bytes[k + 1].is_ascii_alphanumeric()) {
+                            return true;
+                        }
                     } else {
                         count = 0;
                     }
@@ -761,11 +758,11 @@ fn import_entry_has_tax_id(e: &ImportEntry) -> bool {
 // carries a 9-digit tax id.
 fn import_split_included(e: &ImportEntry) -> bool {
     if e.exclude_split { return false; }
-    if matches!(import_code_letter(&e.service_name), Some(c) if c <= 'D') {
-        return true;
-    }
     if import_split_excluded_name(&e.service_name) {
         return false;
+    }
+    if matches!(import_code_letter(&e.service_name), Some(c) if c <= 'D') {
+        return true;
     }
     import_entry_has_tax_id(e)
 }
@@ -1124,6 +1121,10 @@ mod import_split_tests {
         assert!(!import_split_included(&entry("Commercial kpi inv:0241 ADT", "616256493", "25573853707")));
         assert!(!import_split_included(&entry("Nafeza Paper", "616256493", "")));
         assert!(!import_split_included(&entry("Form 4 or 6", "616256493", "25573853707")));
+        // Exclusions win even when the line carries an A–D provider code.
+        assert!(!import_split_included(&entry("A1 Commercial invoice", "", "")));
+        assert!(!import_split_included(&entry("D1 Nafeza Paper", "", "")));
+        assert!(!import_split_included(&entry("B2 Form 4", "", "")));
     }
 
     #[test]
@@ -1133,8 +1134,12 @@ mod import_split_tests {
         assert!(!import_split_included(&entry("E1 services", "", "")));
         // 9-digit tax id spelled out in the service name.
         assert!(import_split_included(&entry("FOLK MARITIME TAX ID: 200059238", "", "")));
+        // A longer run is not a tax id.
+        assert!(!import_split_included(&entry("FOLK TAX ID: 1234567890", "", "")));
         // Hidden seller_tax_id counts only when the entry is attached to a pool invoice.
         assert!(!import_split_included(&entry("Random service", "616256493", "")));
         assert!(import_split_included(&entry("Random service", "616256493", "25573853707")));
+        assert!(!import_split_included(&entry("Random service", "1234567890", "25573853707")));
+        assert!(!import_split_included(&entry("Random service", "123456789A", "25573853707")));
     }
 }

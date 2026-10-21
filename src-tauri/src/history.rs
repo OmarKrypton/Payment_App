@@ -150,10 +150,13 @@ pub fn save_snapshot(conn: &Connection, label: &str, notes: &str, data_json: &st
 }
 
 pub fn update_snapshot(conn: &Connection, id: i64, label: &str, notes: &str, data_json: &str) -> Result<(), String> {
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    // created_at records when the snapshot was first saved. Full edits update
+    // the payload and label only, matching the cloud update path; otherwise a
+    // local edit jumps to the top of History while the same edit on another
+    // device keeps its original date.
     conn.execute(
-        "UPDATE snapshots SET label = ?1, notes = ?2, data = ?3, created_at = ?4 WHERE id = ?5",
-        params![label, notes, data_json, now, id],
+        "UPDATE snapshots SET label = ?1, notes = ?2, data = ?3 WHERE id = ?4",
+        params![label, notes, data_json, id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1365,6 +1368,26 @@ mod pool_supersede_tests {
         ).unwrap();
         assert_eq!(created, "2026-01-02 03:04:05", "status toggle must not reorder history");
         assert!(data.contains("\"paid\":true"));
+    }
+
+    #[test]
+    fn full_edit_keeps_created_at() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO snapshots (label, notes, created_at, data) VALUES ('DOC-1', '', '2026-01-02 03:04:05', '{\"v\":1}')",
+            [],
+        ).unwrap();
+        let id: i64 = conn.query_row("SELECT id FROM snapshots WHERE label='DOC-1'", [], |r| r.get(0)).unwrap();
+        update_snapshot(&conn, id, "DOC-1-EDIT", "", "{\"v\":2}").unwrap();
+        let (label, created, data): (String, String, String) = conn.query_row(
+            "SELECT label, created_at, data FROM snapshots WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(label, "DOC-1-EDIT");
+        assert_eq!(created, "2026-01-02 03:04:05", "a full edit must not change the creation date");
+        assert!(data.contains("\"v\":2"));
     }
 
     #[test]

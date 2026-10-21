@@ -149,7 +149,10 @@ pub fn recalculate(data: &FormData) -> CalcResult {
             import_temp_labour_sum += amt;
         }
     }
-    let import_gross_amount = ((import_commercial + import_total_costs + import_entry_sum) * 100.0).round() / 100.0;
+    // Total Costs already contains the commercial invoice converted to EGP.
+    // Adding import_commercial here double-counted it (and mixed USD into an
+    // EGP total).
+    let import_gross_amount = ((import_total_costs + import_entry_sum) * 100.0).round() / 100.0;
     import_total_vat = (import_total_vat * 100.0).round() / 100.0;
     import_total_wht = (import_total_wht * 100.0).round() / 100.0;
     // Grand Total = sum of (amount + VAT) from the table's "+VAT" column
@@ -203,5 +206,35 @@ pub fn recalculate(data: &FormData) -> CalcResult {
         import_grand_total,
         import_grand_net,
         import_temp_labour,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{ImportCostRow, ImportEntry};
+
+    #[test]
+    fn import_gross_does_not_double_count_commercial_invoice() {
+        let mut data = FormData::default();
+        data.import_commercial_amount = "100".into();
+        data.import_commercial_rate = "50".into();
+        data.import_costs = vec![ImportCostRow { name: "Freight".into(), amount: "500".into() }];
+        data.import_entries = vec![ImportEntry {
+            service_name: "A1 Transport".into(),
+            amount: "10".into(),
+            rate: "5".into(),
+            free_wht: false,
+            wht_rate: "0%".into(),
+            vat_rate: "0%".into(),
+            temp_labour: false,
+            exclude_split: false,
+            attached_invoice: String::new(),
+            seller_tax_id: String::new(),
+            attached_uuid: String::new(),
+        }];
+        let result = recalculate(&data);
+        assert_eq!(result.import_total_costs, 5_500.0, "500 cost + 100 × 50 commercial");
+        assert_eq!(result.import_gross_amount, 5_550.0, "total costs + 10 × 5 services");
     }
 }

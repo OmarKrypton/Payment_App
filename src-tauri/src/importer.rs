@@ -481,9 +481,15 @@ pub fn parse_text(text: &str) -> FormData {
         for pat in patterns {
             if let Some(caps) = Regex::new(pat).unwrap().captures(text) {
                 let raw = caps.get(1).unwrap().as_str().trim();
-                let cleaned: String = raw.chars().filter(|c| c.is_ascii_digit() || *c == '-' || *c == 'X' || *c == 'x').collect();
-                if !cleaned.is_empty() && cleaned != "-" {
-                    return cleaned;
+                // Egyptian tax IDs are numeric and exactly nine digits. OCR may
+                // render the separator dashes, so strip those rather than
+                // storing "205-174-078" as the tax id.
+                let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
+                let numeric = raw
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c.is_whitespace() || c == '-');
+                if numeric && digits.len() == 9 {
+                    return digits;
                 }
             }
         }
@@ -551,8 +557,11 @@ pub fn parse_text(text: &str) -> FormData {
     {
         let re = Regex::new(r"(?im)^.*?[销出]售[单]?方[^：:\n]{0,30}?(\d[\d\s\-]{8,17}).*$").unwrap();
         for caps in re.captures_iter(text) {
-            let tid = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
-            if !tid.is_empty() && tid != "100489095" && !data.seller_tax_ids.contains(&tid) {
+            let tid: String = caps
+                .get(1)
+                .map(|m| m.as_str().chars().filter(|c| c.is_ascii_digit()).collect())
+                .unwrap_or_default();
+            if tid.len() == 9 && tid != "100489095" && !data.seller_tax_ids.contains(&tid) {
                 data.seller_tax_ids.push(tid);
             }
         }

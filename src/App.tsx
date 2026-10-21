@@ -203,11 +203,27 @@ function formatNumberInput(raw: string, maxDecimals = 2): string {
 // Parse a value (which may contain thousand-separator commas) as a number.
 const toNum = (s: string): number => parseFloat(String(s).replace(/,/g, "")) || 0;
 
+// Egyptian tax IDs are exactly nine digits. Inputs are normalised to digits as
+// the user types (so pasted "205-174-078" becomes "205174078"), and every save
+// path rejects any non-empty ID whose digit count is not nine.
+const taxIdDigits = (s: any): string => String(s ?? "").replace(/\D/g, "");
+const normalizeTaxIdInput = (s: any): string => taxIdDigits(s);
+const isNineDigitTaxId = (s: any): boolean => {
+  const raw = String(s ?? "").trim();
+  return /^[\d\s-]+$/.test(raw) && taxIdDigits(raw).length === 9;
+};
+const normalizeTaxIdKey = (s: any): string => taxIdDigits(s) || String(s ?? "").trim();
+function normalizeTaxIdMap<T>(raw: Record<string, T> | null | undefined): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const [key, value] of Object.entries(raw || {})) out[normalizeTaxIdKey(key)] = value;
+  return out;
+}
+
 // Import service names embed the seller tax id as "TAX ID: XXXXXXXXX". The tax
 // id is always 9 digits; take exactly those nine and ignore any other numbers.
 const extractTaxIdFromName = (name: string): string => {
   if (!name) return "";
-  const m = /tax\s*id\s*[:：]?\s*(\d{9})/i.exec(name);
+  const m = /tax\s*id\s*[:：]?\s*(\d{9})(?![0-9A-Za-z])/i.exec(name);
   return m ? m[1] : "";
 };
 
@@ -223,16 +239,17 @@ const importCodeLetter = (name: string): string => {
 const importSplitExcludedName = (name: string): boolean =>
   /nafeza|commercial|form\s*[46]/i.test(name || "");
 const importEntryHasTaxId = (e: any): boolean => {
-  if (/tax\s*id\s*[:：]?\s*\d{9}/i.test(String(e?.service_name || ""))) return true;
+  if (extractTaxIdFromName(String(e?.service_name || ""))) return true;
   // Only trust the hidden stored field when the entry is actually attached to a
   // pool invoice; otherwise it may have been captured from the wrong pool match.
   const attached = !!(e?.attached_invoice || e?.attached_uuid);
-  return attached && /\d{9}/.test(String(e?.seller_tax_id || ""));
+  return attached && isNineDigitTaxId(e?.seller_tax_id);
 };
 const importSplitIncluded = (name: string, hasTaxId: boolean): boolean => {
+  // Exclusions win even when the line happens to start with an A–D code.
+  if (importSplitExcludedName(name)) return false; // Nafeza / Commercial / Form 4/6
   const c = importCodeLetter(name);
   if (c && c <= "D") return true;            // explicitly coded as a service provider
-  if (importSplitExcludedName(name)) return false; // Nafeza / Commercial / Form 4/6
   return hasTaxId;                            // otherwise only if it carries a tax id
 };
 
@@ -257,7 +274,7 @@ const bankRowId = (id: string): string => BANK_ROW_OF[id] || id;
 // When the same seller tax id is captured in both a truncated and full form
 // (e.g. "533446" and "533446333"), keep only the complete/longest id.
 const dedupeTaxIds = (set: Set<string>): string[] => {
-  const arr = Array.from(set).filter(Boolean);
+  const arr = Array.from(new Set(Array.from(set).map(taxIdDigits).filter(Boolean)));
   return arr.filter(a => !arr.some(b => b.length > a.length && (b.startsWith(a) || b.endsWith(a))));
 };
 
@@ -365,7 +382,8 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
   const seenDocs = new Map<string, Set<number>>();
   const upsert = (taxId: string, docRef: SupplierDocRef, companyName: string, poolName: string, matchedVia?: string) => {
     if (!taxId) return;
-    taxId = taxId.trim();
+    const digits = taxIdDigits(taxId);
+    taxId = digits || taxId.trim();
     let a = acc.get(taxId);
     if (!a) {
       a = { name: companyName || poolName, poolName, docs: [], vat: {}, whtCert: false, whtApplied: false, whtRates: new Map(), whtDocs: 0 };
@@ -401,7 +419,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
 
   const poolByTax = new Map<string, { name: string; invoices: any[] }>();
   for (const p of pool) {
-    const t = (p.seller_tax_id || "").trim();
+    const t = taxIdDigits(p.seller_tax_id);
     if (!t) continue;
     if (p.doc_status && p.doc_status !== "Valid") continue;
     let e = poolByTax.get(t);
@@ -413,21 +431,12 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
     const e = poolEntryFor(taxId);
     return !!(e && e.invoices.length);
   };
-  // A tax id may be stored truncated in the pool (a prefix/suffix of the full
-  // id). Resolve a full id to its pool entry by exact or partial match so the
-  // supplier still picks up its name and invoices.
+  // Exact, digit-normalised match only. Prefix/suffix matching used to make a
+  // truncated id inherit a different supplier's name and VAT lines, which is
+  // exactly the cross-supplier contamination this directory must avoid.
   function poolEntryFor(taxId: string): { name: string; invoices: any[] } | undefined {
-    const t = (taxId || "").trim();
-    if (!t) return undefined;
-    const exact = poolByTax.get(t);
-    if (exact) return exact;
-    // Only fall back to a partial match for reasonably long ids, so a short id
-    // can't accidentally resolve to an unrelated supplier's pool entry.
-    if (t.length < 6) return undefined;
-    for (const [k, v] of poolByTax) {
-      if (k.length >= 6 && (t.startsWith(k) || t.endsWith(k) || k.startsWith(t) || k.endsWith(t))) return v;
-    }
-    return undefined;
+    const t = taxIdDigits(taxId);
+    return t ? poolByTax.get(t) : undefined;
   }
 
   for (const h of history) {
@@ -1145,13 +1154,13 @@ function App() {
   // rows of their own. Synced via Supabase when signed in; localStorage is the
   // offline cache. Existing suppliers are never renamed.
   const manualSuppliersRef = useRef<Record<string, string>>((() => {
-    try { return JSON.parse(localStorage.getItem("supplier_meta") || "{}"); } catch { return {}; }
+    try { return normalizeTaxIdMap(JSON.parse(localStorage.getItem("supplier_meta") || "{}")); } catch { return {}; }
   })());
   const [supplierEditor, setSupplierEditor] = useState<{ taxId: string; name: string; lockTaxId?: boolean } | null>(null);
   // WHT-free certificate validity per supplier TAX ID. Synced via Supabase when
   // signed in; a local cache keeps the last known dates available offline.
   const [whtCerts, setWhtCerts] = useState<Record<string, { valid_until: string; supplier_name?: string }>>(() => {
-    try { return JSON.parse(localStorage.getItem("wht_certs") || "{}"); } catch { return {}; }
+    try { return normalizeTaxIdMap(JSON.parse(localStorage.getItem("wht_certs") || "{}")); } catch { return {}; }
   });
   const [certEditor, setCertEditor] = useState<{ taxId: string; name: string; validUntil: string } | null>(null);
   const [vatPopover, setVatPopover] = useState<{ taxId: string; rate: string; items: { kind: string; count: number }[] } | null>(null);
@@ -1837,7 +1846,8 @@ function App() {
     formRef.current = { ...formRef.current, invoices: arr };
     recalc(formRef.current);
   };
-  const updInv = (i: number, k: string, v: string) => updateNested("invoices", i, k, v);
+  const updInv = (i: number, k: string, v: string) =>
+    updateNested("invoices", i, k, k === "seller_tax_id" ? normalizeTaxIdInput(v) : v);
   const delInv = (i: number) => {
     const inv = (formRef.current.invoices ?? [])[i];
     delRow("invoices", i);
@@ -1931,7 +1941,7 @@ function App() {
   };
   const updSellerTaxId = (i: number, v: string) => {
     const arr = [...data.seller_tax_ids];
-    arr[i] = v;
+    arr[i] = normalizeTaxIdInput(v);
     formRef.current = { ...formRef.current, seller_tax_ids: arr };
     recalc(formRef.current);
   };
@@ -2127,7 +2137,7 @@ function App() {
         </>
       )}
         <div className="field"><label className="field-label">{t("日期", "Date")}</label><div className="computed-value">{new Date().toLocaleDateString()}</div></div>
-        <Input label={t("买方税号", "Buyer TAX ID")} value={data.buyer_tax_id} onChange={v => updateField("buyer_tax_id", v)} />
+        <Input label={t("买方税号", "Buyer TAX ID")} value={data.buyer_tax_id} onChange={v => updateField("buyer_tax_id", normalizeTaxIdInput(v))} />
         {data.buyer_tax_id && data.buyer_tax_id !== "100489095" && (
           <div className="field-warning">{t("警告: 买方税号不是 100489095!", "Warning: Buyer TAX ID is not 100489095!")}</div>
         )}
@@ -2599,7 +2609,8 @@ function App() {
                   className="field-input"
                   value={supplierEditor.taxId}
                   disabled={supplierEditor.lockTaxId}
-                  onChange={e => setSupplierEditor({ ...supplierEditor, taxId: e.target.value })}
+                  inputMode="numeric"
+                  onChange={e => setSupplierEditor({ ...supplierEditor, taxId: normalizeTaxIdInput(e.target.value) })}
                 />
               </div>
               <div className="field">
@@ -3229,6 +3240,31 @@ function App() {
   }, [data.doc_serial]);
 
   const saveSnapshot = async (): Promise<boolean> => {
+    // Tax IDs are Egyptian nine-digit identifiers. Inputs normalise to digits,
+    // but legacy/imported values can still be truncated or over-long; refuse to
+    // persist them so they cannot create phantom suppliers or pool mismatches.
+    const taxIdChecks: [string, string][] = [];
+    if (data.buyer_tax_id) taxIdChecks.push([t("买方税号", "Buyer TAX ID"), data.buyer_tax_id]);
+    if (data.seller_tax_id) taxIdChecks.push([t("卖方税号", "Seller TAX ID"), data.seller_tax_id]);
+    (data.seller_tax_ids || []).forEach((x, i) => {
+      if (x) taxIdChecks.push([`${t("卖方税号", "Seller TAX ID")} ${i + 1}`, x]);
+    });
+    (data.invoices || []).forEach((inv, i) => {
+      if (inv.seller_tax_id) taxIdChecks.push([`${t("发票", "Invoice")} ${i + 1}`, inv.seller_tax_id]);
+    });
+    (data.import_entries || []).forEach((e, i) => {
+      // The hidden seller id is only authoritative when the row is attached to
+      // a pool invoice; a stale value on a free-text service must not block a
+      // save the user cannot fix from this form.
+      if (e.seller_tax_id && (e.attached_invoice || e.attached_uuid)) {
+        taxIdChecks.push([`${t("服务商", "Provider")} ${i + 1}`, e.seller_tax_id]);
+      }
+    });
+    const badTaxId = taxIdChecks.find(([, value]) => !isNineDigitTaxId(value));
+    if (badTaxId) {
+      showAlert(`${t("税号必须正好是 9 位数字", "TAX ID must be exactly 9 digits")}: ${badTaxId[0]} (${badTaxId[1]})`);
+      return false;
+    }
     if (overwriteTarget) {
       // Saving a loaded snapshot updates it in place (Load no longer needs a
       // separate "Overwrite" action). The label follows the serial when one is
@@ -4234,8 +4270,16 @@ function App() {
         try {
           const rows: any[] = await invoke("daily_entries_for_sync_file", { sourceFile: info?.source_file });
           if (rows.length) await upsertDailyEntriesRemote(rows);
+          // A corrected report may have dropped documents; the Rust importer
+          // records their tombstones, so push them now instead of waiting for
+          // the next periodic sync (which would otherwise re-pull the rows).
+          const pending: [string, string][] = await invoke("daily_pending_deletions");
+          if (pending.length > 0) {
+            await softDeleteDailyEntriesRemoteByKeys(pending.map(p => p[0]));
+            await invoke("clear_daily_entry_deletions", { keys: pending.map(p => p[0]) });
+          }
         } catch (e) {
-          console.error("daily entries push failed", e);
+          console.error("daily entries push/delete failed", e);
         }
       }
       setDeRefresh(v => v + 1);
@@ -4407,7 +4451,7 @@ function App() {
     try {
       const rows = await listManualSuppliersRemote();
       const map: Record<string, string> = {};
-      for (const r of rows) map[r.tax_id] = r.name;
+      for (const r of rows) map[normalizeTaxIdKey(r.tax_id)] = r.name;
       manualSuppliersRef.current = map;
       try { localStorage.setItem("supplier_meta", JSON.stringify(map)); } catch {}
     } catch (e) {
@@ -4418,10 +4462,14 @@ function App() {
   const saveSupplierEditor = async () => {
     const ed = supplierEditor;
     if (!ed) return;
-    const taxId = ed.taxId.trim();
+    const taxId = taxIdDigits(ed.taxId);
     const name = ed.name.trim();
     if (!taxId || !name) {
       showAlert(t("请填写税号和名称", "Please enter both TAX ID and name"));
+      return;
+    }
+    if (!isNineDigitTaxId(taxId)) {
+      showAlert(t("税号必须正好是 9 位数字", "The TAX ID must be exactly 9 digits"));
       return;
     }
     // Allow naming a supplier that is currently unknown (has invoices but no
@@ -4463,13 +4511,13 @@ function App() {
     try {
       if (authUser) {
         const rows = await listWhtCertsRemote();
-        for (const r of rows) map[r.tax_id] = { valid_until: r.valid_until, supplier_name: r.supplier_name };
+        for (const r of rows) map[normalizeTaxIdKey(r.tax_id)] = { valid_until: r.valid_until, supplier_name: r.supplier_name };
       } else {
-        map = JSON.parse(localStorage.getItem("wht_certs") || "{}");
+        map = normalizeTaxIdMap(JSON.parse(localStorage.getItem("wht_certs") || "{}"));
       }
     } catch (e) {
       console.error("loadWhtCerts failed", e);
-      try { map = JSON.parse(localStorage.getItem("wht_certs") || "{}"); } catch {}
+      try { map = normalizeTaxIdMap(JSON.parse(localStorage.getItem("wht_certs") || "{}")); } catch {}
     }
     setWhtCerts(map);
     try { localStorage.setItem("wht_certs", JSON.stringify(map)); } catch {}
@@ -5659,10 +5707,10 @@ function App() {
         {/* Document type */}
         <div className="sidebar-section-label">{t("文档", "Document")}</div>
         <div className="sidebar-seg">
-          <button className={tab === "bank" ? "on" : ""} data-tip={sidebarCollapsed ? t("银行", "Bank") : undefined} onClick={() => { setTab("bank"); if (docStatus !== "saved") updateField("doc_type", "bank"); }}>
+          <button className={tab === "bank" ? "on" : ""} data-tip={sidebarCollapsed ? t("银行", "Bank") : undefined} onClick={() => { setTab("bank"); updateField("doc_type", "bank"); }}>
             <span className="sb-tile"><IconBank size={15} /></span> <span className="seg-label">{t("银行", "Bank")}</span>
           </button>
-          <button className={tab === "import" ? "on" : ""} data-tip={sidebarCollapsed ? t("进口", "Import") : undefined} onClick={() => { setTab("import"); if (docStatus !== "saved") updateField("doc_type", "import"); }}>
+          <button className={tab === "import" ? "on" : ""} data-tip={sidebarCollapsed ? t("进口", "Import") : undefined} onClick={() => { setTab("import"); updateField("doc_type", "import"); }}>
             <span className="sb-tile"><IconTruck size={15} /></span> <span className="seg-label">{t("进口", "Import")}</span>
           </button>
         </div>
