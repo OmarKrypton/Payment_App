@@ -380,6 +380,74 @@ export async function markPoolsAvailableRemote(items: { uuid: string }[]): Promi
   if (errors.length > 0) throw new Error(`${errors.length} unclaim update(s) failed: ${errors[0]}`);
 }
 
+/**
+ * Release a claim only when the cloud row is still owned by the document that
+ * is being released. A stale local "available" row must never clear a claim
+ * another device has made since; in that case this returns false and leaves the
+ * cloud claim untouched.
+ */
+export async function markPoolAvailableRemoteIfOwner(uuid: string, usedByLabel: string): Promise<boolean> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (!uuid) return false;
+  const { data, error } = await supabase
+    .from("pool_invoices")
+    .update({ status: "available", used_by_label: "" })
+    .eq("uuid", uuid)
+    .eq("status", "used")
+    .eq("used_by_label", usedByLabel)
+    .select("uuid");
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
+
+/**
+ * Claim an invoice only when it is still available (or already claimed by the
+ * same document). Returns false when another document owns the cloud row, so a
+ * stale local pool can never steal a claim.
+ */
+export async function markPoolUsedRemoteIfFree(uuid: string, usedByLabel: string): Promise<boolean> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  if (!uuid) return false;
+  const available = await supabase
+    .from("pool_invoices")
+    .update({ status: "used", used_by_label: usedByLabel })
+    .eq("uuid", uuid)
+    .eq("status", "available")
+    .select("uuid");
+  if (available.error) throw available.error;
+  if ((available.data?.length ?? 0) > 0) return true;
+  const mine = await supabase
+    .from("pool_invoices")
+    .update({ status: "used", used_by_label: usedByLabel })
+    .eq("uuid", uuid)
+    .eq("used_by_label", usedByLabel)
+    .select("uuid");
+  if (mine.error) throw mine.error;
+  if ((mine.data?.length ?? 0) > 0) return true;
+  // A "used" row with no label is not a real claim (the serial links the
+  // invoice to a document); it may be taken over by a valid local claim.
+  const orphan = await supabase
+    .from("pool_invoices")
+    .update({ status: "used", used_by_label: usedByLabel })
+    .eq("uuid", uuid)
+    .eq("status", "used")
+    .eq("used_by_label", "")
+    .select("uuid");
+  if (orphan.error) throw orphan.error;
+  if ((orphan.data?.length ?? 0) > 0) return true;
+  // Neither available, ours, nor an orphaned claim. Distinguish "not uploaded
+  // yet" (allow the local claim; the next sync will insert it) from a conflict.
+  const { data: row, error } = await supabase
+    .from("pool_invoices")
+    .select("uuid")
+    .eq("uuid", uuid)
+    .maybeSingle();
+  if (error) throw error;
+  return !row;
+}
+
 export async function deletePoolInvoiceRemote(uuid: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");

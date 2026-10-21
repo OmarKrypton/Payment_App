@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolUsedRemote, markPoolsAvailableRemote, deletePoolInvoiceRemote, requestPoolDeleteRemote, markPoolsUsedRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -1653,36 +1653,52 @@ function App() {
     </div>
   );
 
-  const InvoicesCard = () => {
-    const docCur = (data.doc_currency || "EGP").toUpperCase();
-    // Fall back to the pool row for invoices attached before currency was stored
-    // on the row, so existing documents work without re-attaching.
-    const poolByUuid = new Map(((poolList as any[]) || []).map(p => [String(p.uuid || ""), p]));
-    const poolFor = (inv: any) => (inv.attached_uuid ? poolByUuid.get(String(inv.attached_uuid)) : undefined);
-    const rateOf = (inv: any) => Number(inv.exchange_rate) || Number(poolFor(inv)?.exchange_rate) || 0;
-    const curOf = (inv: any) => String(inv.currency || poolFor(inv)?.currency || "EGP").toUpperCase();
-    // Convert an invoice value into the document currency. ok=false means a rate
-    // is required but missing (e.g. an EGP invoice billed against a USD document).
-    const toDocCur = (v: number, inv: any): { v: number; ok: boolean } => {
-      const c = curOf(inv);
-      if (c === docCur) return { v, ok: true };
-      const r = rateOf(inv);
-      if (c !== "EGP" && docCur === "EGP") return r > 0 ? { v: v * r, ok: true } : { v, ok: false };
-      return { v, ok: false };
-    };
-    const unconvertedInvoices: string[] = [];
-    const totals = (data.invoices ?? []).reduce((acc, inv) => {
-      const n = toDocCur(toNum(inv.amount), inv);
-      const vt = toDocCur(toNum(inv.vat || "0"), inv);
-      const wt = toDocCur(toNum(inv.wht || "0"), inv);
+  // ── Invoice currency helpers ──
+  // Shared by the Invoices card, the automatic "Invoices Match Amount" check
+  // and the remainder hint so every comparison uses the same document-currency
+  // totals. A foreign invoice is converted with its own ETA rate; an invoice
+  // whose currency cannot be converted is excluded and reported.
+  const docCurrency = (data.doc_currency || "EGP").trim().toUpperCase();
+  const poolByUuid = new Map<string, any>(((poolList as any[]) || []).map((p: any) => [String(p.uuid || ""), p]));
+  const poolForInvoice = (inv: any) => {
+    const key = String(inv?.attached_uuid || inv?.uuid || "");
+    return key ? poolByUuid.get(key) : undefined;
+  };
+  const invoiceCurrency = (inv: any) => String(inv?.currency || poolForInvoice(inv)?.currency || "EGP").trim().toUpperCase();
+  const invoiceExchangeRate = (inv: any) =>
+    Number(inv?.exchange_rate) || Number(poolForInvoice(inv)?.exchange_rate) || 0;
+  const invoiceToDocCurrency = (v: number, inv: any): { v: number; ok: boolean } => {
+    const c = invoiceCurrency(inv);
+    if (c === docCurrency) return { v, ok: true };
+    const r = invoiceExchangeRate(inv);
+    if (c !== "EGP" && docCurrency === "EGP") return r > 0 ? { v: v * r, ok: true } : { v, ok: false };
+    return { v, ok: false };
+  };
+  const invoiceDocTotals = (invoices: any[]) => {
+    const unconverted: string[] = [];
+    const totals = invoices.reduce((acc, inv) => {
+      const n = invoiceToDocCurrency(toNum(inv?.amount), inv);
+      const vt = invoiceToDocCurrency(toNum(inv?.vat || "0"), inv);
+      const wt = invoiceToDocCurrency(toNum(inv?.wht || "0"), inv);
       if (!n.ok || !vt.ok || !wt.ok) {
-        const label = String(inv.attached_invoice || inv.invoice_no || "—");
-        if (!unconvertedInvoices.includes(label)) unconvertedInvoices.push(label);
+        const label = String(inv?.attached_invoice || inv?.invoice_no || inv?.no || "—");
+        if (!unconverted.includes(label)) unconverted.push(label);
         return acc; // excluded from the totals — its currency cannot be converted
       }
       acc.net += n.v; acc.vat += vt.v; acc.wht += wt.v;
       return acc;
     }, { net: 0, vat: 0, wht: 0 });
+    return { ...totals, unconverted };
+  };
+
+  const InvoicesCard = () => {
+    const docCur = docCurrency;
+    const poolFor = poolForInvoice;
+    const rateOf = invoiceExchangeRate;
+    const curOf = invoiceCurrency;
+    const { net: totalNet, vat: totalVat, wht: totalWht, unconverted: unconvertedInvoices } =
+      invoiceDocTotals(data.invoices ?? []);
+    const totals = { net: totalNet, vat: totalVat, wht: totalWht };
     const foreignCount = (data.invoices ?? []).filter(inv => curOf(inv) !== docCur).length;
     const invVatRate = totals.net > 0 ? (totals.vat / totals.net) * 100 : 0;
     const invWhtRate = totals.net > 0 ? (totals.wht / totals.net) * 100 : 0;
@@ -1966,8 +1982,9 @@ function App() {
     //   invoice VAT% vs the selected VAT rate (single-rate mode only)
     let check_invoices_auto: "pass" | "fail" | "" = "";
     if (invs.length) {
-      let invNet = 0, invVat = 0;
-      for (const inv of invs) { invNet += toNum(inv.amount); invVat += toNum(inv.vat || "0"); }
+      const bankTotals = invoiceDocTotals(invs);
+      const invNet = bankTotals.net;
+      const invVat = bankTotals.vat;
       const invTotal = invNet + invVat;
       const invVatRate = invNet > 0 ? (invVat / invNet) * 100 : 0;
       const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
@@ -1977,7 +1994,10 @@ function App() {
       const okVat = isRemainder || Math.abs(invVat - computed.c_1E) <= tol;
       const okTotal = isRemainder || Math.abs(invTotal - computed.c_1G) <= tol;
       const okRate = isRemainder || data.vat_manual || invNet <= 0 || Math.abs(invVatRate - docVatRate) <= tol;
-      check_invoices_auto = (okNet && okVat && okTotal && okRate) ? "pass" : "fail";
+      // If some invoice could not be converted into the document currency it is
+      // not part of the displayed totals, so the comparison must not pass.
+      const allConverted = bankTotals.unconverted.length === 0;
+      check_invoices_auto = (allConverted && okNet && okVat && okTotal && okRate) ? "pass" : "fail";
     }
 
     // "WHT-Free Company Provided WHT Certificate" (auto): driven by the
@@ -2014,9 +2034,8 @@ function App() {
     let remHint = "";
     if (isRemainder) {
       const parent = (savedDocsIndex || []).find((d: any) => d.label === data.remainder_of);
-      let parentTotal = 0, curTotal = 0;
-      for (const inv of parent?.invoices || []) parentTotal += toNum(inv.amount);
-      for (const inv of invs) curTotal += toNum(inv.amount);
+      const parentTotal = invoiceDocTotals(parent?.invoices || []).net;
+      const curTotal = invoiceDocTotals(invs).net;
       remHint = `${t("父文档合计", "Parent total")} ${fmt(parentTotal)} · ${t("本单据合计", "This doc total")} ${fmt(curTotal)}`;
     }
 
@@ -2556,7 +2575,7 @@ function App() {
                           <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
                           <span className="supplier-doc-label" title={d.matchedVia ? `${t("匹配来源", "Matched via")}: ${d.matchedVia}` : d.label}>{d.label}</span>
                           <span className="supplier-doc-date">{d.created_at}</span>
-                          <button className="hc-btn" onClick={() => loadSnapshot(d.id)}>{t("加载", "Load")}</button>
+                          <button className="hc-btn" onClick={() => openDocumentBySerial(d.label)}>{t("加载", "Load")}</button>
                         </div>
                       ))}
                     </div>
@@ -3259,6 +3278,9 @@ function App() {
         }
       }
       // Keep the snapshot as the save target, so further edits also save in place.
+      // Refresh the label too: a serial edit must not be reverted by a later
+      // metadata-only update (e.g. the Paid/Unpaid toggle).
+      setOverwriteTarget({ ...target, label: newLabel });
       loadHistoryList(historySearch);
       savedJsonRef.current = JSON.stringify(formRef.current);
       setDocStatus("saved");
@@ -3320,9 +3342,12 @@ function App() {
     }
     const dataJson = JSON.stringify(saveData);
     let saved = false;
+    let savedId: number | null = null;
+    let savedRemote = false;
     if (authUser) {
       try {
-        await saveSnapshotRemote(label, "", dataJson);
+        savedId = await saveSnapshotRemote(label, "", dataJson);
+        savedRemote = true;
         setSynced(true);
         loadSavedDocsIndex();
         showAlert(`${t("快照已保存并同步", "Snapshot saved & synced")} (${label})`);
@@ -3330,7 +3355,7 @@ function App() {
       } catch (e: any) {
         console.error("saveSnapshotRemote failed", e);
         try {
-          await invoke("save_history", { label, notes: "", dataJson });
+          savedId = await invoke<number>("save_history", { label, notes: "", dataJson });
           setSynced(false);
           loadSavedDocsIndex();
           showAlert(`${t("快照已保存(本地)", "Snapshot saved (local)")} (${label})`);
@@ -3341,7 +3366,7 @@ function App() {
       }
     } else {
       try {
-        await invoke("save_history", { label, notes: "", dataJson });
+        savedId = await invoke<number>("save_history", { label, notes: "", dataJson });
         loadSavedDocsIndex();
         showAlert(`${t("快照已保存", "Snapshot saved")} (${label})`);
         saved = true;
@@ -3350,21 +3375,38 @@ function App() {
       }
     }
     if (saved) {
+      // The first save must become the target for subsequent saves. Without
+      // this, a serial document refuses to save again ("already exists") and a
+      // draft creates a duplicate snapshot every time Save is pressed.
+      if (savedId != null) {
+        setOverwriteTarget({ id: savedId, label, remote: savedRemote });
+      }
       savedJsonRef.current = JSON.stringify(formRef.current);
       setDocStatus("saved");
     }
     return saved;
   };
 
-  const loadSnapshotNow = async (id: number) => {
+  const loadSnapshotNow = async (id: number, remote = false, label = "") => {
     try {
       let dataJson: string;
-      if (authUser) {
+      if (remote) {
+        // A remote id and a local id come from different sequences. Falling
+        // back to a local row with the same number would load (and later save
+        // over) an unrelated document, so a remote load either succeeds or is
+        // reported as failed.
+        if (!authUser) {
+          showAlert(t("会话已失效，无法加载云端快照", "Your session has expired; the cloud snapshot could not be loaded"));
+          hideHistoryModal();
+          return;
+        }
         try {
           dataJson = await loadSnapshotRemote(id);
-        } catch (e) {
-          console.error("loadSnapshotRemote failed, falling back", e);
-          dataJson = await invoke<string>("load_history", { id });
+        } catch (e: any) {
+          console.error("loadSnapshotRemote failed", e);
+          showAlert(`${t("加载失败", "Load failed")}: ${e?.message || e}`);
+          hideHistoryModal();
+          return;
         }
       } else {
         dataJson = await invoke<string>("load_history", { id });
@@ -3397,8 +3439,10 @@ function App() {
       savedJsonRef.current = JSON.stringify(parsed);
       setDocStatus("saved");
       // A loaded snapshot becomes the save target: pressing Save updates this
-      // snapshot in place instead of creating a new one.
-      setOverwriteTarget({ id, label: historyList.find(h => h.id === id)?.label || parsed.doc_serial || "", remote: !!authUser });
+      // snapshot in place instead of creating a new one. Keep the source (local
+      // vs cloud) with it — the two id sequences are independent.
+      const targetLabel = label || historyList.find(h => h.id === id && h.remote === remote)?.label || parsed.doc_serial || "";
+      setOverwriteTarget({ id, label: targetLabel, remote });
       setTab(parsed.doc_type === "import" ? "import" : "bank");
       setEtaResult(null);
       setShowEtaResult(false);
@@ -3417,9 +3461,10 @@ function App() {
   };
 
   // Loading a different document replaces the current one: warn if it has
-  // unsaved changes first.
-  const loadSnapshot = (id: number) => {
-    guardUnsaved(() => { void loadSnapshotNow(id); });
+  // unsaved changes first. `remote` must travel with the id so a cloud row is
+  // never mistaken for a local row with the same numeric id.
+  const loadSnapshot = (id: number, remote = false, label = "") => {
+    guardUnsaved(() => { void loadSnapshotNow(id, remote, label); });
   };
 
   const historySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3429,8 +3474,12 @@ function App() {
     historySearchTimer.current = setTimeout(() => loadHistoryList(v), 300);
   };
 
-  const deleteSnapshot = async (id: number) => {
-    if (authUser) {
+  const deleteSnapshot = async (id: number, remote = false) => {
+    if (remote) {
+      if (!authUser) {
+        showAlert(t("会话已失效，无法删除云端快照", "Your session has expired; the cloud snapshot could not be deleted"));
+        return;
+      }
       // Admin: delete freely
       if (isAdminUser) {
         try {
@@ -3450,7 +3499,12 @@ function App() {
         }
       }
     } else {
-      await invoke("delete_history", { id });
+      try {
+        await invoke("delete_history", { id });
+        showAlert(t("快照已删除", "Snapshot deleted"));
+      } catch (e: any) {
+        showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
+      }
     }
     loadHistoryList(historySearch);
   };
@@ -3503,17 +3557,25 @@ function App() {
   // already references. This re-asserts those claims in the local pool and in
   // Supabase so they never have to be manually reclaimed after a restore.
   // Entries created after v0.3.30 carry attached_uuid and match exactly; legacy
-  // entries match by (invoice_id, seller_tax_id) and pick the row that best
-  // represents the reference (already-claimed-with-this-serial, else used, else
-  // Valid) since a rejected attempt may now be a separate row.
+  // entries match by (invoice_id, seller_tax_id). A restore must never take an
+  // invoice claimed by a different document: those rows are skipped (the
+  // document still references them, but the claim conflict is left for the user
+  // to resolve rather than silently stolen).
+  const canRestoreClaim = (row: any, serial: string): boolean => {
+    if (!row || !poolRowUsable(row)) return false;
+    if (row.status !== "used") return true;
+    const owner = String(row.used_by_label || "").trim();
+    return !owner || owner === serial;
+  };
+
   const poolRowForRestore = (rows: any[] | undefined, serial: string): any | undefined => {
     if (!rows || rows.length === 0) return undefined;
-    const bySerial = rows.find((r: any) => r.status === "used" && (r.used_by_label || "") === serial);
+    const claimable = rows.filter((r: any) => canRestoreClaim(r, serial));
+    if (claimable.length === 0) return undefined;
+    const bySerial = claimable.find((r: any) => r.status === "used" && String(r.used_by_label || "").trim() === serial);
     if (bySerial) return bySerial;
-    const used = rows.find((r: any) => r.status === "used");
-    if (used) return used;
-    const valid = rows.find((r: any) => !r.doc_status || r.doc_status === "Valid");
-    return valid || rows[0];
+    const available = claimable.find((r: any) => r.status !== "used" || !String(r.used_by_label || "").trim());
+    return available || claimable[0];
   };
 
   const buildRestoreKey = (invoiceNo: string | undefined, sellerTaxId: string | undefined, uuid: string | undefined): string | null => {
@@ -3540,7 +3602,7 @@ function App() {
     for (const k of keys) {
       if (k.startsWith("u:")) {
         const p = byUuid.get(k);
-        if (p && !out.some((o: any) => o.id === p.id)) out.push(p);
+        if (p && canRestoreClaim(p, serial) && !out.some((o: any) => o.id === p.id)) out.push(p);
       } else {
         const rows = byComposite.get(k);
         const p = poolRowForRestore(rows, serial);
@@ -3548,6 +3610,31 @@ function App() {
       }
     }
     return out;
+  };
+
+  // Re-check a claim in the cloud before writing it locally. The local pool can
+  // be stale; a conditional claim prevents a restore from overwriting another
+  // document's claim. If the cloud cannot be reached, keep the local claim and
+  // let the next sync reconcile it.
+  const claimRestoreRows = async (rows: any[], serial: string): Promise<any[]> => {
+    if (!authUser || rows.length === 0) return rows;
+    const allowed: any[] = [];
+    for (const p of rows) {
+      if (!p?.uuid) { allowed.push(p); continue; }
+      // Already claimed by this document: nothing to re-check.
+      if (p.status === "used" && String(p.used_by_label || "").trim() === serial) {
+        allowed.push(p);
+        continue;
+      }
+      try {
+        if (await markPoolUsedRemoteIfFree(p.uuid, serial)) allowed.push(p);
+        else console.warn("restore claim skipped: cloud row is owned by another document", p.uuid, serial);
+      } catch (e) {
+        console.error("restore claim remote check failed", p.uuid, e);
+        allowed.push(p);
+      }
+    }
+    return allowed;
   };
 
   const restoreClaimsFromDocument = async (): Promise<number> => {
@@ -3560,14 +3647,11 @@ function App() {
     if (keys.size === 0) return 0;
     let list: any[] = [];
     try { list = await invoke<any[]>("list_invoice_pool_summary"); } catch { return 0; }
-    const toClaim = resolveRestoreRows([...keys], list, serial);
+    const toClaim = await claimRestoreRows(resolveRestoreRows([...keys], list, serial), serial);
     if (toClaim.length === 0) return 0;
     try {
       await invoke("mark_pool_invoices_used", { ids: toClaim.map((p: any) => p.id), snapshotId: 0, snapshotLabel: serial });
     } catch {}
-    try {
-      if (authUser) await markPoolsUsedRemote(toClaim.map((p: any) => ({ uuid: p.uuid })), serial);
-    } catch (e) { console.error("restore claims remote failed", e); }
     try { await loadPool(); } catch {}
     return toClaim.length;
   };
@@ -3618,15 +3702,18 @@ function App() {
     let list: any[] = [];
     try { list = await invoke<any[]>("list_invoice_pool_summary"); } catch { return 0; }
     for (const doc of docs) {
-      const toClaim = resolveRestoreRows([...doc.keys], list, doc.serial);
+      const toClaim = await claimRestoreRows(resolveRestoreRows([...doc.keys], list, doc.serial), doc.serial);
       if (toClaim.length === 0) continue;
       scanned += toClaim.length;
       try {
         await invoke("mark_pool_invoices_used", { ids: toClaim.map((p: any) => p.id), snapshotId: 0, snapshotLabel: doc.serial });
+        // Keep the in-memory pool snapshot current so a later document in this
+        // loop cannot claim the same invoice before the pull refresh.
+        for (const p of toClaim) {
+          p.status = "used";
+          p.used_by_label = doc.serial;
+        }
       } catch {}
-      try {
-        if (authUser) await markPoolsUsedRemote(toClaim.map((p: any) => ({ uuid: p.uuid })), doc.serial);
-      } catch (e) { console.error("restoreAllClaims remote failed", e); }
       claimed += toClaim.length;
     }
     try { await loadPool(); } catch {}
@@ -3639,10 +3726,11 @@ function App() {
   // out) eventually reach every other device.
   // Bidirectional pool sync. Claim state is STICKY: a "used" claim (with
   // serial) is never downgraded by stale "available" local state from another
-  // device. Local-only invoices are pushed up; local claims propagate up; but
-  // an available local row never overwrites an existing remote claim. The pull
-  // then brings the authoritative cloud state (including every claim) down to
-  // local SQLite, converging every device to the full union.
+  // device. Local-only invoices are pushed up, and a local claim is pushed only
+  // onto a cloud row that is still available. An explicit unclaim is retried
+  // conditionally via `pendingPoolUnclaimsRef`. The pull then brings the
+  // authoritative cloud state (including every claim) down to local SQLite,
+  // converging every device to the full union without stealing claims.
   const syncPoolRemote = async (opts?: { force?: boolean }): Promise<void> => {
     if (poolSyncInFlight.current) return;
     const force = opts?.force === true;
@@ -3660,19 +3748,38 @@ function App() {
       return;
     }
     try {
+      // 0) Retry explicit local unclaims first. They are conditional on the
+      //    label that owned the claim, so a newer claim from another device is
+      //    never cleared. Rows whose retry still fails are excluded from the
+      //    pull below, otherwise the pull would undo the local unclaim.
+      const pendingUnclaims = { ...pendingPoolUnclaimsRef.current };
+      const unclaimBlocked = new Set<string>();
+      if (Object.keys(pendingUnclaims).length > 0) {
+        const remaining = { ...pendingUnclaims };
+        for (const [uuid, expectedOwner] of Object.entries(pendingUnclaims)) {
+          try {
+            await markPoolAvailableRemoteIfOwner(uuid, expectedOwner);
+            delete remaining[uuid];
+          } catch (e) {
+            console.error("pending pool unclaim failed", uuid, e);
+            unclaimBlocked.add(uuid);
+            info.error = `unclaim: ${(e as any)?.message || e}`;
+          }
+        }
+        persistPendingPoolUnclaims(remaining);
+      }
       // 1) Push local invoices up, but only when safe:
       //    - invoice not yet in the cloud (local-only import), or
-      //    - local is a claim (used) that the cloud doesn't have yet, or
-      //    - local is available but cloud still holds a stale claim (used),
-      //      which means the user explicitly unclaimed — push the unclaim so
-      //      the cloud converges and the next pull doesn't revert it.
+      //    - local is a claim (used) and the cloud row is still available.
+      // A local "available" row is never pushed over a cloud claim: it may be
+      // stale, and the cloud claim is authoritative. A local "used" row is never
+      // pushed over a different cloud label. This keeps one device from stealing
+      // or clearing another device's claim.
       const localAll = await invoke<any[]>("list_invoice_pool_summary");
       info.local = localAll.length;
       const remoteMeta = await listPoolRemoteMeta();
       info.cloud = remoteMeta.length;
-      // Identity is the ETA uuid: an invoice is one document. A local row only
-      // needs pushing when its uuid is entirely missing from the cloud, or when
-      // it claims (used) the invoice and the cloud doesn't reflect that claim.
+      // Identity is the ETA uuid: an invoice is one document.
       const remoteByUuid = new Map(remoteMeta.map((r) => [r.uuid, r]));
       // Real-uuid cloud rows keyed by document, so a local synthetic-uuid row is
       // not uploaded as a second copy of a document the cloud already holds
@@ -3681,45 +3788,76 @@ function App() {
       for (const r of remoteMeta) {
         if (!isSyntheticPoolUuid(r.uuid)) remoteRealByDoc.set(`${r.invoice_id}|${r.seller_tax_id}`, r);
       }
-      const toPush = localAll.filter((l) => {
+      const newRows: any[] = [];
+      const claimRows: any[] = [];
+      let conflicts = 0;
+      for (const l of localAll) {
+        if (unclaimBlocked.has(l.uuid)) continue;
         const r = l.uuid ? remoteByUuid.get(l.uuid) : undefined;
         if (!r) {
-          if (isSyntheticPoolUuid(l.uuid) && remoteRealByDoc.has(`${l.invoice_id}|${l.seller_tax_id}`)) {
-            return false;
-          }
-          return true;
+          if (isSyntheticPoolUuid(l.uuid) && remoteRealByDoc.has(`${l.invoice_id}|${l.seller_tax_id}`)) continue;
+          newRows.push(l);
+          continue;
         }
         if (l.status === "used") {
-          return r.status !== "used" || (r.used_by_label || "") !== (l.used_by_label || "");
+          const remoteOwner = String(r.used_by_label || "").trim();
+          if ((r.status || "available") !== "used" || !remoteOwner) {
+            // Available, or a meaningless "used" row without a serial: the
+            // local claim may safely take it.
+            claimRows.push(l);
+          } else if (remoteOwner !== String(l.used_by_label || "").trim()) {
+            // Two documents/devices claim the same invoice. Leave the cloud
+            // claim intact; the pull below adopts it locally.
+            conflicts += 1;
+          }
         }
-        // local is "available": push an explicit unclaim up so the cloud stops
-        // reverting the local status on the next pull. Only push when the cloud
-        // still holds a stale claim (used), so freshly-imported available rows
-        // (already available remotely) don't get re-uploaded needlessly.
-        if (l.status === "available" && r.status === "used") {
-          return true;
-        }
-        return false;
-      });
-      info.pushed = toPush.length;
-      if (toPush.length > 0) {
-        const pushOnce = async () => {
+        // local is "available": do not push. The pull adopts the cloud claim.
+      }
+      if (conflicts > 0) {
+        console.warn(`pool sync: ${conflicts} claim conflict(s); keeping the cloud claim`);
+      }
+      let pushed = 0;
+      let pushFailed = false;
+      if (newRows.length > 0) {
+        const pushNew = async () => {
           // Fetch the full rows (with raw_xml/lines_json) only for what we push,
           // instead of shipping the whole pool into the UI.
-          const uuids = toPush.map((l: any) => l.uuid).filter(Boolean);
+          const uuids = newRows.map((l: any) => l.uuid).filter(Boolean);
           const full = await invoke<any[]>("get_pool_invoices_by_uuids", { uuids });
           await upsertPoolInvoicesRemote(full);
         };
         try {
-          await pushOnce();
+          await pushNew();
+          pushed += newRows.length;
         } catch (e) {
           console.error("upsert pool remote failed", e);
-          // Retry once before pulling: otherwise the pull could overwrite the
-          // local claims the failed push never delivered.
-          try { await pushOnce(); }
-          catch (e2) { info.error = `upsert: ${(e2 as any)?.message || e2}`; }
+          try { await pushNew(); pushed += newRows.length; }
+          catch (e2) {
+            info.error = `upsert: ${(e2 as any)?.message || e2}`;
+            pushFailed = true;
+          }
         }
       }
+      for (const l of claimRows) {
+        if (!l.uuid) continue;
+        try {
+          if (await markPoolUsedRemoteIfFree(l.uuid, String(l.used_by_label || "").trim())) {
+            pushed += 1;
+          } else {
+            conflicts += 1;
+            console.warn("pool sync claim skipped: cloud row is owned by another document", l.uuid);
+          }
+        } catch (e) {
+          console.error("conditional pool claim failed", l.uuid, e);
+          info.error = `claim: ${(e as any)?.message || e}`;
+          pushFailed = true;
+          break;
+        }
+      }
+      info.pushed = pushed;
+      // If the push failed, abort before the pull. Pulling now would replace
+      // local claims that never reached the cloud.
+      if (pushFailed) return;
       // 1b) Drop cloud rows that still carry a synthetic uuid for a document we
       //     now hold locally under its real uuid, so they stop reappearing as
       //     duplicates. They are excluded from the pull below.
@@ -3741,7 +3879,7 @@ function App() {
         const localNow = await invoke<any[]>("list_invoice_pool_summary");
         const localByUuid = new Map(localNow.map((l) => [l.uuid, l]));
         const changed = remoteMeta.filter((r) => {
-          if (purgedSynthetic.has(r.uuid) || applied.has(r.uuid)) return false;
+          if (purgedSynthetic.has(r.uuid) || applied.has(r.uuid) || unclaimBlocked.has(r.uuid)) return false;
           const l = r.uuid ? localByUuid.get(r.uuid) : undefined;
           if (!l) return true;
           return (l.status || "available") !== (r.status || "available") ||
@@ -3809,9 +3947,13 @@ function App() {
       //    "claimed, no serial" rows never linger across devices.
       const cleaned = await invoke<number>("clean_unlabelled_claims");
       if (cleaned > 0) console.log(`downgraded ${cleaned} unlabelled claims to available`);
-      const unlabelledRemote = remoteMeta.filter((r) => r.status === "used" && !(r.used_by_label || ""));
-      if (unlabelledRemote.length > 0) {
-        try { await markPoolsAvailableRemote(unlabelledRemote.map((u) => ({ uuid: u.uuid }))); } catch (e) { console.error("clean remote claims failed", e); }
+      const claimedUuids = new Set(claimRows.map((l: any) => l.uuid));
+      const unlabelledRemote = remoteMeta.filter((r) =>
+        !claimedUuids.has(r.uuid) && r.status === "used" && !(r.used_by_label || "")
+      );
+      for (const u of unlabelledRemote) {
+        try { await markPoolAvailableRemoteIfOwner(u.uuid, ""); }
+        catch (e) { console.error("clean remote claims failed", u.uuid, e); }
       }
     } catch (e) {
       console.error("sync remote pool failed", e);
@@ -3871,6 +4013,16 @@ function App() {
   const poolSyncInFlight = useRef(false);
   const poolLastSyncRef = useRef(0);
   const showPoolRef = useRef(false);
+  // Explicit unclaims that could not reach Supabase yet. Each entry remembers
+  // the label that owned the claim, so the retry can clear it conditionally and
+  // never wipe a newer claim made by another document/device.
+  const pendingPoolUnclaimsRef = useRef<Record<string, string>>((() => {
+    try { return JSON.parse(localStorage.getItem("pool_pending_unclaims") || "{}"); } catch { return {}; }
+  })());
+  const persistPendingPoolUnclaims = (next: Record<string, string>) => {
+    pendingPoolUnclaimsRef.current = next;
+    try { localStorage.setItem("pool_pending_unclaims", JSON.stringify(next)); } catch {}
+  };
   useEffect(() => { showPoolRef.current = showPool; }, [showPool]);
   useEffect(() => {
     if (!authUser) { didInitPoolSync.current = null; return; }
@@ -4392,12 +4544,19 @@ function App() {
         seen.add(label);
         let p: any = {};
         try { p = JSON.parse(r.data_json || "{}"); } catch {}
-        const invoices: { no: string; amount: string; seller: string; uuid: string }[] = [];
+        const invoices: { no: string; amount: string; seller: string; uuid: string; currency?: string; exchange_rate?: number }[] = [];
         const sellers = new Set<string>();
         const taxIds = new Set<string>();
         if (p.doc_type === "import") {
           (p.import_entries || []).forEach((e: any) => {
-            if (e.attached_invoice) invoices.push({ no: String(e.attached_invoice), amount: String(e.amount ?? ""), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
+            if (e.attached_invoice) invoices.push({
+              no: String(e.attached_invoice),
+              amount: String(e.amount ?? ""),
+              seller: String(e.seller_tax_id || "").trim(),
+              uuid: String(e.attached_uuid || "").trim(),
+              currency: String(e.currency || "").trim(),
+              exchange_rate: Number(e.exchange_rate) || 0,
+            });
             if (e.company_name) sellers.add(String(e.company_name).trim());
             const sid = extractTaxIdFromName(e.service_name || "") || e.seller_tax_id;
             if (sid) taxIds.add(String(sid).trim());
@@ -4406,7 +4565,14 @@ function App() {
           (p.seller_tax_ids || []).forEach((x: string) => x && x.trim() && taxIds.add(x.trim()));
           if (p.seller_tax_id) taxIds.add(String(p.seller_tax_id).trim());
           (p.invoices || []).forEach((inv: any) => {
-            if (inv.invoice_no) invoices.push({ no: String(inv.invoice_no), amount: String(inv.amount ?? ""), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
+            if (inv.invoice_no) invoices.push({
+              no: String(inv.invoice_no),
+              amount: String(inv.amount ?? ""),
+              seller: String(inv.seller_tax_id || "").trim(),
+              uuid: String(inv.attached_uuid || "").trim(),
+              currency: String(inv.currency || "").trim(),
+              exchange_rate: Number(inv.exchange_rate) || 0,
+            });
             if (inv.company_name) sellers.add(String(inv.company_name).trim());
             if (inv.seller_tax_id) taxIds.add(String(inv.seller_tax_id).trim());
           });
@@ -4570,6 +4736,23 @@ function App() {
     showAlert(t("本文档没有可验证的已附加发票", "This document has no attached invoices to validate"));
   };
 
+  // Push claims made by an attach action without taking a cloud row that is
+  // already owned by another document. Local attach stays responsive offline;
+  // the next sync reconciles any claim that could not be delivered.
+  const claimPoolRowsRemote = async (rows: any[], serial: string): Promise<void> => {
+    if (!authUser) return;
+    for (const p of rows) {
+      if (!p?.uuid) continue;
+      try {
+        if (!await markPoolUsedRemoteIfFree(p.uuid, serial)) {
+          console.warn("attach claim skipped: cloud row is owned by another document", p.uuid);
+        }
+      } catch (e) {
+        console.error("attach claim remote update failed", p.uuid, e);
+      }
+    }
+  };
+
   const attachImportEntryFromPool = async (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
@@ -4655,9 +4838,7 @@ function App() {
     try {
       await invoke("mark_pool_invoices_used", { ids: freshIds, snapshotId: 0, snapshotLabel: serial });
     } catch {}
-    try {
-      if (authUser) await markPoolsUsedRemote(toClaim.map((p: any) => ({ uuid: p.uuid })), serial);
-    } catch (e) { console.error("markPoolsUsedRemote failed", e); }
+    await claimPoolRowsRemote(toClaim, serial);
     await loadPool();
     await validateImportEntries(entries);
   };
@@ -4669,9 +4850,7 @@ function App() {
     try {
       await invoke("mark_pool_invoice_used", { id, snapshotId: 0, snapshotLabel: serial });
     } catch {}
-    try {
-      if (authUser) await markPoolUsedRemote(p.uuid, serial);
-    } catch (e) { console.error("markPoolUsedRemote failed", e); }
+    await claimPoolRowsRemote([p], serial);
     await loadPool();
   };
 
@@ -4774,9 +4953,7 @@ function App() {
     try {
       await invoke("mark_pool_invoices_used", { ids: freshIds, snapshotId: 0, snapshotLabel: serial });
     } catch {}
-    try {
-      if (authUser) await markPoolsUsedRemote(fresh.map(p => ({ uuid: p!.uuid })), serial);
-    } catch (e) { console.error("markPoolsUsedRemote failed", e); }
+    await claimPoolRowsRemote(fresh, serial);
     await loadPool();
     if (fresh.length > 0) {
       try {
@@ -4824,13 +5001,27 @@ function App() {
         try { await invoke("mark_pool_invoice_available", { id: r.id }); }
         catch (e) { console.error("mark_pool_invoice_available failed", r.id, e); }
       }
+      // Release the cloud claim conditionally. A stale local row must never
+      // clear a claim another device made after this device last pulled.
+      const pending = { ...pendingPoolUnclaimsRef.current };
       if (authUser) {
-        try {
-          await markPoolsAvailableRemote(
-            eligible.filter((r) => r.uuid).map((r) => ({ uuid: r.uuid }))
-          );
-        } catch (e) { console.error("markPoolsAvailableRemote failed", e); }
+        for (const r of eligible) {
+          if (!r.uuid) continue;
+          try {
+            await markPoolAvailableRemoteIfOwner(r.uuid, String(r.used_by_label || "").trim());
+            delete pending[r.uuid];
+          } catch (e) {
+            console.error("markPoolAvailableRemoteIfOwner failed", r.uuid, e);
+            pending[r.uuid] = String(r.used_by_label || "").trim();
+          }
+        }
+      } else {
+        // Remember the unclaim so it can be sent after the next sign-in.
+        for (const r of eligible) {
+          if (r.uuid) pending[r.uuid] = String(r.used_by_label || "").trim();
+        }
       }
+      persistPendingPoolUnclaims(pending);
       // Re-read the authoritative local state (also refreshes any other row that
       // changed in the meantime) and mark the pool view fresh again.
       try {
@@ -5051,14 +5242,12 @@ function App() {
         if (!wantDraftNo) return false;
         try { return snapshotDraftNo(JSON.parse(dataJson)) === parseInt(wantDraftNo[1], 10); } catch { return false; }
       };
-      let entries = await invoke<any[]>("list_history", { search: serial });
-      let match = entries.find((e: any) => e.label === serial);
-      if (!match && wantDraftNo) {
-        for (const e of entries) {
-          if (e.data_json && draftMatch(e.data_json)) { match = e; break; }
-        }
-      }
-      if (!match && authUser) {
+      let match: any = null;
+      let matchRemote = false;
+      // When signed in, the cloud list is the authoritative set shown in the
+      // History browser; check it first so a stale local row with the same
+      // label cannot shadow the current document.
+      if (authUser) {
         try {
           const remote = await listSnapshotsRemote(serial);
           match = remote.find((r: any) => r.label === serial);
@@ -5067,11 +5256,22 @@ function App() {
               if (r.data_json && draftMatch(r.data_json)) { match = r; break; }
             }
           }
+          matchRemote = !!match;
         } catch {}
+      }
+      if (!match) {
+        const entries = await invoke<any[]>("list_history", { search: serial });
+        match = entries.find((e: any) => e.label === serial);
+        if (!match && wantDraftNo) {
+          for (const e of entries) {
+            if (e.data_json && draftMatch(e.data_json)) { match = e; break; }
+          }
+        }
+        matchRemote = false;
       }
       if (match) {
         setShowPool(false);
-        await loadSnapshot(match.id);
+        await loadSnapshot(match.id, matchRemote, match.label || "");
       } else {
         showAlert(t("未找到对应文档的序列号", "No saved document found with this serial number"));
       }
@@ -5878,7 +6078,7 @@ function App() {
                     </div>
                   )}
                   <div className="hc-actions">
-                    <button className="hc-btn pri" onClick={() => loadSnapshot(h.id)}>Load</button>
+                    <button className="hc-btn pri" onClick={() => loadSnapshot(h.id, !!h.remote, h.label)}>Load</button>
                     <button
                       className={`hc-btn ${h.paid ? "hc-unpay" : "hc-pay"}`}
                       onClick={() => requestPaidChange(!h.paid, { kind: "history", entry: h })}
@@ -5892,12 +6092,12 @@ function App() {
                       </>
                     )}
                     {isAdminUser && !pendingDelete && (
-                      <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id)}>Delete</button>
+                      <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id, !!h.remote)}>Delete</button>
                     )}
                     {!isAdminUser && authUser && !pendingDelete && (
-                      <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id)}>{t("请求删除", "Request delete")}</button>
+                      <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id, !!h.remote)}>{t("请求删除", "Request delete")}</button>
                     )}
-                    {!authUser && <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id)}>Delete</button>}
+                    {!authUser && <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id, !!h.remote)}>Delete</button>}
                   </div>
                 </div>
                 );
