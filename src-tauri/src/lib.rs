@@ -12,11 +12,50 @@ use models::{CalcResult, FormData, HistoryEntry};
 use excel::InvoiceSummaryRow;
 use excel::HistoryExportRow;
 use rusqlite::Connection;
+use std::io::Write;
 use std::sync::Mutex;
 use tauri::{Emitter, Listener, Manager};
 use serde::{Deserialize, Serialize};
 
 struct DbState(Mutex<Option<Connection>>);
+
+/// Lightweight startup trace written to the OS temp directory. Release builds
+/// have no console on Windows, so this is the only way to diagnose a slow or
+/// failed launch after the fact.
+fn startup_log(message: &str) {
+    let path = std::env::temp_dir().join("vouchify-startup.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "{} {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            message
+        );
+    }
+}
+
+#[tauri::command]
+fn frontend_ready() {
+    startup_log("frontend ready");
+}
+
+#[tauri::command]
+fn frontend_log(message: String) {
+    startup_log(&format!("frontend: {}", message));
+}
+
+#[tauri::command]
+fn db_ready(state: tauri::State<'_, DbState>) -> bool {
+    state
+        .0
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(false)
+}
 
 #[tauri::command]
 fn ping() -> bool { true }
@@ -562,6 +601,12 @@ fn start_import_in_background(app: tauri::AppHandle, file_path: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    startup_log(&format!(
+        "app start v{} on {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS
+    ));
+
     #[cfg(target_os = "linux")]
     {
         std::env::set_var("GDK_BACKEND", "x11");
@@ -573,6 +618,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(DbState(Mutex::new(None)))
         .setup(|app| {
+            startup_log("setup start");
             // Size the window to fit the monitor's available work area so the
             // app is not clipped on smaller displays (e.g. 1366x768 laptops).
             if let Some(win) = app.get_webview_window("main") {
@@ -594,10 +640,43 @@ pub fn run() {
             if let Ok(res) = app.path().resource_dir() {
                 importer::set_bundled_dir(res);
             }
+
+            // Open and migrate the database on a worker thread. Schema repair
+            // used to run synchronously here, before the WebView could paint,
+            // which made Windows show a black "Not Responding" window for as
+            // long as the repair took. The UI now loads immediately and polls
+            // `db_ready`; DB-backed views wait for the worker to finish.
             let db_path = app_dir.join("history.db");
-            let conn = history::init_db(&db_path).expect("failed to init db");
-            let state = app.state::<DbState>();
-            *state.0.lock().unwrap() = Some(conn);
+            let db_size = std::fs::metadata(&db_path)
+                .map(|m| m.len() / 1024 / 1024)
+                .unwrap_or(0);
+            startup_log(&format!(
+                "db init queued: {} ({} MB)",
+                db_path.display(),
+                db_size
+            ));
+            let db_handle = app.handle().clone();
+            let spawn = std::thread::Builder::new()
+                .name("vouchify-db-init".into())
+                .spawn(move || {
+                    startup_log("db init start");
+                    match history::init_db(&db_path) {
+                        Ok(conn) => {
+                            let state = db_handle.state::<DbState>();
+                            match state.0.lock() {
+                                Ok(mut guard) => {
+                                    *guard = Some(conn);
+                                    startup_log("db init done");
+                                }
+                                Err(e) => startup_log(&format!("db state lock failed: {}", e)),
+                            };
+                        }
+                        Err(e) => startup_log(&format!("db init failed: {}", e)),
+                    }
+                });
+            if let Err(e) = spawn {
+                startup_log(&format!("failed to spawn db init thread: {}", e));
+            }
 
             // Listen for import requests from frontend
             let app_handle = app.handle().clone();
@@ -612,10 +691,14 @@ pub fn run() {
                 start_import_in_background(app_handle.clone(), payload.file_path);
             });
 
+            startup_log("setup done");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ping,
+            frontend_ready,
+            frontend_log,
+            db_ready,
             recalculate,
             load_config,
             save_config,

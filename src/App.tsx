@@ -1073,6 +1073,10 @@ function App() {
   const [progressMsg, setProgressMsg] = useState("");
   const [modalMsg, setModalMsg] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(true);
+  // The local database is opened and migrated on a worker thread so a large
+  // first-run repair can never freeze the window. DB-backed startup views wait
+  // for this flag instead of racing the worker.
+  const [dbReady, setDbReady] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -1294,6 +1298,23 @@ function App() {
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 4600);
     return () => clearTimeout(timer);
+  }, []);
+
+  // The database worker starts as soon as the window opens. Poll until it is
+  // ready; this keeps the first paint responsive while schema repair runs.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        if (await invoke<boolean>("db_ready")) {
+          if (!cancelled) setDbReady(true);
+          return;
+        }
+      } catch {}
+      if (!cancelled) setTimeout(check, 250);
+    };
+    check();
+    return () => { cancelled = true; };
   }, []);
 
   // Init: load local config and restore Supabase session
@@ -4196,17 +4217,17 @@ function App() {
   };
   useEffect(() => { showPoolRef.current = showPool; }, [showPool]);
   useEffect(() => {
-    if (!authUser) { didInitPoolSync.current = null; return; }
+    if (!authUser || !dbReady) { didInitPoolSync.current = null; return; }
     if (didInitPoolSync.current === authUser) return;
     didInitPoolSync.current = authUser;
     const run = async () => {
       try { await syncPoolRemote({ force: true }); } catch (e) { console.error("auto pool sync failed", e); }
     };
     run();
-  }, [authUser]);
+  }, [authUser, dbReady]);
 
   useEffect(() => {
-    if (!authUser) return;
+    if (!authUser || !dbReady) return;
     const id = setInterval(() => {
       syncPoolRemote().catch((e) => console.error("periodic pool sync failed", e));
     }, POOL_SYNC_PERIOD_MS);
@@ -4219,7 +4240,7 @@ function App() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [authUser]);
+  }, [authUser, dbReady]);
 
   const openPool = () => {
     setShowPool(true);
@@ -4781,7 +4802,9 @@ function App() {
       setSavedDocsIndex(merged);
     } catch {}
   }, [authUser]);
-  useEffect(() => { loadSavedDocsIndex(); }, [loadSavedDocsIndex]);
+  useEffect(() => {
+    if (dbReady) loadSavedDocsIndex();
+  }, [dbReady, loadSavedDocsIndex]);
 
   // Link the current document as the "remaining part" of a settlement. The
   // parent document already carries the VAT/WHT/temp-labour/other deductions

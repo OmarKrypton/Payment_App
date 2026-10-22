@@ -8,6 +8,10 @@ pub fn init_db(db_path: &Path) -> Result<Connection, String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    // A previous instance may still be closing its connection. Wait briefly
+    // instead of failing the whole startup with SQLITE_BUSY.
+    conn.busy_timeout(std::time::Duration::from_secs(15))
+        .map_err(|e| e.to_string())?;
     init_schema(&conn)?;
     Ok(conn)
 }
@@ -127,15 +131,30 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN references_json TEXT DEFAULT '[]'", [])
             .map_err(|e| e.to_string())?;
     }
-    // Guarantee no pool row is left with an empty / legacy uuid, and collapse any
-    // rows that are the same document as another (they used to multiply when a
-    // file without an embedded uuid was re-imported).
-    normalize_synthetic_uuids(conn)?;
-    // Backfill line items / VAT for pool rows an older build could not parse.
-    repair_pool_lines(conn)?;
-    // Backfill document kind + credit-note references for older rows.
-    repair_pool_meta(conn)?;
-    crate::entries::init_schema(conn)?;
+    // These repairs used to run one statement per row in autocommit mode. On
+    // Windows (especially with antivirus scanning the database) that can take
+    // long enough for the window to be marked "Not Responding". One transaction
+    // commits all backfills together and is dramatically faster.
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+    let repair = (|| -> Result<(), String> {
+        // Guarantee no pool row is left with an empty / legacy uuid, and collapse
+        // any rows that are the same document as another (they used to multiply
+        // when a file without an embedded uuid was re-imported).
+        normalize_synthetic_uuids(conn)?;
+        // Backfill line items / VAT for pool rows an older build could not parse.
+        repair_pool_lines(conn)?;
+        // Backfill document kind + credit-note references for older rows.
+        repair_pool_meta(conn)?;
+        crate::entries::init_schema(conn)?;
+        Ok(())
+    })();
+    match repair {
+        Ok(()) => conn.execute_batch("COMMIT").map_err(|e| e.to_string())?,
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
+        }
+    }
     Ok(())
 }
 
