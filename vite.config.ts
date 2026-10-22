@@ -16,7 +16,10 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Force IPv4 in local development. On some Linux/WebKit setups `localhost`
+    // resolves to ::1 only, while WebKit tries 127.0.0.1 (or vice versa), which
+    // leaves the Tauri window black because the frontend never loads.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
