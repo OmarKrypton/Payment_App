@@ -6226,18 +6226,19 @@ function App() {
           <div className="modal-search">
             <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
           </div>
-          <div className="history-filters">
+          <div className="history-filters history-type-filters">
             <button className={historyFilter === "all" ? "active" : ""} onClick={() => setHistoryFilter("all")}>{t("全部", "All")} <b>{historyList.length}</b></button>
             <button className={historyFilter === "bank" ? "active" : ""} onClick={() => setHistoryFilter("bank")}>{t("银行", "Bank")} <b>{historyList.filter(h => h.doc_type !== "import").length}</b></button>
             <button className={historyFilter === "import" ? "active" : ""} onClick={() => setHistoryFilter("import")}>{t("进口", "Import")} <b>{historyList.filter(h => h.doc_type === "import").length}</b></button>
           </div>
-          <div className="history-filters history-status">
+          <div className="history-filters history-status history-status-filters">
             <button className={historyStatusFilter === "all" ? "active" : ""} onClick={() => setHistoryStatusFilter("all")}>{t("任意状态", "Any status")}</button>
             <button className={`st-approve ${historyStatusFilter === "approve" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("approve")}>{t("已批准", "Approved")}</button>
             <button className={`st-conditional ${historyStatusFilter === "conditional" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("conditional")}>{t("有条件", "Conditional")}</button>
             <button className={`st-reject ${historyStatusFilter === "reject" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("reject")}>{t("已拒绝", "Rejected")}</button>
             <button className={`st-pending ${historyStatusFilter === "pending" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("pending")}>{t("待删除", "Pending delete")}</button>
-            <span className="history-status-sep" />
+          </div>
+          <div className="history-filters history-status history-pay-filters">
             <button className={`st-paid ${historyPaidFilter === "paid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "paid" ? "all" : "paid")}>{t("已付款", "Paid")} <b>{historyList.filter(h => h.paid).length}</b></button>
             <button className={`st-unpaid ${historyPaidFilter === "unpaid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "unpaid" ? "all" : "unpaid")}>{t("未付款", "Unpaid")} <b>{historyList.filter(h => !h.paid).length}</b></button>
             <GlassSelect
@@ -6327,7 +6328,15 @@ function App() {
                     {h.final_decision === "reject" && <span className="hc-pill hc-rj">{t("已拒绝", "Rejected")}</span>}
                     <span className={`hc-pill ${h.doc_type === "import" ? "hc-imp" : "hc-bank"}`}>{h.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
                     <span className={`hc-pill hc-cur${snapCurrency === "EGP" ? " egp" : ""}`} title={t("文档币种", "Document currency")}>{snapCurrency}</span>
-                    <span className={`hc-pill ${h.paid ? "hc-paid" : "hc-unpaid"}`}>{h.paid ? `✓ ${t("已付款", "Paid")}` : `○ ${t("未付款", "Unpaid")}`}</span>
+                    <button
+                      type="button"
+                      className={`hc-pill hc-pill-toggle ${h.paid ? "hc-paid" : "hc-unpaid"}`}
+                      title={h.paid ? t("点击标记未付款", "Click to mark unpaid") : t("点击标记已付款", "Click to mark paid")}
+                      aria-label={h.paid ? t("标记未付款", "Mark unpaid") : t("标记已付款", "Mark paid")}
+                      onClick={() => requestPaidChange(!h.paid, { kind: "history", entry: h })}
+                    >
+                      {h.paid ? `✓ ${t("已付款", "Paid")}` : `○ ${t("未付款", "Unpaid")}`}
+                    </button>
                     {pendingDelete && <span className="hc-pill hc-del">{t("待删除", "Pending delete")}</span>}
                     <span className="hc-date">{h.created_at}</span>
                   </div>
@@ -6349,12 +6358,6 @@ function App() {
                   )}
                   <div className="hc-actions">
                     <button className="hc-btn pri" onClick={() => loadSnapshot(h.id, !!h.remote, h.label)}>Load</button>
-                    <button
-                      className={`hc-btn ${h.paid ? "hc-unpay" : "hc-pay"}`}
-                      onClick={() => requestPaidChange(!h.paid, { kind: "history", entry: h })}
-                    >
-                      {h.paid ? `↺ ${t("标记未付款", "Mark unpaid")}` : `✓ ${t("标记已付款", "Mark paid")}`}
-                    </button>
                     {isAdminUser && pendingDelete && (
                       <>
                         <button className="hc-btn hc-ok" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
