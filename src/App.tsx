@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -4412,14 +4412,16 @@ function App() {
         const skip = new Set<string>([...deletedKeys, ...pendingKeys]);
         for (const r of deletedMeta) skip.add(String(r.entry_key || ""));
         if (deletedMeta.length) {
-          const deadRows = deletedMeta.map((r: any) => ({
-            entry_key: remoteKey(r),
-            doc_no: r.doc_no || "",
-            serial: r.serial || "",
-            doc_date: r.doc_date || "",
-            deleted_at: r.deleted_at,
-            updated_at: r.updated_at,
-          }));
+          const deadRows = deletedMeta.map((r: any) =>
+            normalizeDailyEntrySyncRow({
+              entry_key: remoteKey(r),
+              doc_no: r.doc_no || "",
+              serial: r.serial || "",
+              doc_date: r.doc_date || "",
+              deleted_at: r.deleted_at,
+              updated_at: r.updated_at,
+            }),
+          );
           await invoke("sync_daily_entries_from_remote", { rows: deadRows });
         }
         // Last-write-wins per entry. Timestamps are UTC, so a small tolerance

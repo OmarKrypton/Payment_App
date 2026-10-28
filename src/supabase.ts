@@ -629,8 +629,56 @@ export interface DailyEntrySyncRow {
   invoice_refs: string;
   from_documents: string;
   lines_json: string;
+  report_date: string;
   deleted_at?: string | null;
   updated_at: string;
+}
+
+/**
+ * Supabase returns `null` for nullable columns (notably `deleted_at` and
+ * `report_date` on rows created before those columns existed). Tauri's Rust
+ * argument deserializer defaults *missing* fields but rejects explicit nulls,
+ * so scrub every remote row before passing it to `sync_daily_entries_from_remote`.
+ */
+export function normalizeDailyEntrySyncRow(row: any): DailyEntrySyncRow {
+  const text = (v: any) => (v == null ? "" : String(v));
+  const int = (v: any, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.trunc(n) : fallback;
+  };
+  return {
+    entry_key: text(row?.entry_key),
+    source_file: text(row?.source_file),
+    source_page: int(row?.source_page, 0),
+    pages: int(row?.pages, 1),
+    doc_no: text(row?.doc_no),
+    serial: text(row?.serial),
+    doc_date: text(row?.doc_date),
+    journal_no: text(row?.journal_no),
+    journal: text(row?.journal),
+    branch: text(row?.branch),
+    doc_source: text(row?.doc_source),
+    contain_currency: text(row?.contain_currency),
+    local_amt: text(row?.local_amt),
+    total_value: text(row?.total_value),
+    invoice_refs: text(row?.invoice_refs),
+    from_documents: text(row?.from_documents),
+    lines_json: text(row?.lines_json),
+    report_date: text(row?.report_date),
+    deleted_at: row?.deleted_at ? String(row.deleted_at) : "",
+    updated_at: text(row?.updated_at),
+  };
+}
+
+function normalizeDailyEntryRemoteMeta(row: any): DailyEntryRemoteMeta {
+  return {
+    entry_key: row?.entry_key == null ? "" : String(row.entry_key),
+    doc_no: row?.doc_no == null ? "" : String(row.doc_no),
+    serial: row?.serial == null ? "" : String(row.serial),
+    doc_date: row?.doc_date == null ? "" : String(row.doc_date),
+    updated_at: row?.updated_at == null ? "" : String(row.updated_at),
+    deleted_at: row?.deleted_at ? String(row.deleted_at) : "",
+  };
 }
 
 // The `deleted_at` tombstone column was added later than the table; until the
@@ -689,7 +737,7 @@ export async function listDailyEntriesRemote(): Promise<DailyEntrySyncRow[]> {
         if (error) throw error;
         return (data || []) as any[];
       });
-  return fetchAllPooled<any>(build, 500) as Promise<DailyEntrySyncRow[]>;
+  return fetchAllPooled<any>(build, 500).then((rows) => rows.map(normalizeDailyEntrySyncRow));
 }
 
 /** Keys + timestamps only (no lines_json) so the UI can decide what to pull. */
@@ -736,7 +784,9 @@ export async function listDailyEntriesRemoteMeta(): Promise<DailyEntryRemoteMeta
         return data;
       });
   };
-  return fetchAllPooled(build, 1000) as Promise<DailyEntryRemoteMeta[]>;
+  return fetchAllPooled(build, 1000).then((rows) =>
+    (rows as any[]).map(normalizeDailyEntryRemoteMeta),
+  );
 }
 
 /**
@@ -788,7 +838,7 @@ export async function listDailyEntriesRemoteByKeys(keys: string[]): Promise<Dail
         .in("entry_key", chunk));
     }
     if (error) throw error;
-    if (data) all.push(...(data as DailyEntrySyncRow[]));
+    if (data) all.push(...(data as any[]).map(normalizeDailyEntrySyncRow));
   }
   return all;
 }
