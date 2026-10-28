@@ -4289,6 +4289,10 @@ function App() {
 
   // ── Daily Entries: load / import / sync ────────────────────────────────────
   const loadDailyEntries = useCallback(async (search: string, searchIn: string, dateFrom: string, dateTo: string, limit: number) => {
+    // The DB is opened on a worker thread after the window paints. Never issue
+    // a DB command before it is ready; the tab effect below reruns when
+    // `dbReady` flips and performs the real load.
+    if (!dbReady) return;
     setDeLoading(true);
     try {
       const res: any = await invoke("list_daily_entries", { search, searchIn, dateFrom, dateTo, offset: 0, limit });
@@ -4308,21 +4312,24 @@ function App() {
     } finally {
       setDeLoading(false);
     }
-  }, [showAlert, t]);
+  }, [dbReady, showAlert, t]);
 
   // The distinct list of imported files (with per-file totals) — queried
   // directly so it includes every file, not just those on the first page.
   const loadDeFiles = useCallback(async () => {
+    if (!dbReady) return;
     try {
       setDeFiles(await invoke<any[]>("list_daily_entry_files"));
     } catch (e) {
       console.error("list_daily_entry_files failed", e);
     }
-  }, []);
+  }, [dbReady]);
 
   // Reload (debounced) whenever the tab is opened or a query/filter changes.
   useEffect(() => {
-    if (tab !== "entries") return;
+    // Do not mark the view as loaded while the DB worker is still running;
+    // otherwise the TTL would suppress the retry and leave the tab empty.
+    if (tab !== "entries" || !dbReady) return;
     // Reopening the tab with an unchanged query is a no-op within the TTL; any
     // mutation bumps deRefresh, which changes the key and forces a reload.
     const key = `${deSearch}|${deSearchIn}|${deDateFrom}|${deDateTo}|${deLimit}|${deRefresh}`;
@@ -4334,7 +4341,7 @@ function App() {
       loadDeFiles();
     }, 200);
     return () => clearTimeout(id);
-  }, [tab, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries, loadDeFiles]);
+  }, [tab, dbReady, deSearch, deSearchIn, deDateFrom, deDateTo, deLimit, deRefresh, loadDailyEntries, loadDeFiles]);
 
   // Two-way sync with the shared cloud store. Runs while the Daily Entries tab
   // is open (and periodically), so edits/deletions made on another device appear
