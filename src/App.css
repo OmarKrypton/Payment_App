@@ -3223,6 +3223,19 @@ body {
 .entries-file-del { flex: none; width: 20px; height: 20px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.85); background: rgba(255,255,255,0.6); color: var(--text-muted); cursor: pointer; font-size: 10px; }
 .entries-file-del:hover { color: var(--red); background: var(--red-bg); border-color: #fecaca; }
 
+.entries-sync-error {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 11px; border-radius: 10px;
+  background: var(--red-bg); border: 1px solid #fecaca; color: #b91c1c;
+  font-size: 11px; line-height: 1.45;
+}
+.entries-sync-error .hc-btn { flex: none; padding: 5px 10px; font-size: 10px; color: #b91c1c; border-color: #fecaca; }
+.entries-sync-hint {
+  padding: 8px 11px; border-radius: 10px;
+  background: rgba(239, 246, 255, 0.7); border: 1px solid #bfdbfe; color: #1d4ed8;
+  font-size: 11px; line-height: 1.45;
+}
+
 .entries-stats { display: flex; gap: 7px; flex-wrap: wrap; }
 .entries-stat {
   display: inline-flex; align-items: center; gap: 6px;

@@ -683,6 +683,7 @@ export async function listDailyEntriesRemote(): Promise<DailyEntrySyncRow[]> {
       .from("daily_entries")
       .select(dailyEntryCols())
       .order("doc_date", { ascending: true })
+      .order("entry_key", { ascending: true })
       .range(from, to)
       .then(({ data, error }) => {
         if (error) throw error;
@@ -692,17 +693,28 @@ export async function listDailyEntriesRemote(): Promise<DailyEntrySyncRow[]> {
 }
 
 /** Keys + timestamps only (no lines_json) so the UI can decide what to pull. */
-export async function listDailyEntriesRemoteMeta(): Promise<
-  { entry_key: string; updated_at: string; deleted_at?: string | null }[]
-> {
+export interface DailyEntryRemoteMeta {
+  entry_key: string;
+  doc_no: string;
+  serial: string;
+  doc_date: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+export async function listDailyEntriesRemoteMeta(): Promise<DailyEntryRemoteMeta[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
+  // `entry_key` is the stable tiebreaker: without it, pagination over rows that
+  // share an updated_at timestamp can repeat or skip entries.
+  const baseCols = "entry_key, doc_no, serial, doc_date, updated_at";
   const build = (from: number, to: number) => {
-    const cols = cloudHasDailyDeletedAt ? "entry_key, updated_at, deleted_at" : "entry_key, updated_at";
+    const cols = cloudHasDailyDeletedAt ? `${baseCols}, deleted_at` : baseCols;
     return supabase
       .from("daily_entries")
       .select(cols)
       .order("updated_at", { ascending: true })
+      .order("entry_key", { ascending: true })
       .range(from, to)
       .then(({ data, error }) => {
         if (error) {
@@ -710,8 +722,9 @@ export async function listDailyEntriesRemoteMeta(): Promise<
             cloudHasDailyDeletedAt = false;
             return supabase
               .from("daily_entries")
-              .select("entry_key, updated_at")
+              .select(baseCols)
               .order("updated_at", { ascending: true })
+              .order("entry_key", { ascending: true })
               .range(from, to)
               .then((r2: any) => {
                 if (r2.error) throw r2.error;
@@ -723,9 +736,7 @@ export async function listDailyEntriesRemoteMeta(): Promise<
         return data;
       });
   };
-  return fetchAllPooled(build, 1000) as Promise<
-    { entry_key: string; updated_at: string; deleted_at?: string | null }[]
-  >;
+  return fetchAllPooled(build, 1000) as Promise<DailyEntryRemoteMeta[]>;
 }
 
 /**
@@ -794,21 +805,17 @@ export async function softDeleteDailyEntriesRemoteByKeys(keys: string[]): Promis
   const PAGE = 200;
   for (let i = 0; i < keys.length; i += PAGE) {
     const chunk = keys.slice(i, i + PAGE);
-    if (cloudHasDailyDeletedAt) {
-      const { error } = await supabase
-        .from("daily_entries")
-        .update({ deleted_at: new Date().toISOString() })
-        .in("entry_key", chunk);
-      if (error && isMissingDeletedAtError(error)) {
-        cloudHasDailyDeletedAt = false;
-      } else if (error) {
-        throw error;
-      } else {
-        continue;
-      }
+    if (!cloudHasDailyDeletedAt) {
+      throw new Error("Daily Entries tombstone column is missing. Run supabase/daily_entries.sql in the Supabase SQL Editor.");
     }
-    // Fallback: hard delete (works before the tombstone column exists).
-    const { error } = await supabase.from("daily_entries").delete().in("entry_key", chunk);
+    const { error } = await supabase
+      .from("daily_entries")
+      .update({ deleted_at: new Date().toISOString() })
+      .in("entry_key", chunk);
+    if (error && isMissingDeletedAtError(error)) {
+      cloudHasDailyDeletedAt = false;
+      throw new Error("Daily Entries tombstone column is missing. Run supabase/daily_entries.sql in the Supabase SQL Editor.");
+    }
     if (error) throw error;
   }
 }

@@ -45,6 +45,9 @@ create index if not exists idx_daily_entries_source on public.daily_entries (sou
 create index if not exists idx_daily_entries_doc on public.daily_entries (doc_no);
 create index if not exists idx_daily_entries_date on public.daily_entries (doc_date);
 create index if not exists idx_daily_entries_deleted on public.daily_entries (deleted_at);
+-- Stable pagination / change-token scans: entry_key breaks ties when several
+-- rows share the same updated_at timestamp.
+create index if not exists idx_daily_entries_updated on public.daily_entries (updated_at, entry_key);
 
 alter table public.daily_entries enable row level security;
 

@@ -553,6 +553,32 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     }
 
+    // Migration (v0.3.173): make source-file identity report-specific. Older
+    // rows were grouped by base file name only, so two "Daily Entries.pdf"
+    // reports could delete each other when one was re-imported or removed.
+    let source_migrated: Option<String> = conn
+        .query_row(
+            "SELECT v FROM daily_meta WHERE k = 'source_identity_v2'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if source_migrated.is_none() {
+        conn.execute(
+            "UPDATE daily_entries
+             SET source_file = source_file || '|' || report_date
+             WHERE report_date <> '' AND instr(source_file, '|' || report_date) = 0",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_meta (k, v) VALUES ('source_identity_v2', '1')",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     // Migration (v0.3.154): persist computed fields + a search index so listing
     // no longer JSON-parses every row. Backfill once for existing rows.
     let derived_cols = [
@@ -797,6 +823,20 @@ fn parse_report_date(text: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Identity of an imported report. Different monthly reports often share the
+/// same PDF file name ("Daily Entries.pdf"); appending the report date keeps
+/// their source groups distinct so re-importing/removing one report cannot
+/// delete or tombstone the other. The value is stable across devices because it
+/// comes from the PDF content, not the local path.
+fn source_file_id(base: &str, report_date: &str) -> String {
+    let rd = report_date.trim();
+    if rd.is_empty() || base.ends_with(&format!("|{}", rd)) {
+        base.to_string()
+    } else {
+        format!("{}|{}", base, rd)
+    }
+}
+
 /// True when `new_report` is at least as new as `old_report` (an empty old date
 /// counts as older, and equal dates mean a re-upload of the same report).
 fn report_at_least_as_new(new_report: &str, old_report: &str) -> bool {
@@ -876,6 +916,7 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
         .unwrap_or_else(|| file_path.to_string());
     let text = crate::importer::extract_layout_text(file_path)?;
     let report_date = parse_report_date(&text);
+    let source_id = source_file_id(&base, &report_date);
     let parsed = parse_daily_entries(&text);
     if parsed.is_empty() {
         return Err("No daily-entry documents were found in this PDF. Is it a Daily Entries report?".into());
@@ -890,12 +931,12 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
             .prepare("SELECT entry_key FROM daily_entries WHERE source_file = ?1")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![base], |r| r.get::<_, String>(0))
+            .query_map(params![source_id], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
         rows.filter_map(|r| r.ok()).collect()
     };
-    // Re-uploading this same file: drop the documents currently attributed to it.
-    tx.execute("DELETE FROM daily_entries WHERE source_file = ?1", params![base])
+    // Re-uploading this same report: drop the documents currently attributed to it.
+    tx.execute("DELETE FROM daily_entries WHERE source_file = ?1", params![source_id])
         .map_err(|e| e.to_string())?;
     let mut lines = 0usize;
     let mut refs = 0usize;
@@ -923,7 +964,7 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
                 continue;
             }
         }
-        insert_entry(&tx, &base, &report_date, e)?;
+        insert_entry(&tx, &source_id, &report_date, e)?;
         inserted += 1;
         lines += e.lines.len();
         refs += invoice_refs_of(e).len();
@@ -954,7 +995,7 @@ pub fn import_file(conn: &Connection, file_path: &str) -> Result<DailyEntriesImp
     let pages: i64 = parsed.iter().map(|e| e.pages).sum();
 
     Ok(DailyEntriesImportResult {
-        source_file: base,
+        source_file: source_id,
         entries: inserted,
         lines,
         pages,
@@ -1424,16 +1465,20 @@ pub fn update_lines(conn: &Connection, entry_key: &str, lines_json: &str) -> Res
         .ok_or_else(|| "Entry not found".to_string())?;
     let lines: Vec<DailyEntryLine> = serde_json::from_str(lines_json).unwrap_or_default();
     let d = compute_derived(&source_file, &doc_no, &serial, &doc_date, &lines);
+    let refs = join_refs(&invoice_refs_from_lines(&lines));
+    let docs = join_refs(&from_documents_from_lines(&lines));
     let mut args: Vec<rusqlite::types::Value> = vec![
         rusqlite::types::Value::Text(lines_json.to_string()),
     ];
     args.extend(derived_params(&d));
+    args.push(rusqlite::types::Value::Text(refs));
+    args.push(rusqlite::types::Value::Text(docs));
     args.push(rusqlite::types::Value::Text(now));
     args.push(rusqlite::types::Value::Text(entry_key.to_string()));
     conn.execute(
         "UPDATE daily_entries SET lines_json=?1, debit_total=?2, credit_total=?3, balanced=?4,
              line_count=?5, date_key=?6, s_doc=?7, s_account_no=?8, s_account=?9, s_value=?10,
-             s_narration=?11, updated_at=?12 WHERE entry_key=?13",
+             s_narration=?11, invoice_refs=?12, from_documents=?13, updated_at=?14 WHERE entry_key=?15",
         rusqlite::params_from_iter(args),
     )
     .map_err(|e| e.to_string())?;
@@ -1556,6 +1601,8 @@ pub fn for_sync_keys(conn: &Connection, keys: &[String]) -> Result<Vec<DailyEntr
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                let lines_json: String = r.get(16)?;
+                let lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
                 Ok(DailyEntrySyncRow {
                     entry_key: r.get(0)?,
                     source_file: r.get(1)?,
@@ -1571,9 +1618,9 @@ pub fn for_sync_keys(conn: &Connection, keys: &[String]) -> Result<Vec<DailyEntr
                     contain_currency: r.get(11)?,
                     local_amt: r.get(12)?,
                     total_value: r.get(13)?,
-                    invoice_refs: r.get(14)?,
-                    from_documents: r.get(15)?,
-                    lines_json: r.get(16)?,
+                    invoice_refs: join_refs(&invoice_refs_from_lines(&lines)),
+                    from_documents: join_refs(&from_documents_from_lines(&lines)),
+                    lines_json,
                     report_date: r.get(17)?,
                     deleted_at: String::new(),
                     updated_at: r.get(18)?,
@@ -1599,6 +1646,8 @@ pub fn for_sync_file(conn: &Connection, source_file: &str) -> Result<Vec<DailyEn
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![source_file], |r| {
+            let lines_json: String = r.get(16)?;
+            let lines: Vec<DailyEntryLine> = serde_json::from_str(&lines_json).unwrap_or_default();
             Ok(DailyEntrySyncRow {
                 entry_key: r.get(0)?,
                 source_file: r.get(1)?,
@@ -1614,9 +1663,9 @@ pub fn for_sync_file(conn: &Connection, source_file: &str) -> Result<Vec<DailyEn
                 contain_currency: r.get(11)?,
                 local_amt: r.get(12)?,
                 total_value: r.get(13)?,
-                invoice_refs: r.get(14)?,
-                from_documents: r.get(15)?,
-                lines_json: r.get(16)?,
+                invoice_refs: join_refs(&invoice_refs_from_lines(&lines)),
+                from_documents: join_refs(&from_documents_from_lines(&lines)),
+                lines_json,
                 report_date: r.get(17)?,
                 deleted_at: String::new(),
                 updated_at: r.get(18)?,
@@ -1631,7 +1680,16 @@ pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result
     for r in rows {
         // Recompute the key from the document identity so rows pushed by an
         // older app version (keyed by source file) collapse onto one entry.
-        let key = format!("{}|{}|{}", r.doc_no, r.serial, r.doc_date);
+        // Tombstone metadata from very old rows may not include the document
+        // fields; in that case its stored key is the only identity we have.
+        let key = if r.doc_no.trim().is_empty()
+            && r.serial.trim().is_empty()
+            && r.doc_date.trim().is_empty()
+        {
+            r.entry_key.clone()
+        } else {
+            format!("{}|{}|{}", r.doc_no, r.serial, r.doc_date)
+        };
         // A tombstone from any device wins: remove the entry locally (and forget
         // our own tombstone for it) so a deletion propagates instead of the row
         // being re-pushed by this device.
@@ -1647,15 +1705,20 @@ pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result
         // stored before that fix still reconcile.
         let mut lines: Vec<DailyEntryLine> = serde_json::from_str(&r.lines_json).unwrap_or_default();
         let pairing_changed = apply_currency_pairing(&mut lines);
-        let d = compute_derived(&r.source_file, &r.doc_no, &r.serial, &r.doc_date, &lines);
+        let source_file = source_file_id(&r.source_file, &r.report_date);
+        let d = compute_derived(&source_file, &r.doc_no, &r.serial, &r.doc_date, &lines);
         let lines_json = if pairing_changed {
             serde_json::to_string(&lines).unwrap_or_else(|_| r.lines_json.clone())
         } else {
             r.lines_json.clone()
         };
+        let computed_refs = join_refs(&invoice_refs_from_lines(&lines));
+        let computed_docs = join_refs(&from_documents_from_lines(&lines));
+        let invoice_refs = if computed_refs.is_empty() { r.invoice_refs.clone() } else { computed_refs };
+        let from_documents = if computed_docs.is_empty() { r.from_documents.clone() } else { computed_docs };
         let mut args: Vec<rusqlite::types::Value> = vec![
             rusqlite::types::Value::Text(key),
-            rusqlite::types::Value::Text(r.source_file.clone()),
+            rusqlite::types::Value::Text(source_file),
             rusqlite::types::Value::Integer(r.source_page),
             rusqlite::types::Value::Integer(r.pages),
             rusqlite::types::Value::Text(r.doc_no.clone()),
@@ -1668,8 +1731,8 @@ pub fn sync_from_remote(conn: &Connection, rows: &[DailyEntrySyncRow]) -> Result
             rusqlite::types::Value::Text(r.contain_currency.clone()),
             rusqlite::types::Value::Text(r.local_amt.clone()),
             rusqlite::types::Value::Text(r.total_value.clone()),
-            rusqlite::types::Value::Text(r.invoice_refs.clone()),
-            rusqlite::types::Value::Text(r.from_documents.clone()),
+            rusqlite::types::Value::Text(invoice_refs),
+            rusqlite::types::Value::Text(from_documents),
             rusqlite::types::Value::Text(lines_json),
             rusqlite::types::Value::Text(r.report_date.clone()),
         ];
@@ -1845,6 +1908,53 @@ Contain Cu1   Local Currency          Curr. Rate  1   Local Amt. 1,030.76   Doc.
         let all = load_all(&conn).unwrap();
         assert_eq!(all.len(), 2, "the same documents must not be duplicated");
         assert!(all.iter().all(|e| e.source_file == "b.pdf"), "newest report should win");
+    }
+
+    #[test]
+    fn source_identity_is_report_specific() {
+        assert_eq!(
+            source_file_id("Daily Entries.pdf", "01-01-2026"),
+            "Daily Entries.pdf|01-01-2026"
+        );
+        assert_eq!(
+            source_file_id("Daily Entries.pdf", ""),
+            "Daily Entries.pdf"
+        );
+        assert_eq!(
+            source_file_id("Daily Entries.pdf|01-01-2026", "01-01-2026"),
+            "Daily Entries.pdf|01-01-2026"
+        );
+    }
+
+    #[test]
+    fn migration_suffixes_existing_source_files() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        for e in &parse_daily_entries(SAMPLE) {
+            insert_entry(&conn, "Daily Entries.pdf", "01-01-2026", e).unwrap();
+        }
+        // Re-run the one-time migration after removing its marker.
+        conn.execute("DELETE FROM daily_meta WHERE k = 'source_identity_v2'", []).unwrap();
+        init_schema(&conn).unwrap();
+        let all = load_all(&conn).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|e| e.source_file == "Daily Entries.pdf|01-01-2026"));
+    }
+
+    #[test]
+    fn tombstone_matches_legacy_key_by_document_identity() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        for e in &parse_daily_entries(SAMPLE) {
+            insert_entry(&conn, "a.pdf", "01-01-2026", e).unwrap();
+        }
+        let rows = for_sync_file(&conn, "a.pdf").unwrap();
+        let mut dead = rows[0].clone();
+        dead.entry_key = "legacy-source-file-entry".into();
+        dead.deleted_at = "2030-05-05T11:00:00.000Z".into();
+        sync_from_remote(&conn, &[dead]).unwrap();
+        let keys: Vec<String> = local_meta(&conn).unwrap().into_iter().map(|m| m.entry_key).collect();
+        assert_eq!(keys.len(), 1, "only the tombstoned document is removed");
     }
 
     #[test]

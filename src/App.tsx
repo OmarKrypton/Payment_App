@@ -1049,6 +1049,30 @@ const poolRowUsable = (p: any): boolean =>
   (!p.doc_status || p.doc_status === "Valid") &&
   p.delete_requested_at == null;
 
+const dailySyncErrorText = (e: any, t: (zh: string, en: string) => string): string => {
+  const msg = String(e?.message || e || "");
+  if (/report_date|deleted_at|schema cache|column .* does not exist/i.test(msg)) {
+    return t(
+      "云端 Daily Entries 表缺少新字段。请在 Supabase SQL Editor 运行 supabase/daily_entries.sql。",
+      "The cloud Daily Entries table is missing a column. Run supabase/daily_entries.sql in the Supabase SQL Editor."
+    );
+  }
+  if (/relation .*daily_entries.* does not exist|daily_entries.*not found|Could not find the table/i.test(msg)) {
+    return t(
+      "尚未创建 Daily Entries 云表。请先运行 supabase/daily_entries.sql。",
+      "The Daily Entries cloud table does not exist. Run supabase/daily_entries.sql first."
+    );
+  }
+  if (/not authenticated|jwt|session/i.test(msg)) {
+    return t("登录已过期，请重新登录。", "Your session expired. Please sign in again.");
+  }
+  return msg;
+};
+
+// File identity is `<name>|<report date>`; show the report date as a readable
+// suffix without exposing the separator in the file list.
+const deSourceLabel = (s: string): string => String(s || "").replace(/\|(?=\d{2}-\d{2}-\d{4}$)/, " · ");
+
 function App() {
   const [tab, setTab] = useState<"bank" | "import" | "suppliers" | "entries">("bank");
   const [lang, setLang] = useState<"zh" | "en">("en");
@@ -1126,6 +1150,8 @@ function App() {
   const [deImportInfo, setDeImportInfo] = useState<any>(null);
   const [deLimit, setDeLimit] = useState(150);
   const [deSyncing, setDeSyncing] = useState(false);
+  const [deSyncError, setDeSyncError] = useState<string | null>(null);
+  const [deSyncNonce, setDeSyncNonce] = useState(0);
   const [deFiles, setDeFiles] = useState<any[]>([]);
   const [deShowFiles, setDeShowFiles] = useState(false);
   const [deFilesPos, setDeFilesPos] = useState<{ top: number; right: number } | null>(null);
@@ -2757,6 +2783,17 @@ function App() {
               </button>
             </div>
           </div>
+          {deSyncError && (
+            <div className="entries-sync-error" role="alert">
+              <span>{t("同步失败", "Sync failed")}: {deSyncError}</span>
+              <button className="hc-btn" onClick={() => setDeSyncNonce(v => v + 1)}>{t("重试", "Retry")}</button>
+            </div>
+          )}
+          {!authUser && (
+            <div className="entries-sync-hint">
+              {t("登录后可在设备间同步日报分录。", "Sign in to sync Daily Entries across devices.")}
+            </div>
+          )}
           <div className="entries-stats">
             <span className="entries-stat">{t("凭证", "Documents")} <b>{deStats.total}</b></span>
             <span className="entries-stat ok">{t("借方", "Debit")} <b>{fmtMoney(deStats.debit)}</b></span>
@@ -2839,7 +2876,7 @@ function App() {
                   {e.branch && <span>{t("分支", "Branch")} <b>{e.branch}</b></span>}
                   {e.doc_source && <span>{t("来源", "Source")} <b>{e.doc_source}</b></span>}
                   {e.local_amt && <span>{t("本地金额", "Local Amt")} <b>{hl(e.local_amt)}</b></span>}
-                  {e.source_file && <span className="entries-src">{hl(e.source_file)}{e.source_page ? ` · p${e.source_page}` : ""}</span>}
+                  {e.source_file && <span className="entries-src">{hl(deSourceLabel(e.source_file))}{e.source_page ? ` · p${e.source_page}` : ""}</span>}
                   <span className="entries-sum">{t("合计", "Total")} <b>{hl(e.total_value || e.local_amt)}</b></span>
                 </div>
                 <div className="entries-totals">
@@ -2906,7 +2943,7 @@ function App() {
             {deFiles.map((f: any) => (
               <div key={f.source_file} className="entries-file-row">
                 <div className="entries-file-main">
-                  <span className="entries-file-name" title={f.source_file}>{f.source_file}</span>
+                  <span className="entries-file-name" title={f.source_file}>{deSourceLabel(f.source_file)}</span>
                   <span className="entries-file-meta">
                     {f.documents} {t("份凭证", "docs")} · {t("借", "Dr")} <b className="dr">{(f.debit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> · {t("贷", "Cr")} <b className="cr">{(f.credit || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
                     {f.balanced ? <span className="entries-file-ok"> ✓</span> : <span className="entries-file-warn"> ⚠</span>}
@@ -4309,13 +4346,25 @@ function App() {
   // A different account (or a fresh sign-in) must not inherit the previous
   // session's cloud token; otherwise the unchanged-cloud fast path could skip
   // local entries imported while signed out.
-  useEffect(() => { deSyncRef.current = null; }, [authUser]);
   useEffect(() => {
-    if (tab !== "entries" || !authUser) return;
-    let cancelled = false;
+    deSyncRef.current = null;
+    setDeSyncError(null);
+  }, [authUser]);
+  useEffect(() => {
+    // Run whenever signed in, not only while the Daily Entries tab is open, so
+    // a device receives another device's changes in the background and local
+    // imports are pushed as soon as a session exists.
+    if (!authUser || !dbReady) return;
     const ts = (s: any) => {
       const t = Date.parse(String(s || "").replace(" ", "T"));
       return isFinite(t) ? t : 0;
+    };
+    // Remote rows written by older builds may use a source-file-based key.
+    // Canonicalize on the document fields so tombstones and edits address the
+    // same local entry the current build uses.
+    const remoteKey = (r: any): string => {
+      if (r.doc_no || r.serial || r.doc_date) return `${r.doc_no || ""}|${r.serial || ""}|${r.doc_date || ""}`;
+      return String(r.entry_key || "");
     };
     const run = async () => {
       if (deSyncingRef.current) return;
@@ -4337,60 +4386,88 @@ function App() {
         const token = await dailyEntriesSyncToken();
         const last = deSyncRef.current;
         // Local edits/imports must force a comparison even when the cloud token
-        // is unchanged; otherwise a failed push can stay local forever.
-        if (!deLocalDirtyRef.current && last && last.token === token) return;
+        // is unchanged; otherwise a failed push can stay local forever. Even an
+        // unchanged token gets a full metadata comparison every five minutes so
+        // a clock-skewed update cannot hide indefinitely.
+        const forceCompare = !last || Date.now() - last.at > 5 * 60_000;
+        if (!deLocalDirtyRef.current && !forceCompare && last && last.token === token) return;
         setDeSyncing(true);
         const [remoteMeta, localMeta] = await Promise.all([
           listDailyEntriesRemoteMeta(),
           invoke<any[]>("daily_entries_local_meta"),
         ]);
         const localUpdated = new Map<string, string>(localMeta.map((m: any) => [m.entry_key, m.updated_at]));
-        // Tombstones from any device always win.
-        const deletedKeys = remoteMeta.filter((r: any) => r.deleted_at).map((r: any) => r.entry_key);
-        const deletedSet = new Set(deletedKeys);
-        const skip = new Set<string>([...deletedSet, ...pendingKeys]);
-        if (deletedKeys.length) {
-          await invoke("apply_daily_entry_deletions", { keys: deletedKeys });
+        // Tombstones from any device always win. Apply them through the Rust
+        // sync command so an old remote key is matched by document identity
+        // instead of silently leaving the local row behind.
+        const deletedMeta = remoteMeta.filter((r: any) => !!r.deleted_at);
+        const deletedKeys = deletedMeta.map(remoteKey);
+        const skip = new Set<string>([...deletedKeys, ...pendingKeys]);
+        for (const r of deletedMeta) skip.add(String(r.entry_key || ""));
+        if (deletedMeta.length) {
+          const deadRows = deletedMeta.map((r: any) => ({
+            entry_key: remoteKey(r),
+            doc_no: r.doc_no || "",
+            serial: r.serial || "",
+            doc_date: r.doc_date || "",
+            deleted_at: r.deleted_at,
+            updated_at: r.updated_at,
+          }));
+          await invoke("sync_daily_entries_from_remote", { rows: deadRows });
         }
         // Last-write-wins per entry. Timestamps are UTC, so a small tolerance
         // absorbs device clock skew and Postgres' timestamp formatting.
-        const liveMeta = remoteMeta.filter((r: any) => !r.deleted_at && !skip.has(r.entry_key));
-        const remoteKeys = new Set(liveMeta.map((r: any) => r.entry_key));
+        const liveMeta = remoteMeta.filter((r: any) => !r.deleted_at && !skip.has(remoteKey(r)) && !skip.has(String(r.entry_key || "")));
+        const remoteKeys = new Set(liveMeta.map(remoteKey));
         const toPull: string[] = [];
         const toPush: string[] = [];
         for (const r of liveMeta) {
-          const lu = localUpdated.get(r.entry_key);
-          if (lu == null) { toPull.push(r.entry_key); continue; }
+          const key = remoteKey(r);
+          const lu = localUpdated.get(key);
+          if (lu == null) { toPull.push(String(r.entry_key)); continue; }
           const d = ts(r.updated_at) - ts(lu);
-          if (d > 1500) toPull.push(r.entry_key);
-          else if (d < -1500) toPush.push(r.entry_key);
+          if (d > 1500) toPull.push(String(r.entry_key));
+          else if (d < -1500) toPush.push(key);
         }
         // Local rows the cloud has never seen (and isn't tombstoning).
         for (const m of localMeta) {
           if (m.entry_key && !remoteKeys.has(m.entry_key) && !skip.has(m.entry_key)) toPush.push(m.entry_key);
         }
         if (toPull.length > 0) {
-          const rows = await listDailyEntriesRemoteByKeys(toPull);
+          const rows = await listDailyEntriesRemoteByKeys([...new Set(toPull)]);
           if (rows.length) await invoke("sync_daily_entries_from_remote", { rows });
         }
         if (toPush.length > 0) {
-          const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: toPush });
+          const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: [...new Set(toPush)] });
           if (rows.length) await upsertDailyEntriesRemote(rows);
         }
         deSyncRef.current = { token, at: Date.now() };
         deLocalDirtyRef.current = false;
+        setDeSyncError(null);
         if (deletedKeys.length > 0 || toPull.length > 0 || toPush.length > 0) setDeRefresh(v => v + 1);
       } catch (e) {
         console.error("daily entries sync failed", e);
+        setDeSyncError(dailySyncErrorText(e, t));
       } finally {
         deSyncingRef.current = false;
-        if (!cancelled) setDeSyncing(false);
+        // A retry can replace the effect while the previous run is finishing;
+        // always clear the visible state so the header does not stay stuck on
+        // "syncing…".
+        setDeSyncing(false);
       }
     };
     run();
     const id = setInterval(run, 60_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [tab, authUser]);
+    const onFocus = () => { run(); };
+    const onVisible = () => { if (document.visibilityState === "visible") run(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [authUser, dbReady, deSyncNonce, t]);
 
   // Position the "Files" dropdown as a fixed portal and close it on outside
   // click / Escape, so it isn't hidden behind the sticky toolbar.
@@ -4445,6 +4522,7 @@ function App() {
           }
         } catch (e) {
           console.error("daily entries push/delete failed", e);
+          setDeSyncError(dailySyncErrorText(e, t));
         }
       }
       setDeRefresh(v => v + 1);
@@ -4476,6 +4554,7 @@ function App() {
         } catch (e) {
           // Kept as a pending tombstone; flushed on the next sync.
           console.error("daily entries remote delete failed", e);
+          setDeSyncError(dailySyncErrorText(e, t));
         }
       }
       await loadDeFiles();
@@ -4521,7 +4600,9 @@ function App() {
         try {
           const rows: any[] = await invoke("daily_entries_for_sync_keys", { keys: [entryKey] });
           if (rows.length) await upsertDailyEntriesRemote(rows);
-        } catch {}
+        } catch (e) {
+          setDeSyncError(dailySyncErrorText(e, t));
+        }
       }
       setDeRefresh(v => v + 1);
     } catch (e: any) {
