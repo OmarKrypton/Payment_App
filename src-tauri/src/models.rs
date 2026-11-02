@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrFieldInfo {
     pub field: String,
@@ -25,6 +29,10 @@ pub struct FormData {
     pub val_1B: String,
     pub val_1C: String,
     pub val_1D: String,
+    /// Whether 1D is a discount/credit note that reduces the VAT base.
+    /// Old snapshots default to true (the normal supplier-discount case).
+    #[serde(default = "default_true")]
+    pub val_1D_reduces_vat: bool,
     pub vat_rate: String,
     pub val_2A: String,
     pub val_2B: String,
@@ -135,6 +143,7 @@ impl Default for FormData {
             val_1B: "0.00".into(),
             val_1C: "0.00".into(),
             val_1D: "0.00".into(),
+            val_1D_reduces_vat: true,
             vat_rate: "14%".into(),
             val_2A: "0.00".into(),
             val_2B: "0.00".into(),

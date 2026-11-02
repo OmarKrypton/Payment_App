@@ -1,0 +1,1607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vouchify — Bank audit concepts</title>
+<style>
+  :root{
+    --bg-body:#eef1f6;
+    --bg-card:#fff;
+    --bg-input:#f8fafc;
+    --border:#e2e8f0;
+    --text-primary:#1e293b;
+    --text-secondary:#64748b;
+    --text-muted:#94a3b8;
+    --accent:#3b82f6;
+    --accent-hover:#2563eb;
+    --accent-light:#eff6ff;
+    --indigo:#4f46e5;
+    --violet:#7c3aed;
+    --green:#16a34a;
+    --green-bg:#f0fdf4;
+    --orange:#ea580c;
+    --orange-bg:#fffbeb;
+    --red:#dc2626;
+    --red-bg:#fef2f2;
+    --font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+    --mono:'JetBrains Mono','Fira Code','Consolas',monospace;
+    --radius:8px;
+    --radius-lg:12px;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.05);
+    --shadow-md:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -2px rgba(0,0,0,.1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:var(--font);
+    color:var(--text-primary);
+    background:
+      radial-gradient(900px 480px at 8% -10%,rgba(99,102,241,.16),transparent 55%),
+      radial-gradient(900px 560px at 100% 0%,rgba(59,130,246,.14),transparent 52%),
+      radial-gradient(700px 520px at 55% 112%,rgba(16,185,129,.09),transparent 55%),
+      var(--bg-body);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+
+  /* ── mockup chrome ── */
+  .mockbar{
+    height:76px;display:flex;align-items:center;gap:18px;padding:0 22px;
+    border-bottom:1px solid rgba(255,255,255,.8);
+    background:linear-gradient(180deg,rgba(255,255,255,.72),rgba(255,255,255,.42));
+    -webkit-backdrop-filter:blur(22px) saturate(170%);
+    backdrop-filter:blur(22px) saturate(170%);
+    position:relative;z-index:20;
+  }
+  .mock-title{min-width:250px}
+  .mock-title b{display:block;font-size:14px;font-weight:800;letter-spacing:-.01em}
+  .mock-title span{display:block;font-size:10.5px;color:var(--text-muted);margin-top:2px}
+  .concept-switch{display:flex;gap:4px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.9);
+    border-radius:11px;padding:4px;box-shadow:inset 0 1px 0 #fff,0 8px 22px rgba(15,23,42,.06)}
+  .concept-switch button{
+    border:0;background:transparent;color:var(--text-secondary);font:inherit;font-size:11px;font-weight:700;
+    padding:7px 14px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:.16s;
+  }
+  .concept-switch button:hover{color:var(--text-primary);background:rgba(255,255,255,.65)}
+  .concept-switch button.on{background:linear-gradient(180deg,#4f46e5,#4338ca);color:#fff;box-shadow:0 4px 12px rgba(67,56,202,.3),inset 0 1px 0 rgba(255,255,255,.3)}
+  .mock-hint{margin-left:auto;font-size:10.5px;color:var(--text-muted);text-align:right;line-height:1.45}
+  .mock-hint b{color:var(--text-secondary)}
+
+  /* ── app shell ── */
+  .app{
+    height:calc(100vh - 76px);min-height:700px;display:flex;overflow:hidden;
+    max-width:1560px;margin:0 auto;position:relative;
+  }
+  .sidebar{
+    width:236px;min-width:236px;display:flex;flex-direction:column;overflow-y:auto;
+    background:linear-gradient(180deg,#16233a 0%,#141e30 55%,#101a2b 100%);
+    color:#fff;box-shadow:inset -1px 0 0 rgba(255,255,255,.04);
+  }
+  .side-head{padding:20px 17px 15px;border-bottom:1px solid rgba(255,255,255,.06);
+    background:linear-gradient(180deg,rgba(99,102,241,.09),transparent)}
+  .brand{display:flex;align-items:center;gap:10px}
+  .brand-icon{width:33px;height:33px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#3b82f6,#7c3aed);box-shadow:0 6px 16px rgba(59,130,246,.35);font-weight:900;font-size:14px}
+  .brand h1{font-size:15px;font-weight:700;letter-spacing:-.01em}
+  .brand p{font-size:9.5px;color:rgba(255,255,255,.45);margin-top:2px}
+  .doc-card{margin:14px 13px 0;border-radius:11px;padding:11px 12px;
+    background:linear-gradient(135deg,rgba(255,255,255,.07),rgba(99,102,241,.06));
+    border:1px solid rgba(255,255,255,.09)}
+  .doc-top{display:flex;align-items:center;gap:7px}
+  .doc-serial{font-family:var(--mono);font-size:12.5px;font-weight:750;letter-spacing:.01em}
+  .dpill{font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;white-space:nowrap}
+  .dpill.saved{color:#4ade80;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.35)}
+  .doc-meta{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:9px;color:rgba(255,255,255,.42)}
+  .mini-chip{font-size:8.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.62)}
+  .sync{margin-left:auto;display:flex;align-items:center;gap:5px;color:rgba(255,255,255,.45)}
+  .dot{width:6px;height:6px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.15)}
+  .metrics{display:grid;gap:6px;padding:12px 13px 4px}
+  .metric{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);border-radius:9px;padding:7px 10px}
+  .metric b{display:block;font-family:var(--mono);font-size:12px;color:#4ade80;font-weight:700}
+  .metric.warn b{color:#fbbf24}
+  .metric span{font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.38)}
+  .side-label{padding:12px 17px 6px;font-size:8.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.3)}
+  .side-nav{padding:0 12px;display:flex;flex-direction:column;gap:3px}
+  .side-nav button{border:0;background:transparent;color:rgba(255,255,255,.62);font:inherit;font-size:11px;font-weight:600;
+    text-align:left;padding:8px 10px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:.15s}
+  .side-nav button:hover{background:rgba(255,255,255,.06);color:rgba(255,255,255,.9)}
+  .side-nav button.on{background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;box-shadow:0 2px 8px rgba(79,70,229,.35)}
+  .nav-ico{width:18px;height:18px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.1);font-size:9px;flex:none}
+  .side-nav .navbadge{margin-left:auto;font-size:8.5px;font-weight:800;padding:1px 6px;border-radius:999px;
+    background:rgba(251,191,36,.18);color:#fbbf24;border:1px solid rgba(251,191,36,.3)}
+  .side-bottom{margin-top:auto;padding:10px 12px 14px;border-top:1px solid rgba(255,255,255,.06)}
+  .account{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .avatar{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,#6366f1,#8b5cf6);font-size:9px;font-weight:800}
+  .account b{display:block;font-size:10px;font-weight:650}
+  .account span{display:block;font-size:8.5px;color:rgba(255,255,255,.4)}
+  .save{width:100%;border:1px solid #2563eb;border-radius:8px;padding:8px;cursor:pointer;
+    background:linear-gradient(180deg,#3b82f6,#2563eb);color:#fff;font:inherit;font-size:11px;font-weight:700;
+    box-shadow:0 4px 12px rgba(37,99,235,.3),inset 0 1px 0 rgba(255,255,255,.3)}
+
+  /* ── content ── */
+  .content{flex:1;min-width:0;padding:16px 20px 40px;overflow-y:auto;display:flex;flex-direction:column;gap:11px;
+    scrollbar-width:thin;scrollbar-color:rgba(15,23,42,.22) transparent}
+  .content::-webkit-scrollbar{width:8px}
+  .content::-webkit-scrollbar-thumb{background:rgba(15,23,42,.22);border-radius:99px;border:2px solid transparent;background-clip:content-box}
+
+  .jump{position:sticky;top:0;z-index:7;display:flex;gap:5px;flex-wrap:wrap;padding:8px 11px;border-radius:11px;
+    background:linear-gradient(180deg,rgba(99,102,241,.44),rgba(79,70,229,.22));
+    -webkit-backdrop-filter:blur(20px) saturate(190%);backdrop-filter:blur(20px) saturate(190%);
+    border:1px solid rgba(255,255,255,.55);box-shadow:0 14px 36px rgba(49,46,129,.28),inset 0 1px 0 rgba(255,255,255,.6)}
+  .jump button{position:relative;flex:1 0 auto;border:1px solid rgba(255,255,255,.5);background:rgba(255,255,255,.42);
+    color:#312e81;border-radius:999px;padding:5px 10px;font:inherit;font-size:10.5px;font-weight:650;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;transition:.18s}
+  .jump button:hover{transform:translateY(-1px);background:rgba(255,255,255,.62);box-shadow:0 8px 18px rgba(49,46,129,.22)}
+  .jump button.on{background:#4f46e5;border-color:#4f46e5;color:#fff;box-shadow:0 4px 12px rgba(49,46,129,.4)}
+  .jump .jbadge{font-size:8px;font-weight:800;padding:1px 5px;border-radius:999px;background:rgba(220,38,38,.12);color:#dc2626;border:1px solid rgba(220,38,38,.22)}
+  .jump button.on .jbadge{background:rgba(255,255,255,.16);color:#fff;border-color:rgba(255,255,255,.25)}
+
+  .card{background:linear-gradient(135deg,#fff 0%,rgba(59,130,246,.03) 100%);border:1px solid var(--border);
+    border-radius:var(--radius-lg);padding:15px 18px;box-shadow:var(--shadow-sm);transition:box-shadow .15s}
+  .card:hover{box-shadow:var(--shadow-md)}
+  .card h3{font-size:12px;font-weight:650;color:var(--accent);margin-bottom:11px;padding-bottom:8px;
+    border-bottom:1px solid var(--border);letter-spacing:.02em;display:flex;align-items:center;gap:8px}
+  .card h3 .grow{flex:1}
+  .card h3 .right{margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--green)}
+  .card h3 .right.warn{color:var(--orange)}
+  .card h3 .right.bad{color:var(--red)}
+  .field-label{font-size:10px;font-weight:650;color:var(--text-primary);line-height:1.3;margin-bottom:3px;display:block}
+  .field-input{background:var(--bg-input);border:1px solid var(--border);color:var(--text-primary);padding:7px 10px;
+    border-radius:var(--radius);font-size:12px;font-family:var(--mono);outline:none;width:100%}
+  .field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.1);background:#fff}
+  .computed{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:7px 10px;
+    font-family:var(--mono);font-size:12px;font-weight:650;color:var(--green)}
+  .computed.highlight{background:var(--green-bg);border-color:#bbf7d0}
+  .muted{color:var(--text-muted)}
+  .sub{font-size:9.5px;color:var(--text-muted);line-height:1.45}
+
+  /* ── document info ── */
+  .docinfo{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:12px 18px;align-items:start}
+  .docinfo .field{min-width:0}
+  .docinfo .wide{grid-column:span 2}
+  .remainder-btn{border:1px solid var(--border);background:var(--bg-input);color:var(--text-secondary);font:inherit;
+    font-size:10.5px;font-weight:650;padding:6px 10px;border-radius:7px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+  .remainder-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .ok-line{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:650;color:var(--green);
+    background:var(--green-bg);border:1px solid #bbf7d0;border-radius:999px;padding:2px 8px}
+  .tax-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:3px}
+  .tax-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;font-weight:650;
+    background:rgba(255,255,255,.7);border:1px solid var(--border);border-radius:7px;padding:4px 8px}
+  .tax-chip i{font-style:normal;color:var(--text-muted);font-size:9px;cursor:pointer}
+
+  /* ── audit hero ── */
+  .audit-hero{padding:0;overflow:hidden;border-color:#dbe7fb;background:linear-gradient(135deg,#fff 0%,#f7fbff 60%,#f3f7ff 100%)}
+  .ah-top{display:flex;align-items:flex-start;gap:18px;padding:16px 18px 14px}
+  .ah-eyebrow{font-size:8.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+  .ah-title{font-size:16px;font-weight:800;letter-spacing:-.015em;margin-top:4px;display:flex;align-items:center;gap:8px}
+  .ah-title .pulse{width:8px;height:8px;border-radius:50%;background:var(--orange);box-shadow:0 0 0 4px rgba(234,88,12,.12)}
+  .ah-sub{font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;max-width:560px}
+  .ah-score{margin-left:auto;display:flex;align-items:center;gap:12px;flex:none}
+  .ring{width:62px;height:62px;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center;
+    background:conic-gradient(var(--green) 0 64%,#e2e8f0 64% 100%)}
+  .ring::before{content:"";position:absolute;inset:6px;border-radius:50%;background:#fff;box-shadow:inset 0 0 0 1px rgba(15,23,42,.04)}
+  .ring b{position:relative;font-family:var(--mono);font-size:13px;font-weight:800;color:var(--text-primary)}
+  .ring span{position:relative;font-size:7.5px;color:var(--text-muted);font-weight:700;margin-top:1px}
+  .ring-wrap{text-align:center}
+  .ring-cap{font-size:8.5px;font-weight:700;color:var(--text-muted);margin-top:5px;text-transform:uppercase;letter-spacing:.05em}
+  .ah-stats{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid rgba(15,23,42,.06)}
+  .ah-stat{padding:9px 14px;border-right:1px solid rgba(15,23,42,.06);display:flex;align-items:center;gap:8px}
+  .ah-stat:last-child{border-right:0}
+  .ah-stat .ico{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex:none}
+  .ah-stat .ico.red{background:var(--red-bg);color:var(--red);border:1px solid #fecaca}
+  .ah-stat .ico.amber{background:var(--orange-bg);color:var(--orange);border:1px solid #fde68a}
+  .ah-stat .ico.green{background:var(--green-bg);color:var(--green);border:1px solid #bbf7d0}
+  .ah-stat .ico.blue{background:var(--accent-light);color:var(--accent);border:1px solid #bfdbfe}
+  .ah-stat b{display:block;font-size:11px;font-weight:750;line-height:1.2}
+  .ah-stat span{display:block;font-size:8.5px;color:var(--text-muted);margin-top:1px}
+  .ah-body{display:grid;grid-template-columns:1.18fr .82fr;gap:0;border-top:1px solid rgba(15,23,42,.06)}
+  .ah-group{padding:13px 16px 14px;border-right:1px solid rgba(15,23,42,.06)}
+  .ah-group:last-child{border-right:0}
+  .ag-head{display:flex;align-items:center;gap:7px;font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--text-muted);margin-bottom:8px}
+  .ag-head .cnt{font-family:var(--mono);font-size:9px;padding:1px 6px;border-radius:999px;background:#f1f5f9;color:var(--text-secondary);border:1px solid var(--border)}
+  .ag-head .cnt.red{background:var(--red-bg);color:var(--red);border-color:#fecaca}
+  .ag-head .cnt.amber{background:var(--orange-bg);color:var(--orange);border-color:#fde68a}
+  .ag-head .cnt.green{background:var(--green-bg);color:var(--green);border-color:#bbf7d0}
+  .audit-item{position:relative;display:flex;align-items:flex-start;gap:8px;padding:7px 8px 7px 10px;border-radius:7px;
+    border:1px solid transparent;transition:.14s}
+  .audit-item:hover{background:rgba(255,255,255,.72);border-color:rgba(15,23,42,.06)}
+  .audit-item::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px;background:#cbd5e1}
+  .audit-item.red::before{background:var(--red)}
+  .audit-item.amber::before{background:var(--orange)}
+  .audit-item.green::before{background:var(--green)}
+  .ai-main{flex:1;min-width:0}
+  .ai-main b{display:block;font-size:10.5px;font-weight:700;line-height:1.3}
+  .ai-main span{display:block;font-size:9.5px;color:var(--text-secondary);line-height:1.45;margin-top:1px}
+  .ai-main .ai-link{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font-weight:650;cursor:pointer;margin-top:3px}
+  .ai-actions{display:flex;gap:5px;flex:none;align-items:center}
+  .tiny-btn{border:1px solid var(--border);background:#fff;color:var(--text-secondary);font:inherit;font-size:9px;
+    font-weight:700;padding:4px 7px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:.14s}
+  .tiny-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .tiny-btn.solid{background:var(--indigo);border-color:var(--indigo);color:#fff}
+  .tiny-btn.solid:hover{background:#4338ca;color:#fff}
+  .tiny-btn.green{background:var(--green);border-color:var(--green);color:#fff}
+  .tiny-btn.green:hover{background:#15803d;color:#fff}
+  .tiny-btn.red{background:var(--red);border-color:var(--red);color:#fff}
+  .tiny-btn.red:hover{background:#b91c1c;color:#fff}
+  .pass-row{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--text-secondary);padding:5px 2px}
+  .pass-row .tick{width:15px;height:15px;border-radius:50%;background:var(--green-bg);border:1px solid #bbf7d0;color:var(--green);
+    display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;flex:none}
+  .pass-row b{color:var(--text-primary);font-weight:650}
+  .pass-row .val{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--text-muted);white-space:nowrap}
+
+  /* ── settlement audit (non-invoice deductions) ── */
+  .sa-intro{font-size:9.5px;color:var(--text-secondary);line-height:1.45;margin:-2px 0 8px}
+  .sa-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .sa-item{position:relative;border:1px solid var(--border);border-radius:8px;background:var(--bg-input);padding:8px 9px 8px 11px;min-width:0}
+  .sa-item::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px;background:#cbd5e1}
+  .sa-item.pass::before{background:var(--green)}
+  .sa-item.warn::before{background:var(--orange)}
+  .sa-top{display:flex;align-items:center;gap:6px}
+  .sa-name{font-size:10px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sa-top .status-chip{margin-left:auto;flex:none}
+  .sa-amount{font-family:var(--mono);font-size:12px;font-weight:800;margin-top:5px;white-space:nowrap}
+  .sa-amount small{font-family:var(--font);font-size:8px;font-weight:600;color:var(--text-muted);margin-left:3px}
+  .sa-meta{font-size:8.5px;color:var(--text-muted);line-height:1.45;margin-top:3px}
+  .sa-meta b{color:var(--text-secondary);font-family:var(--mono);font-weight:700}
+  .sa-foot{display:flex;align-items:center;gap:7px;margin-top:8px;padding-top:7px;border-top:1px solid rgba(15,23,42,.06);
+    font-size:9px;color:var(--text-muted);line-height:1.4}
+  .sa-foot .tiny-btn{margin-left:auto;flex:none}
+
+  .settle-table .st-head,.settle-table .st-row{display:grid;grid-template-columns:1.05fr 1.05fr 58px 92px 92px 78px 92px 96px;gap:7px;align-items:center}
+  .settle-table .st-head{padding:0 2px 5px;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+  .settle-table .st-row{padding:8px 2px;border-top:1px solid var(--border);font-size:10px}
+  .settle-table .st-row:hover{background:rgba(248,250,252,.8)}
+  .settle-table .st-row.warn{background:linear-gradient(90deg,rgba(255,251,235,.75),rgba(255,255,255,0) 60%)}
+  .settle-table .st-row.warn::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px;background:var(--orange)}
+  .settle-table .st-row{position:relative}
+  .settle-table .st-name{display:flex;flex-direction:column;gap:2px;padding-left:6px}
+  .settle-table .st-name b{font-size:10.5px}
+  .settle-table .st-name span{font-size:8px;color:var(--text-muted)}
+  .settle-table .num{font-size:10px}
+
+  /* ── collapsible settlement rows ── */
+  .settle-row{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .collapsed{display:flex;align-items:center;gap:9px;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-lg);
+    background:#fff;box-shadow:var(--shadow-sm);cursor:pointer;user-select:none}
+  .collapsed:hover{box-shadow:var(--shadow-md)}
+  .collapsed .ct{font-size:11px;font-weight:650;color:var(--accent)}
+  .collapsed .cs{margin-left:auto;font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--green);white-space:nowrap}
+  .collapsed .chev{color:var(--text-muted);font-size:10px;margin-left:2px}
+  .collapsed .ctag{font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:999px;
+    background:var(--green-bg);color:var(--green);border:1px solid #bbf7d0}
+
+  /* ── invoice table ── */
+  .inv-head,.inv-row{display:grid;grid-template-columns:minmax(220px,1.8fr) 116px 104px 96px 92px 92px 38px;gap:7px;align-items:center}
+  .inv-head{padding:0 2px 5px;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+  .inv-row{padding:8px 2px;border-top:1px solid var(--border);position:relative}
+  .inv-row:hover{background:rgba(248,250,252,.8)}
+  .inv-row.flagged{background:linear-gradient(90deg,rgba(254,242,242,.65),rgba(255,255,255,0) 55%)}
+  .inv-row.flagged::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px;background:var(--red)}
+  .inv-company{display:flex;flex-direction:column;min-width:0;padding-left:6px}
+  .inv-company b{font-size:10.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .inv-company .under{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:3px}
+  .inv-number{font-family:var(--mono);font-size:10.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .inv-number small{display:block;font-family:var(--font);font-size:8.5px;color:var(--text-muted);font-weight:500;margin-top:2px}
+  .num{font-family:var(--mono);font-size:10.5px;text-align:right;white-space:nowrap}
+  .num.strong{font-weight:700}
+  .num.red{color:var(--red)}
+  .status-chip{display:inline-flex;align-items:center;gap:4px;font-size:8px;font-weight:750;padding:2px 6px;
+    border-radius:999px;white-space:nowrap;border:1px solid transparent}
+  .status-chip.green{background:var(--green-bg);color:var(--green);border-color:#bbf7d0}
+  .status-chip.amber{background:var(--orange-bg);color:var(--orange);border-color:#fde68a}
+  .status-chip.red{background:var(--red-bg);color:var(--red);border-color:#fecaca}
+  .status-chip.blue{background:var(--accent-light);color:#1d4ed8;border-color:#bfdbfe}
+  .status-chip.grey{background:#f1f5f9;color:var(--text-secondary);border-color:#e2e8f0}
+  .row-x{border:0;background:transparent;color:#cbd5e1;font-size:12px;cursor:pointer;border-radius:5px;padding:3px;justify-self:center}
+  .row-x:hover{background:var(--red-bg);color:var(--red)}
+  .inv-totals{border-top:2px solid var(--border);margin-top:2px;padding-top:8px;font-weight:750}
+  .inv-totals .num{font-size:11px;font-weight:800}
+
+  .compare{margin-top:10px;border:1px solid var(--border);border-radius:9px;overflow:hidden}
+  .compare-head{display:flex;align-items:center;gap:7px;padding:6px 9px;background:var(--bg-input);border-bottom:1px solid var(--border);
+    font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+  .compare-head .cur{margin-left:auto;font-family:var(--mono);font-size:8.5px;color:#1d4ed8;background:var(--accent-light);
+    border:1px solid #bfdbfe;border-radius:999px;padding:1px 6px}
+  .cmp-row{display:grid;grid-template-columns:1.3fr 90px 14px 90px 18px;gap:7px;align-items:center;padding:5px 9px;
+    border-top:1px solid rgba(15,23,42,.045);font-size:10px}
+  .cmp-row:first-of-type{border-top:0}
+  .cmp-row .v{font-family:var(--mono);text-align:right;font-size:9.5px}
+  .cmp-row .a{color:var(--text-muted);text-align:center;font-size:9px}
+  .cmp-row .f{font-weight:900;text-align:center}
+  .cmp-row.ok{background:rgba(240,253,244,.45)} .cmp-row.ok .f{color:var(--green)}
+  .cmp-row.warn{background:rgba(255,251,235,.65)} .cmp-row.warn .f{color:var(--orange)}
+  .cmp-row.bad{background:rgba(254,242,242,.7)} .cmp-row.bad .f{color:var(--red)}
+  .inv-actions{display:flex;gap:7px;margin-top:9px;flex-wrap:wrap}
+  .btn{position:relative;border:1px solid var(--border);background:#fff;color:var(--text-secondary);font:inherit;font-size:10.5px;
+    font-weight:700;padding:6px 11px;border-radius:7px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow-sm)}
+  .btn.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);border-color:#2563eb;color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.28)}
+  .btn.primary:hover{filter:brightness(1.04);color:#fff}
+  .btn.violet{background:linear-gradient(135deg,#8b5cf6,#6d28d9);border-color:#6d28d9;color:#fff;box-shadow:0 4px 12px rgba(109,40,217,.28)}
+  .btn.violet:hover{filter:brightness(1.05);color:#fff}
+  .btn.ghost{background:transparent}
+  .btn.sm{font-size:9.5px;padding:5px 9px}
+
+  /* ── checklist ── */
+  .checklist-summary{font-size:10px;font-weight:750;padding:2px 8px;border-radius:999px;background:var(--bg-input);
+    border:1px solid var(--border);color:var(--text-muted)}
+  .checklist-summary.ok{color:var(--green);border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.08)}
+  .checklist-summary.bad{color:var(--red);border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08)}
+  .check-item{border:1px solid var(--border);border-radius:7px;background:var(--bg-input);padding:7px 9px 7px 11px;margin-bottom:5px;position:relative}
+  .check-item::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:3px}
+  .check-item.pass::before{background:var(--green)}
+  .check-item.fail::before{background:var(--red)}
+  .check-item.warn::before{background:var(--orange)}
+  .check-item.na::before{background:#cbd5e1}
+  .ci-top{display:flex;align-items:center;gap:8px}
+  .ci-label{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:650;min-width:0}
+  .ci-chip{font-size:7.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:1px 5px;border-radius:4px;
+    border:1px solid var(--border);color:var(--text-muted);white-space:nowrap}
+  .ci-chip.auto{color:var(--accent);border-color:rgba(59,130,246,.4);background:rgba(59,130,246,.08)}
+  .ci-chip.manual{color:var(--violet);border-color:rgba(124,58,237,.3);background:rgba(124,58,237,.06)}
+  .ci-btns{margin-left:auto;display:inline-flex;gap:3px;flex:none}
+  .ci-btns button{all:unset;box-sizing:border-box;width:23px;height:20px;display:inline-flex;align-items:center;justify-content:center;
+    border-radius:5px;border:1px solid var(--border);background:#fff;color:var(--text-muted);font-size:10px;cursor:pointer}
+  .ci-btns button:hover{border-color:var(--accent);color:var(--text-primary)}
+  .ci-btns button.pass.on{background:var(--green);border-color:var(--green);color:#fff}
+  .ci-btns button.fail.on{background:var(--red);border-color:var(--red);color:#fff}
+  .ci-btns button.na.on{background:var(--text-muted);border-color:var(--text-muted);color:#fff}
+  .ci-hint{font-size:9.5px;color:var(--orange);margin-top:4px;display:flex;align-items:center;gap:5px}
+  .ci-hint a{color:var(--accent);font-weight:700;text-decoration:none;cursor:pointer}
+  .ci-note{font-size:9.5px;color:var(--text-muted);margin-top:3px}
+
+  /* ── decision ── */
+  .decision-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
+  .decision-options{display:flex;gap:7px;flex-wrap:wrap}
+  .dec{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:var(--bg-input);border-radius:8px;
+    padding:8px 11px;cursor:pointer;font-size:10.5px;font-weight:650;color:var(--text-secondary);transition:.15s}
+  .dec:hover{border-color:var(--accent);color:var(--text-primary)}
+  .dec .dotc{width:13px;height:13px;border-radius:50%;border:2px solid #cbd5e1;display:flex;align-items:center;justify-content:center;flex:none}
+  .dec.on.approve{border-color:#86efac;background:var(--green-bg);color:#15803d}
+  .dec.on.approve .dotc{border-color:var(--green);background:var(--green);box-shadow:inset 0 0 0 3px #fff}
+  .dec.disabled{opacity:.55;cursor:not-allowed;border-style:dashed}
+  .dec.disabled:hover{border-color:var(--border);color:var(--text-secondary)}
+  .dec-note{font-size:9.5px;color:var(--orange);margin-top:8px;display:flex;align-items:center;gap:5px}
+  .decision-card .lockmsg{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;background:var(--orange-bg);
+    border:1px solid #fde68a;color:#92400e;font-size:10px;line-height:1.45}
+  .decision-card .lockmsg b{font-weight:750}
+  .textarea{background:var(--bg-input);border:1px solid var(--border);border-radius:7px;padding:8px 10px;font:inherit;font-size:11px;
+    color:var(--text-primary);width:100%;resize:vertical;min-height:62px;outline:none}
+  .textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.1);background:#fff}
+
+  /* ── concept B: queue ── */
+  .queue-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .queue-head .qtitle{font-size:12px;font-weight:650;color:var(--accent)}
+  .seg{display:inline-flex;gap:2px;background:#eef2f7;border-radius:8px;padding:3px}
+  .seg button{border:0;background:transparent;color:var(--text-muted);font:inherit;font-size:9.5px;font-weight:700;
+    padding:4px 9px;border-radius:6px;cursor:pointer;display:flex;gap:4px;align-items:center}
+  .seg button.on{background:#fff;color:var(--accent);box-shadow:0 1px 3px rgba(15,23,42,.15)}
+  .seg button b{font-family:var(--mono);font-size:8.5px;padding:0 4px;border-radius:999px;background:#f1f5f9;color:var(--text-secondary)}
+  .seg button.on b{background:var(--accent-light);color:var(--accent)}
+  .search{margin-left:auto;display:flex;align-items:center;gap:6px;background:var(--bg-input);border:1px solid var(--border);
+    border-radius:7px;padding:5px 9px;color:var(--text-muted);font-size:10px;min-width:180px}
+  .search input{border:0;background:transparent;outline:none;font:inherit;font-size:10px;color:var(--text-primary);width:100%}
+  .q-table{border:1px solid var(--border);border-radius:9px;overflow:hidden}
+  .q-head,.q-row{display:grid;grid-template-columns:34px minmax(180px,1.6fr) minmax(110px,1fr) 90px 82px 82px 96px 104px 102px 24px;
+    gap:6px;align-items:center}
+  .q-head{padding:7px 9px;background:var(--bg-input);border-bottom:1px solid var(--border);font-size:8px;font-weight:800;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
+  .q-row{padding:8px 9px;border-top:1px solid rgba(15,23,42,.055);font-size:10px;position:relative}
+  .q-row:first-of-type{border-top:0}
+  .q-row:hover{background:rgba(248,250,252,.82)}
+  .q-row.blocked{background:linear-gradient(90deg,rgba(254,242,242,.75),rgba(255,255,255,0) 55%)}
+  .q-row.expanded{background:rgba(239,246,255,.55)}
+  .q-check{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+  .q-inv b{display:block;font-family:var(--mono);font-size:10.5px;font-weight:700}
+  .q-inv span{display:block;font-size:8.5px;color:var(--text-muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .q-seller{min-width:0}
+  .q-seller b{display:block;font-size:10px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .q-seller span{display:block;font-family:var(--mono);font-size:8.5px;color:var(--text-muted);margin-top:1px}
+  .q-num{text-align:right;font-family:var(--mono);font-size:9.5px;white-space:nowrap}
+  .q-chev{border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:10px;padding:3px}
+  .q-detail{display:none;grid-column:1/-1;padding:10px 12px 12px;border-top:1px dashed var(--border);
+    background:rgba(255,255,255,.6)}
+  .q-row.expanded + .q-detail{display:block}
+  .detail-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
+  .diff{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .diff-head,.diff-row{display:grid;grid-template-columns:1.15fr 1fr 1fr 58px;gap:6px;padding:5px 8px;align-items:center;font-size:9.5px}
+  .diff-head{background:var(--bg-input);font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+  .diff-row{border-top:1px solid rgba(15,23,42,.05)}
+  .diff-row .k{color:var(--text-secondary)}
+  .diff-row .v{font-family:var(--mono);font-size:9px}
+  .diff-row .v.xml{color:var(--text-primary)}
+  .diff-row .v.form{color:var(--text-primary)}
+  .diff-row.mismatch{background:rgba(255,251,235,.7)}
+  .diff-row.mismatch .v.form{color:var(--orange);font-weight:700}
+  .diff-row .fix{justify-self:end}
+  .fix-btn{border:1px solid #bfdbfe;background:var(--accent-light);color:#1d4ed8;font:inherit;font-size:8px;font-weight:750;
+    padding:2px 6px;border-radius:5px;cursor:pointer;white-space:nowrap}
+  .fix-btn:hover{background:#dbeafe}
+  .detail-side{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.7);padding:9px 10px}
+  .detail-side h4{font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:7px}
+  .kv{display:flex;justify-content:space-between;gap:8px;font-size:9.5px;padding:4px 0;border-top:1px solid rgba(15,23,42,.05)}
+  .kv:first-of-type{border-top:0}
+  .kv span{color:var(--text-muted)}
+  .kv b{font-family:var(--mono);font-weight:650;text-align:right}
+  .queue-note{display:flex;align-items:center;gap:8px;margin-top:8px;padding:7px 9px;border-radius:7px;background:var(--accent-light);
+    border:1px solid #bfdbfe;color:#1e40af;font-size:9.5px;line-height:1.45}
+
+  /* ── concept C: review overlay ── */
+  .overlay{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:22px;
+    background:rgba(15,23,42,.42);-webkit-backdrop-filter:blur(10px) saturate(140%);backdrop-filter:blur(10px) saturate(140%)}
+  .overlay.show{display:flex;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .review{width:min(1180px,100%);height:min(780px,100%);display:flex;flex-direction:column;overflow:hidden;border-radius:16px;
+    background:linear-gradient(180deg,rgba(255,255,255,.93),rgba(248,250,252,.88));
+    -webkit-backdrop-filter:blur(26px) saturate(180%);backdrop-filter:blur(26px) saturate(180%);
+    border:1px solid rgba(255,255,255,.9);box-shadow:0 40px 100px rgba(15,23,42,.35),inset 0 1px 0 #fff}
+  .review-head{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid rgba(15,23,42,.07);
+    background:rgba(255,255,255,.55)}
+  .review-head .rh-title{font-size:13px;font-weight:750;display:flex;align-items:center;gap:8px}
+  .review-head .rh-title .pill{font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;
+    border-radius:999px;background:var(--orange-bg);color:var(--orange);border:1px solid #fde68a}
+  .review-head .rh-sub{font-size:9.5px;color:var(--text-muted);margin-top:1px}
+  .review-progress{margin-left:auto;display:flex;align-items:center;gap:9px}
+  .review-progress .bar{width:110px;height:5px;border-radius:99px;background:#e2e8f0;overflow:hidden}
+  .review-progress .bar i{display:block;height:100%;width:47%;background:linear-gradient(90deg,#f59e0b,#ea580c);border-radius:99px}
+  .review-progress span{font-family:var(--mono);font-size:9.5px;color:var(--text-secondary)}
+  .review-close{border:0;background:rgba(255,255,255,.7);border:1px solid var(--border);width:26px;height:26px;border-radius:7px;
+    color:var(--text-secondary);cursor:pointer;font-size:12px}
+  .review-close:hover{background:var(--red-bg);color:var(--red);border-color:#fecaca}
+  .review-body{flex:1;display:grid;grid-template-columns:250px 1fr 255px;min-height:0}
+  .review-rail{border-right:1px solid rgba(15,23,42,.07);padding:12px 10px;overflow-y:auto;background:rgba(255,255,255,.3)}
+  .rail-title{font-size:8px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted);padding:0 6px 7px}
+  .rail-step{display:flex;align-items:flex-start;gap:8px;padding:8px 7px;border-radius:7px;cursor:pointer;border:1px solid transparent;transition:.14s}
+  .rail-step:hover{background:rgba(255,255,255,.7);border-color:rgba(15,23,42,.05)}
+  .rail-step.on{background:#fff;border-color:#bfdbfe;box-shadow:0 4px 12px rgba(59,130,246,.1)}
+  .rail-step .rs-ico{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;flex:none}
+  .rs-ico.green{background:var(--green-bg);color:var(--green);border:1px solid #bbf7d0}
+  .rs-ico.amber{background:var(--orange-bg);color:var(--orange);border:1px solid #fde68a}
+  .rs-ico.red{background:var(--red-bg);color:var(--red);border:1px solid #fecaca}
+  .rs-ico.grey{background:#f1f5f9;color:var(--text-muted);border:1px solid var(--border)}
+  .rail-step .rs-main b{display:block;font-size:9.5px;font-weight:700;line-height:1.3}
+  .rail-step .rs-main span{display:block;font-size:8.5px;color:var(--text-muted);margin-top:1px;line-height:1.35}
+  .review-main{overflow-y:auto;padding:18px 22px 20px}
+  .issue-eyebrow{font-size:8px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted);display:flex;align-items:center;gap:6px}
+  .issue-title{font-size:17px;font-weight:800;letter-spacing:-.02em;margin-top:4px}
+  .issue-sub{font-size:10.5px;color:var(--text-secondary);margin-top:4px;line-height:1.5}
+  .issue-sub b{color:var(--text-primary)}
+  .issue-callout{display:flex;align-items:flex-start;gap:9px;margin-top:14px;padding:10px 11px;border-radius:8px;
+    background:var(--orange-bg);border:1px solid #fde68a;color:#92400e;font-size:10px;line-height:1.5}
+  .issue-callout .ico{width:21px;height:21px;border-radius:6px;background:#fef3c7;border:1px solid #fde68a;color:#b45309;
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;flex:none}
+  .issue-callout b{color:#78350f}
+  .diff-table{margin-top:14px;border:1px solid var(--border);border-radius:9px;overflow:hidden}
+  .diff-table .dh,.diff-table .dr{display:grid;grid-template-columns:1.1fr 1fr 1fr 90px;gap:8px;padding:7px 10px;align-items:center;font-size:10px}
+  .diff-table .dh{background:var(--bg-input);font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+  .diff-table .dr{border-top:1px solid rgba(15,23,42,.05)}
+  .diff-table .dr.bad{background:rgba(255,251,235,.6)}
+  .diff-table .dr .k{color:var(--text-secondary)}
+  .diff-table .dr .v{font-family:var(--mono);font-size:9.5px}
+  .diff-table .dr.bad .v.form{color:var(--orange);font-weight:700}
+  .diff-table .dr .act{justify-self:end}
+  .issue-actions{display:flex;gap:7px;margin-top:13px;flex-wrap:wrap}
+  .review-side{border-left:1px solid rgba(15,23,42,.07);padding:15px 14px;overflow-y:auto;background:rgba(255,255,255,.28)}
+  .side-card{border:1px solid var(--border);border-radius:9px;background:rgba(255,255,255,.75);padding:10px 11px;margin-bottom:10px}
+  .side-card h4{font-size:8px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:7px}
+  .side-inv{display:flex;align-items:flex-start;gap:8px}
+  .side-inv .si-ico{width:28px;height:28px;border-radius:7px;background:var(--accent-light);border:1px solid #bfdbfe;color:var(--accent);
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex:none}
+  .side-inv b{display:block;font-family:var(--mono);font-size:10px}
+  .side-inv span{display:block;font-size:8.5px;color:var(--text-muted);margin-top:1px}
+  .side-card .kv{font-size:9px}
+  .impact{font-size:9.5px;color:var(--text-secondary);line-height:1.5}
+  .impact b{color:var(--text-primary)}
+  .review-foot{display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid rgba(15,23,42,.07);background:rgba(255,255,255,.6)}
+  .rf-note{font-size:9px;color:var(--text-muted);line-height:1.4;max-width:360px}
+  .rf-note b{color:var(--text-secondary)}
+  .rf-actions{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .rfbtn{border:1px solid var(--border);background:#fff;color:var(--text-secondary);font:inherit;font-size:10px;font-weight:700;
+    padding:6px 10px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+  .rfbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .rfbtn.green{background:linear-gradient(180deg,#22c55e,#16a34a);border-color:#16a34a;color:#fff;box-shadow:0 3px 9px rgba(22,163,74,.24)}
+  .rfbtn.green:hover{color:#fff;filter:brightness(1.03)}
+  .rfbtn.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);border-color:#2563eb;color:#fff}
+  .rfbtn.primary:hover{color:#fff;filter:brightness(1.03)}
+  .rfbtn.danger{color:var(--red);border-color:#fecaca}
+  .rfbtn.danger:hover{background:var(--red-bg)}
+
+  /* ── toast ── */
+  .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,12px);z-index:200;display:flex;align-items:center;gap:8px;
+    padding:9px 13px;border-radius:9px;background:#fff;border:1px solid var(--border);box-shadow:0 18px 40px rgba(15,23,42,.2);
+    font-size:10.5px;font-weight:650;color:var(--text-secondary);opacity:0;pointer-events:none;transition:.22s}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast b{color:var(--text-primary)}
+
+  [hidden]{display:none !important}
+
+  @media (max-width:1180px){
+    .q-head,.q-row{grid-template-columns:30px minmax(150px,1.4fr) minmax(100px,1fr) 78px 72px 72px 84px 92px 92px 20px}
+    .ah-body{grid-template-columns:1fr 1fr}
+    .ah-group:nth-child(2){border-right:0}
+  }
+  @media (max-width:960px){
+    .sidebar{display:none}
+    .ah-body{grid-template-columns:1fr}
+    .ah-group{border-right:0;border-top:1px solid rgba(15,23,42,.06)}
+    .ah-group:first-child{border-top:0}
+    .docinfo{grid-template-columns:1fr 1fr}
+    .settle-row{grid-template-columns:1fr}
+    .decision-grid{grid-template-columns:1fr}
+    .review-body{grid-template-columns:1fr}
+    .review-rail,.review-side{display:none}
+  }
+  @media (max-width:700px){
+    .mockbar{height:auto;padding:10px 14px;flex-wrap:wrap;gap:8px}
+    .mock-hint{display:none}
+    .app{height:calc(100vh - 112px)}
+    .content{padding:12px}
+    .jump{overflow-x:auto;flex-wrap:nowrap}
+    .inv-head,.inv-row{grid-template-columns:1fr 90px 78px 30px}
+    .inv-head span:nth-child(3),.inv-head span:nth-child(5),.inv-head span:nth-child(6),
+    .inv-row > *:nth-child(3),.inv-row > *:nth-child(5),.inv-row > *:nth-child(6){display:none}
+    .q-head,.q-row{grid-template-columns:26px 1.4fr 70px 74px 18px}
+    .q-head span:nth-child(3),.q-head span:nth-child(4),.q-head span:nth-child(5),.q-head span:nth-child(6),.q-head span:nth-child(8),
+    .q-row > *:nth-child(3),.q-row > *:nth-child(4),.q-row > *:nth-child(5),.q-row > *:nth-child(6),.q-row > *:nth-child(8){display:none}
+    .ah-top{flex-wrap:wrap}
+    .ah-score{margin-left:0}
+    .ah-stats{grid-template-columns:1fr 1fr}
+    .ah-stat:nth-child(2){border-right:0}
+    .ah-stat:nth-child(3),.ah-stat:nth-child(4){border-top:1px solid rgba(15,23,42,.06)}
+    .docinfo{grid-template-columns:1fr}
+    .review{padding:0}
+    .review-head{flex-wrap:wrap}
+    .review-progress{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="mockbar">
+  <div class="mock-title">
+    <b>Vouchify · Bank document audit</b>
+    <span>Concept mockups · add invoice → audit → decide</span>
+  </div>
+  <div class="concept-switch" role="tablist" aria-label="Mockup concepts">
+    <button class="on" data-view="a" role="tab" aria-selected="true">A · Audit center</button>
+    <button data-view="b" role="tab" aria-selected="false">B · Invoice queue</button>
+    <button data-view="c" role="tab" aria-selected="false">C · Guided review</button>
+  </div>
+  <div class="mock-hint"><b>Click around:</b> expand groups, open an invoice,<br/>try the checklist and decision buttons.</div>
+</div>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="side-head">
+      <div class="brand">
+        <div class="brand-icon">V</div>
+        <div><h1>Vouchify</h1><p>Payment Voucher</p></div>
+      </div>
+    </div>
+
+    <div class="doc-card">
+      <div class="doc-top">
+        <span class="doc-serial">2024-0007</span>
+        <span class="dpill saved">Saved</span>
+      </div>
+      <div class="doc-meta"><span>3 invoices</span><span class="mini-chip">Bank</span><span class="sync"><i class="dot"></i>Synced</span></div>
+    </div>
+
+    <div class="metrics">
+      <div class="metric"><b>EGP 1,060,004.96</b><span>Net payable</span></div>
+      <div class="metric warn"><b>EGP 89,350.40</b><span>Deductions</span></div>
+      <div class="metric"><b>EGP 950,654.56</b><span>Current paid</span></div>
+    </div>
+
+    <div class="side-label">Document</div>
+    <div class="side-nav">
+      <button class="on"><span class="nav-ico">B</span>Bank</button>
+      <button><span class="nav-ico">I</span>Import</button>
+    </div>
+    <div class="side-label">Views</div>
+    <div class="side-nav">
+      <button><span class="nav-ico">S</span>Suppliers<span class="navbadge">24</span></button>
+      <button><span class="nav-ico">P</span>Invoice Pool<span class="navbadge">96</span></button>
+    </div>
+
+    <div class="side-bottom">
+      <div class="account">
+        <div class="avatar">O</div>
+        <div><b>omar</b><span>Synced</span></div>
+      </div>
+      <button class="save">Save</button>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="jump">
+      <button class="on">Document</button>
+      <button>Supplier</button>
+      <button>Advance</button>
+      <button>Payable</button>
+      <button>Retention</button>
+      <button>Temp Labour</button>
+      <button>WHT</button>
+      <button>Others</button>
+      <button>Settlement <span class="jbadge">2</span></button>
+      <button>Paid</button>
+      <button>Net</button>
+      <button>Paid Totals</button>
+      <button>Invoices <span class="jbadge">2</span></button>
+      <button>Checklist <span class="jbadge">1</span></button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         CONCEPT A — audit center at the top of the document
+         ═══════════════════════════════════════════════════════════ -->
+    <div id="viewA">
+      <section class="card" style="margin-bottom:11px">
+        <h3>Document Information <span class="right" style="color:var(--text-muted);font-weight:600">2024-0007 · 3 invoices</span></h3>
+        <div class="docinfo">
+          <div class="field">
+            <label class="field-label">Doc Serial</label>
+            <input class="field-input" value="2024-0007" readonly />
+            <div class="sub" style="margin-top:3px">Unique serial · checked in history</div>
+          </div>
+          <div class="field">
+            <label class="field-label">Date</label>
+            <div class="computed" style="color:var(--text-primary)">9/14/2026</div>
+          </div>
+          <div class="field">
+            <label class="field-label">Remainder</label>
+            <button class="remainder-btn">↳ Link as remainder of…</button>
+          </div>
+          <div class="field">
+            <label class="field-label">Buyer TAX ID</label>
+            <input class="field-input" value="100489095" readonly />
+            <div style="margin-top:4px"><span class="ok-line">✓ Matches company TAX ID</span></div>
+          </div>
+          <div class="field wide">
+            <label class="field-label">Seller TAX IDs</label>
+            <div class="tax-chips">
+              <span class="tax-chip">721067026 <i>✕</i></span>
+              <span class="tax-chip">698214553 <i>✕</i></span>
+              <span class="tax-chip">533446333 <i>✕</i></span>
+              <button class="remainder-btn" style="padding:3px 8px;font-size:9px">+ Add</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">Document Currency</label>
+            <div style="display:flex;gap:4px">
+              <button class="tiny-btn solid" style="flex:1">EGP</button>
+              <button class="tiny-btn" style="flex:1">USD</button>
+            </div>
+            <div class="sub" style="margin-top:3px">Invoices converted at their own ETA rate</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- NEW: audit center -->
+      <section class="card audit-hero" style="margin-bottom:11px">
+        <div class="ah-top">
+          <div>
+            <div class="ah-eyebrow">Audit center</div>
+            <div class="ah-title">Almost ready <span class="pulse"></span></div>
+            <div class="ah-sub">4 issues need attention. The duplicate payment must be resolved before this document can be approved.</div>
+          </div>
+          <div class="ah-score">
+            <div>
+              <div class="ring-wrap">
+                <div class="ring"><b>9/14</b></div>
+                <div class="ring-cap">checks passed</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ah-stats">
+          <div class="ah-stat"><span class="ico red">!</span><div><b>1 blocker</b><span>duplicate payment</span></div></div>
+          <div class="ah-stat"><span class="ico amber">⚠</span><div><b>4 warnings</b><span>2 invoice · 2 settlement</span></div></div>
+          <div class="ah-stat"><span class="ico green">✓</span><div><b>9 passed</b><span>invoice + settlement</span></div></div>
+          <div class="ah-stat"><span class="ico blue">≡</span><div><b>3 invoices</b><span>6 deductions</span></div></div>
+        </div>
+
+        <div class="ah-body">
+          <div class="ah-group">
+            <div class="ag-head">Needs attention <span class="cnt red">1</span><span class="cnt amber">3</span></div>
+
+            <div class="audit-item red">
+              <div class="ai-main">
+                <b>Duplicate payment risk · INV-2024-000130</b>
+                <span>Cairo Steel Works invoice is already claimed by <b style="color:var(--text-primary)">ADT-D02M-2026-000465</b>.</span>
+                <span class="ai-link">Open other document →</span>
+              </div>
+              <div class="ai-actions"><button class="tiny-btn red" data-toast="Invoice removed from this document">Remove</button></div>
+            </div>
+
+            <div class="audit-item amber">
+              <div class="ai-main">
+                <b>Seller name differs from ETA record · INV-2024-000129</b>
+                <span>Form: “Nile Logistics” · XML: “Nile Logistics Co.”</span>
+                <span class="ai-link" data-open-invoice="2">Review invoice →</span>
+              </div>
+              <div class="ai-actions"><button class="tiny-btn" data-open-invoice="2">Review</button></div>
+            </div>
+
+            <div class="audit-item amber">
+              <div class="ai-main">
+                <b>WHT-free certificate expires in 12 days</b>
+                <span>Delta Construction Materials · valid until 26 Nov 2026.</span>
+                <span class="ai-link">Open supplier →</span>
+              </div>
+              <div class="ai-actions"><button class="tiny-btn" data-toast="Certificate reminder snoozed">Snooze</button></div>
+            </div>
+
+            <div class="audit-item amber">
+              <div class="ai-main">
+                <b>Settlement deductions need review</b>
+                <span>Other deductions have no reason · WHT is manual at 2.0% effective.</span>
+                <span class="ai-link">Open settlement audit →</span>
+              </div>
+              <div class="ai-actions"><button class="tiny-btn" data-toast="Opening settlement audit">Review</button></div>
+            </div>
+          </div>
+
+          <div class="ah-group">
+            <div class="ag-head">Automatic checks <span class="cnt green">5</span></div>
+            <div class="pass-row"><span class="tick">✓</span><b>Buyer TAX ID</b><span class="val">100489095</span></div>
+            <div class="pass-row"><span class="tick">✓</span><b>Net total vs current settlement</b><span class="val">1,284,136.00</span></div>
+            <div class="pass-row"><span class="tick">✓</span><b>VAT total vs current VAT</b><span class="val">179,779.04</span></div>
+            <div class="pass-row"><span class="tick">✓</span><b>WHT total vs current WHT</b><span class="val">25,682.72</span></div>
+            <div class="pass-row"><span class="tick">✓</span><b>All invoices in document currency</b><span class="val">EGP</span></div>
+            <div class="pass-row" style="color:var(--red)"><span class="tick" style="background:var(--red-bg);border-color:#fecaca;color:var(--red)">!</span><b>Duplicate payment</b><span class="val" style="color:var(--red)">1 issue</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- non-invoice settlement checks -->
+      <section class="card" style="margin-bottom:11px">
+        <h3>Settlement audit <span class="right warn">2 need review</span></h3>
+        <div class="sa-intro">These deductions are calculated from the settlement and contract, not from invoice lines. Each one is checked for rate × base, opening balance, carry-forward from the previous document and manual overrides.</div>
+        <div class="sa-grid">
+          <div class="sa-item pass">
+            <div class="sa-top"><span class="sa-name">Advance payment</span><span class="status-chip green">✓ Passed</span></div>
+            <div class="sa-amount">0.00 <small>current deduction</small></div>
+            <div class="sa-meta">Opening <b>300,000.00</b> · balance <b>300,000.00</b> · carry-forward matches previous document</div>
+          </div>
+          <div class="sa-item pass">
+            <div class="sa-top"><span class="sa-name">Retention</span><span class="status-chip green">✓ Passed</span></div>
+            <div class="sa-amount">64,206.80 <small>5.00%</small></div>
+            <div class="sa-meta">Base 1B 1,284,136.00 · opening 0.00 · return 0.00 · ending <b>64,206.80</b></div>
+          </div>
+          <div class="sa-item pass">
+            <div class="sa-top"><span class="sa-name">Temp. labour insurance</span><span class="status-chip green">✓ Passed</span></div>
+            <div class="sa-amount">5,778.61 <small>0.45%</small></div>
+            <div class="sa-meta">Base 1B 1,284,136.00 · opening 0.00 · return 0.00 · ending <b>5,778.61</b></div>
+          </div>
+          <div class="sa-item pass">
+            <div class="sa-top"><span class="sa-name">Social insurance</span><span class="status-chip green">✓ Passed</span></div>
+            <div class="sa-amount">42,376.49 <small>3.30%</small></div>
+            <div class="sa-meta">Base 1B 1,284,136.00 · opening 0.00 · ending <b>42,376.49</b></div>
+          </div>
+          <div class="sa-item warn">
+            <div class="sa-top"><span class="sa-name">Other deductions</span><span class="status-chip amber">⚠ Review</span></div>
+            <div class="sa-amount">3,852.41 <small>0.30%</small></div>
+            <div class="sa-meta">Rate is valid, but no description or reason is attached. Add one before approval.</div>
+          </div>
+          <div class="sa-item warn">
+            <div class="sa-top"><span class="sa-name">WHT</span><span class="status-chip amber">⚠ Review</span></div>
+            <div class="sa-amount">25,682.72 <small>manual · 2.0% effective</small></div>
+            <div class="sa-meta">Invoice WHT total matches, but the manual amount is outside the 1% / 3% / 5% rate set. Confirm the contract rate or attach a note.</div>
+          </div>
+        </div>
+        <div class="sa-foot">
+          <span>ⓘ</span>
+          <span>WHT is audited differently when invoices carry no WHT: the selected rate, manual amount, supplier certificate and prior-document balance are checked instead of invoice lines.</span>
+          <button class="tiny-btn" data-toast="Opening settlement audit">Open settlement audit →</button>
+        </div>
+      </section>
+
+      <div class="settle-row" style="margin-bottom:11px">
+        <div class="collapsed">
+          <span class="ctag">Passed</span>
+          <span class="ct">1. Supplier Settlement</span>
+          <span class="cs">Settlement incl. VAT 1,284,136.00</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="collapsed">
+          <span class="ctag">Passed</span>
+          <span class="ct">2–3. Advance &amp; Amount Payable</span>
+          <span class="cs">Payable 1,034,136.00</span>
+          <span class="chev">›</span>
+        </div>
+      </div>
+
+      <!-- invoices with persistent per-invoice audit -->
+      <section class="card" style="margin-bottom:11px">
+        <h3>Invoices <span class="right warn">2 issues</span></h3>
+        <div class="inv-head">
+          <span style="padding-left:6px">Company / audit</span>
+          <span>Invoice No</span>
+          <span>Seller TAX ID</span>
+          <span style="text-align:right">Net</span>
+          <span style="text-align:right">VAT</span>
+          <span style="text-align:right">WHT</span>
+          <span></span>
+        </div>
+
+        <div class="inv-row">
+          <div class="inv-company">
+            <b>Delta Construction Materials</b>
+            <div class="under">
+              <span class="status-chip green">✓ ETA validated</span>
+              <span class="status-chip grey">✓ Reviewed</span>
+            </div>
+          </div>
+          <div class="inv-number">INV-2024-000128<small>14 Sep 2026</small></div>
+          <div class="num" style="text-align:left">721067026</div>
+          <div class="num strong">784,136.00</div>
+          <div class="num">109,779.04</div>
+          <div class="num">15,682.72</div>
+          <button class="row-x" title="Remove invoice">✕</button>
+        </div>
+
+        <div class="inv-row">
+          <div class="inv-company">
+            <b>Nile Logistics</b>
+            <div class="under">
+              <span class="status-chip amber">⚠ 1 warning</span>
+              <span class="status-chip grey">Needs review</span>
+            </div>
+          </div>
+          <div class="inv-number">INV-2024-000129<small>14 Sep 2026</small></div>
+          <div class="num" style="text-align:left">698214553</div>
+          <div class="num strong">350,000.00</div>
+          <div class="num">49,000.00</div>
+          <div class="num">7,000.00</div>
+          <button class="row-x" title="Remove invoice">✕</button>
+        </div>
+
+        <div class="inv-row flagged">
+          <div class="inv-company">
+            <b>Cairo Steel Works</b>
+            <div class="under">
+              <span class="status-chip red">⛔ Duplicate claim</span>
+              <span class="status-chip blue">Claimed by ADT-…465</span>
+            </div>
+          </div>
+          <div class="inv-number">INV-2024-000130<small>13 Sep 2026</small></div>
+          <div class="num" style="text-align:left">533446333</div>
+          <div class="num strong red">150,000.00</div>
+          <div class="num red">21,000.00</div>
+          <div class="num red">3,000.00</div>
+          <button class="row-x" title="Remove invoice">✕</button>
+        </div>
+
+        <div class="inv-row inv-totals">
+          <div class="inv-company" style="padding-left:6px">Totals</div>
+          <div></div>
+          <div></div>
+          <div class="num">1,284,136.00</div>
+          <div class="num">179,779.04</div>
+          <div class="num">25,682.72</div>
+          <div></div>
+        </div>
+
+        <div class="compare">
+          <div class="compare-head">Comparison vs document fields <span class="cur">EGP</span></div>
+          <div class="cmp-row ok"><span>Net vs Settlement − Deductions</span><span class="v">1,284,136.00</span><span class="a">→</span><span class="v">1,284,136.00</span><span class="f">✓</span></div>
+          <div class="cmp-row ok"><span>VAT vs Current VAT Amount</span><span class="v">179,779.04</span><span class="a">→</span><span class="v">179,779.04</span><span class="f">✓</span></div>
+          <div class="cmp-row ok"><span>WHT vs Current WHT Amount</span><span class="v">25,682.72</span><span class="a">→</span><span class="v">25,682.72</span><span class="f">✓</span></div>
+          <div class="cmp-row ok"><span>VAT Rate vs Set VAT Rate</span><span class="v">14.0%</span><span class="a">→</span><span class="v">14.0%</span><span class="f">✓</span></div>
+          <div class="cmp-row ok"><span>Current Paid vs Net Payable (9A)</span><span class="v">950,654.56</span><span class="a">→</span><span class="v">1,060,004.96</span><span class="f">✓</span></div>
+        </div>
+
+        <div class="inv-actions">
+          <button class="btn">+ Manual Invoice</button>
+          <button class="btn violet">Add from Pool</button>
+          <button class="btn primary" data-open-review="1">Open audit queue</button>
+          <button class="btn ghost">Validation Results (3)</button>
+        </div>
+      </section>
+
+      <!-- auto-derived checklist -->
+      <section class="card" style="margin-bottom:11px">
+        <h3>Verification Checklist <span class="checklist-summary bad">5/7 passed</span></h3>
+
+        <div class="check-item pass">
+          <div class="ci-top">
+            <div class="ci-label">Cover &amp; settlement check <span class="ci-chip manual">Manual</span></div>
+            <div class="ci-btns"><button class="pass on">✓</button><button>✕</button><button>—</button></div>
+          </div>
+        </div>
+
+        <div class="check-item pass">
+          <div class="ci-top">
+            <div class="ci-label">Invoices match amount <span class="ci-chip auto">Auto</span></div>
+            <div class="ci-btns"><button class="pass on">✓</button><button>✕</button><button>—</button></div>
+          </div>
+          <div class="ci-note">Net, VAT and WHT totals all match the settlement fields.</div>
+        </div>
+
+        <div class="check-item warn">
+          <div class="ci-top">
+            <div class="ci-label">Company name on cover matches invoices <span class="ci-chip auto">Auto</span></div>
+            <div class="ci-btns"><button>✓</button><button>✕</button><button>—</button></div>
+          </div>
+          <div class="ci-hint">⚠ 1 invoice has a different seller name in the XML. <a data-open-invoice="2">Review invoice 129 →</a></div>
+        </div>
+
+        <div class="check-item pass">
+          <div class="ci-top">
+            <div class="ci-label">WHT-free company certificate <span class="ci-chip auto">Auto</span></div>
+            <div class="ci-btns"><button class="pass on">✓</button><button>✕</button><button>—</button></div>
+          </div>
+          <div class="ci-note">Certificate on file for Delta Construction Materials.</div>
+        </div>
+
+        <div class="check-item fail">
+          <div class="ci-top">
+            <div class="ci-label">No duplicate payment <span class="ci-chip auto">Auto</span></div>
+            <div class="ci-btns"><button>✓</button><button class="fail on">✕</button><button>—</button></div>
+          </div>
+          <div class="ci-hint">⛔ INV-2024-000130 is already claimed by another document. <a data-open-invoice="3">Resolve →</a></div>
+        </div>
+
+        <div class="check-item pass">
+          <div class="ci-top">
+            <div class="ci-label">All invoices converted to document currency <span class="ci-chip auto">Auto</span></div>
+            <div class="ci-btns"><button class="pass on">✓</button><button>✕</button><button>—</button></div>
+          </div>
+        </div>
+
+        <div class="check-item na">
+          <div class="ci-top">
+            <div class="ci-label">Remainder reconciles with parent <span class="ci-chip auto">Auto</span></div>
+            <div class="ci-btns"><button>✓</button><button>✕</button><button class="na on">—</button></div>
+          </div>
+          <div class="ci-note">Not a remainder document.</div>
+        </div>
+      </section>
+
+      <section class="card decision-card">
+        <h3>Final Decision <span class="right" style="color:var(--text-muted);font-weight:600">Not decided</span></h3>
+        <div class="decision-grid">
+          <div>
+            <div class="decision-options">
+              <div class="dec disabled" data-toast="Approve is locked until the duplicate payment is resolved">🔒 Approve</div>
+              <div class="dec" data-toast="Conditional approval requires a reason">Conditional</div>
+              <div class="dec" data-toast="Reject reason will be generated from failed checks">Reject</div>
+            </div>
+            <div class="dec-note">ⓘ Approve unlocks when the blocker and 2 settlement reviews are resolved.</div>
+          </div>
+          <div class="lockmsg"><span style="font-size:14px">🔒</span><div><b>1 blocker remaining:</b> duplicate payment on INV-2024-000130. <b>2 settlement reviews:</b> add an other-deduction reason and confirm the WHT basis.</div></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         CONCEPT B — invoice audit queue
+         ═══════════════════════════════════════════════════════════ -->
+    <div id="viewB" hidden>
+      <section class="card" style="margin-bottom:11px">
+        <div class="queue-head">
+          <span class="qtitle">Invoice audit queue</span>
+          <div class="seg">
+            <button class="on">All <b>3</b></button>
+            <button>Issues <b>2</b></button>
+            <button>Passed <b>1</b></button>
+          </div>
+          <div class="search">⌕ <input placeholder="Search invoice or seller…" /></div>
+        </div>
+
+        <div class="q-table">
+          <div class="q-head">
+            <span></span>
+            <span>Invoice</span>
+            <span>Seller</span>
+            <span style="text-align:right">Net</span>
+            <span style="text-align:right">VAT</span>
+            <span style="text-align:right">WHT</span>
+            <span>ETA XML</span>
+            <span>Match</span>
+            <span>Review</span>
+            <span></span>
+          </div>
+
+          <div class="q-row">
+            <input class="q-check" type="checkbox" checked />
+            <div class="q-inv"><b>INV-2024-000128</b><span>14 Sep 2026</span></div>
+            <div class="q-seller"><b>Delta Construction Materials</b><span>721067026</span></div>
+            <div class="q-num">784,136.00</div>
+            <div class="q-num">109,779.04</div>
+            <div class="q-num">15,682.72</div>
+            <div><span class="status-chip green">✓ Valid</span></div>
+            <div><span class="status-chip green">✓ All</span></div>
+            <div><span class="status-chip grey">✓ Reviewed</span></div>
+            <button class="q-chev">⌄</button>
+          </div>
+          <div class="q-detail"></div>
+
+          <div class="q-row expanded">
+            <input class="q-check" type="checkbox" checked />
+            <div class="q-inv"><b>INV-2024-000129</b><span>14 Sep 2026</span></div>
+            <div class="q-seller"><b>Nile Logistics</b><span>698214553</span></div>
+            <div class="q-num">350,000.00</div>
+            <div class="q-num">49,000.00</div>
+            <div class="q-num">7,000.00</div>
+            <div><span class="status-chip amber">⚠ 1 warning</span></div>
+            <div><span class="status-chip green">✓ Amounts</span></div>
+            <div><span class="status-chip amber">Needs review</span></div>
+            <button class="q-chev">⌃</button>
+          </div>
+          <div class="q-detail" style="display:block">
+            <div class="detail-grid">
+              <div class="diff">
+                <div class="diff-head"><span>Field</span><span>XML value</span><span>Form value</span><span></span></div>
+                <div class="diff-row"><span class="k">Seller name</span><span class="v xml">Nile Logistics Co.</span><span class="v form">Nile Logistics</span><span class="fix"><button class="fix-btn" data-fix="Seller name updated from XML">Use XML</button></span></div>
+                <div class="diff-row"><span class="k">Seller TAX ID</span><span class="v xml">698214553</span><span class="v form">698214553</span><span></span></div>
+                <div class="diff-row"><span class="k">Net amount</span><span class="v xml">350,000.00</span><span class="v form">350,000.00</span><span></span></div>
+                <div class="diff-row"><span class="k">VAT amount</span><span class="v xml">49,000.00</span><span class="v form">49,000.00</span><span></span></div>
+                <div class="diff-row"><span class="k">WHT amount</span><span class="v xml">7,000.00</span><span class="v form">7,000.00</span><span></span></div>
+                <div class="diff-row"><span class="k">Invoice date</span><span class="v xml">2026-09-14</span><span class="v form">2026-09-14</span><span></span></div>
+                <div class="diff-row mismatch"><span class="k">Company name on document</span><span class="v xml">Nile Logistics Co.</span><span class="v form">Nile Logistics</span><span class="fix"><button class="fix-btn" data-fix="Cover company name updated from XML">Use XML</button></span></div>
+              </div>
+              <div>
+                <div class="detail-side" style="margin-bottom:8px">
+                  <h4>Invoice summary</h4>
+                  <div class="kv"><span>Pool status</span><b style="color:var(--green)">Available · claimed</b></div>
+                  <div class="kv"><span>Currency</span><b>EGP</b></div>
+                  <div class="kv"><span>Claimed by</span><b>This document</b></div>
+                  <div class="kv"><span>ETA document</span><b style="color:var(--green)">Valid</b></div>
+                  <div class="kv"><span>Validation issues</span><b style="color:var(--orange)">1 warning</b></div>
+                </div>
+                <div class="queue-note"><span>ⓘ</span><div>Amounts match the settlement. Only the seller company name differs — safe to accept or correct with one click.</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="q-row blocked">
+            <input class="q-check" type="checkbox" checked />
+            <div class="q-inv"><b>INV-2024-000130</b><span>13 Sep 2026</span></div>
+            <div class="q-seller"><b>Cairo Steel Works</b><span>533446333</span></div>
+            <div class="q-num">150,000.00</div>
+            <div class="q-num">21,000.00</div>
+            <div class="q-num">3,000.00</div>
+            <div><span class="status-chip red">⛔ 1 blocker</span></div>
+            <div><span class="status-chip amber">⚠ Blocked</span></div>
+            <div><span class="status-chip red">Blocked</span></div>
+            <button class="q-chev">⌄</button>
+          </div>
+          <div class="q-detail"></div>
+        </div>
+
+        <div class="queue-note" style="background:var(--orange-bg);border-color:#fde68a;color:#92400e">
+          <span>!</span><div><b>1 blocker:</b> INV-2024-000130 is already claimed by ADT-D02M-2026-000465. Remove it or open the other document before approving.</div>
+        </div>
+
+        <div class="inv-actions" style="margin-top:10px">
+          <button class="btn" data-toast="Audit re-run complete · 2 issues found">↻ Re-run audit on all</button>
+          <button class="btn primary" data-open-review="2">Review issues</button>
+          <button class="btn ghost" data-toast="3 invoices marked as reviewed">Mark selected reviewed</button>
+          <button class="btn violet" style="margin-left:auto">Add from Pool</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Audit progress <span class="right warn">2 of 3 invoices reviewed</span></h3>
+        <div class="pass-row"><span class="tick">✓</span><b>Delta Construction Materials · INV-2024-000128</b><span class="val">Reviewed</span></div>
+        <div class="pass-row"><span class="tick" style="background:var(--orange-bg);border-color:#fde68a;color:var(--orange)">⚠</span><b>Nile Logistics · INV-2024-000129</b><span class="val" style="color:var(--orange)">Needs review</span></div>
+        <div class="pass-row"><span class="tick" style="background:var(--red-bg);border-color:#fecaca;color:var(--red)">!</span><b>Cairo Steel Works · INV-2024-000130</b><span class="val" style="color:var(--red)">Blocked</span></div>
+      </section>
+
+      <section class="card" style="margin-top:11px">
+        <h3>Settlement audit <span class="right warn">4 passed · 2 need review</span></h3>
+        <div class="sa-intro">Advance, retention, temp labour, social, other deductions and WHT do not normally appear on the invoice. They are audited against the settlement base, contract rate and the previous document’s ending balance.</div>
+        <div class="settle-table">
+          <div class="st-head">
+            <span>Deduction</span><span>Basis</span><span>Rate</span><span style="text-align:right">Opening</span><span style="text-align:right">Current</span><span style="text-align:right">Return</span><span style="text-align:right">Ending</span><span>Check</span>
+          </div>
+          <div class="st-row">
+            <div class="st-name"><b>Advance payment</b><span>Prior document</span></div>
+            <div>Total advance 300,000.00</div>
+            <div class="num">—</div>
+            <div class="num">300,000.00</div>
+            <div class="num">0.00</div>
+            <div class="num">0.00</div>
+            <div class="num strong">300,000.00</div>
+            <div><span class="status-chip green">✓ Carry-forward</span></div>
+          </div>
+          <div class="st-row">
+            <div class="st-name"><b>Retention</b><span>Contract · 5%</span></div>
+            <div>Settlement 1B</div>
+            <div class="num">5.00%</div>
+            <div class="num">0.00</div>
+            <div class="num">64,206.80</div>
+            <div class="num">0.00</div>
+            <div class="num strong">64,206.80</div>
+            <div><span class="status-chip green">✓ Rate &amp; balance</span></div>
+          </div>
+          <div class="st-row">
+            <div class="st-name"><b>Temp. labour</b><span>Statutory · 0.45%</span></div>
+            <div>Settlement 1B</div>
+            <div class="num">0.45%</div>
+            <div class="num">0.00</div>
+            <div class="num">5,778.61</div>
+            <div class="num">0.00</div>
+            <div class="num strong">5,778.61</div>
+            <div><span class="status-chip green">✓ Rate &amp; balance</span></div>
+          </div>
+          <div class="st-row">
+            <div class="st-name"><b>Social insurance</b><span>Contract · 3.3%</span></div>
+            <div>Settlement 1B</div>
+            <div class="num">3.30%</div>
+            <div class="num">0.00</div>
+            <div class="num">42,376.49</div>
+            <div class="num">0.00</div>
+            <div class="num strong">42,376.49</div>
+            <div><span class="status-chip green">✓ Rate &amp; balance</span></div>
+          </div>
+          <div class="st-row warn">
+            <div class="st-name"><b>Other deductions</b><span>Manual rate</span></div>
+            <div>Settlement 1B</div>
+            <div class="num">0.30%</div>
+            <div class="num">0.00</div>
+            <div class="num">3,852.41</div>
+            <div class="num">0.00</div>
+            <div class="num strong">3,852.41</div>
+            <div><span class="status-chip amber">⚠ No reason</span></div>
+          </div>
+          <div class="st-row warn">
+            <div class="st-name"><b>WHT</b><span>Manual amount</span></div>
+            <div>Invoices + manual check</div>
+            <div class="num">2.0% eff.</div>
+            <div class="num">0.00</div>
+            <div class="num">25,682.72</div>
+            <div class="num">—</div>
+            <div class="num strong">25,682.72</div>
+            <div><span class="status-chip amber">⚠ Confirm rate</span></div>
+          </div>
+        </div>
+        <div class="queue-note" style="margin-top:9px">
+          <span>ⓘ</span>
+          <div><b>WHT special case:</b> when invoices carry WHT, their total is compared with 6B. When they do not, the audit checks the chosen rate or manual amount, the WHT-free certificate and the prior-document balance. A manual 2.0% effective rate is flagged until confirmed.</div>
+        </div>
+        <div class="inv-actions" style="margin-top:9px">
+          <button class="btn" data-toast="Settlement audit re-run · 2 items need review">↻ Re-run settlement audit</button>
+          <button class="btn primary" data-open-review="3">Review settlement issues</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Concept C is an overlay; keep a short host view so the tab has context. -->
+    <div id="viewC" hidden>
+      <section class="card" style="padding:28px;text-align:center">
+        <div style="font-size:30px;margin-bottom:8px">🔍</div>
+        <h3 style="justify-content:center;border:0;margin:0 0 5px">Guided review mode</h3>
+        <div class="sub" style="max-width:430px;margin:0 auto 14px">The review overlay should be open. If it is not, use the button below.</div>
+        <button class="btn primary" data-open-review="1">Open guided review</button>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     CONCEPT C — guided review overlay
+     ═══════════════════════════════════════════════════════════ -->
+<div class="overlay" id="reviewOverlay">
+  <div class="review">
+    <div class="review-head">
+      <div>
+        <div class="rh-title">Guided bank audit <span class="pill">4 issues</span></div>
+        <div class="rh-sub">2024-0007 · Delta Construction Materials · 3 invoices · 6 deductions</div>
+      </div>
+      <div class="review-progress">
+        <div class="bar"><i id="reviewBar"></i></div>
+        <span id="reviewCount">4 of 8 checks</span>
+      </div>
+      <button class="review-close" data-close-review>✕</button>
+    </div>
+
+    <div class="review-body">
+      <aside class="review-rail">
+        <div class="rail-title">Audit steps</div>
+
+        <div class="rail-step" data-step="header">
+          <span class="rs-ico green">✓</span>
+          <div class="rs-main"><b>Document header</b><span>Serial · buyer TAX ID · currency</span></div>
+        </div>
+        <div class="rail-step" data-step="totals">
+          <span class="rs-ico green">✓</span>
+          <div class="rs-main"><b>Invoice totals</b><span>Net, VAT and WHT match</span></div>
+        </div>
+        <div class="rail-step" data-step="deductions">
+          <span class="rs-ico amber">!</span>
+          <div class="rs-main"><b>Settlement deductions</b><span>4 passed · 2 need review</span></div>
+        </div>
+        <div class="rail-step on" data-step="name">
+          <span class="rs-ico amber">!</span>
+          <div class="rs-main"><b>Seller identity</b><span>1 name mismatch</span></div>
+        </div>
+        <div class="rail-step" data-step="duplicate">
+          <span class="rs-ico red">!</span>
+          <div class="rs-main"><b>Duplicate payment</b><span>1 invoice already claimed</span></div>
+        </div>
+        <div class="rail-step" data-step="wht">
+          <span class="rs-ico green">✓</span>
+          <div class="rs-main"><b>WHT certificate</b><span>Valid · expires 26 Nov 2026</span></div>
+        </div>
+        <div class="rail-step" data-step="wht-basis">
+          <span class="rs-ico amber">!</span>
+          <div class="rs-main"><b>WHT basis</b><span>Manual 2.0% effective</span></div>
+        </div>
+        <div class="rail-step" data-step="decision">
+          <span class="rs-ico grey">·</span>
+          <div class="rs-main"><b>Final decision</b><span>Locked until blocker resolved</span></div>
+        </div>
+
+        <div class="rail-title" style="margin-top:12px">Document</div>
+        <div style="padding:3px 6px">
+          <div class="kv"><span>Net payable</span><b>1,060,004.96</b></div>
+          <div class="kv"><span>Current paid</span><b>950,654.56</b></div>
+          <div class="kv"><span>Invoices</span><b>3</b></div>
+          <div class="kv"><span>Reviewed</span><b style="color:var(--orange)">2 of 3</b></div>
+        </div>
+      </aside>
+
+      <main class="review-main">
+        <!-- name issue -->
+        <div id="stepName">
+          <div class="issue-eyebrow"><span class="status-chip amber">⚠ Warning</span> Invoice 2 of 3</div>
+          <div class="issue-title">Seller name does not match the ETA record</div>
+          <div class="issue-sub"><b>INV-2024-000129</b> · Nile Logistics · seller TAX ID <b>698214553</b>. The amounts match, but the company name differs from the XML document.</div>
+
+          <div class="issue-callout">
+            <span class="ico">!</span>
+            <div><b>Low risk:</b> the TAX ID and all monetary values match. Correcting the name keeps the document consistent with the ETA invoice.</div>
+          </div>
+
+          <div class="diff-table">
+            <div class="dh"><span>Field</span><span>XML value</span><span>Form value</span><span></span></div>
+            <div class="dr bad"><span class="k">Seller name</span><span class="v xml">Nile Logistics Co.</span><span class="v form">Nile Logistics</span><span class="act"><button class="fix-btn" data-fix="Seller name updated from XML">Use XML</button></span></div>
+            <div class="dr"><span class="k">Seller TAX ID</span><span class="v">698214553</span><span class="v">698214553</span><span></span></div>
+            <div class="dr"><span class="k">Net amount</span><span class="v">350,000.00</span><span class="v">350,000.00</span><span></span></div>
+            <div class="dr"><span class="k">VAT amount</span><span class="v">49,000.00</span><span class="v">49,000.00</span><span></span></div>
+            <div class="dr"><span class="k">WHT amount</span><span class="v">7,000.00</span><span class="v">7,000.00</span><span></span></div>
+            <div class="dr"><span class="k">Invoice date</span><span class="v">2026-09-14</span><span class="v">2026-09-14</span><span></span></div>
+            <div class="dr bad"><span class="k">Company name on cover</span><span class="v xml">Nile Logistics Co.</span><span class="v form">Nile Logistics</span><span class="act"><button class="fix-btn" data-fix="Cover company name updated from XML">Use XML</button></span></div>
+          </div>
+
+          <div class="issue-actions">
+            <button class="rfbtn green" data-toast="Seller name corrected · issue resolved">✓ Use XML value</button>
+            <button class="rfbtn" data-toast="Invoice marked for supplier follow-up">Flag for supplier</button>
+            <button class="rfbtn" data-toast="Warning accepted with a note">Accept with note</button>
+          </div>
+        </div>
+
+        <!-- duplicate issue -->
+        <div id="stepDuplicate" hidden>
+          <div class="issue-eyebrow"><span class="status-chip red">⛔ Blocker</span> Invoice 3 of 3</div>
+          <div class="issue-title">Invoice is already claimed by another document</div>
+          <div class="issue-sub"><b>INV-2024-000130</b> · Cairo Steel Works · <b>EGP 171,000.00</b> incl. VAT. It is claimed by <b>ADT-D02M-2026-000465</b>, so paying it here may duplicate the payment.</div>
+
+          <div class="issue-callout" style="background:var(--red-bg);border-color:#fecaca;color:#991b1b">
+            <span class="ico" style="background:#fee2e2;border-color:#fecaca;color:#dc2626">!</span>
+            <div><b>Must be resolved before approval.</b> Remove the invoice from this document, or open the other document and release the claim if it is no longer needed.</div>
+          </div>
+
+          <div class="diff-table">
+            <div class="dh"><span>Check</span><span>This document</span><span>Other document</span><span></span></div>
+            <div class="dr bad"><span class="k">Claim status</span><span class="v">Claimed here</span><span class="v">Claimed by ADT-…465</span><span class="act"><button class="fix-btn" data-toast="Opening ADT-D02M-2026-000465">Open</button></span></div>
+            <div class="dr"><span class="k">Net amount</span><span class="v">150,000.00</span><span class="v">150,000.00</span><span></span></div>
+            <div class="dr"><span class="k">VAT</span><span class="v">21,000.00</span><span class="v">21,000.00</span><span></span></div>
+            <div class="dr"><span class="k">Invoice date</span><span class="v">2026-09-13</span><span class="v">2026-09-13</span><span></span></div>
+          </div>
+
+          <div class="issue-actions">
+            <button class="rfbtn danger" data-toast="INV-2024-000130 removed from this document">Remove from this document</button>
+            <button class="rfbtn" data-toast="Opening ADT-D02M-2026-000465">Open other document</button>
+            <button class="rfbtn" data-close-review>Back to document</button>
+          </div>
+        </div>
+
+        <!-- settlement deductions -->
+        <div id="stepDeductions" hidden>
+          <div class="issue-eyebrow"><span class="status-chip amber">⚠ Warning</span> Settlement deductions · 6 items</div>
+          <div class="issue-title">Four deductions reconcile; two need a reason</div>
+          <div class="issue-sub">Advance, retention, temp labour and social insurance match the settlement base and carry forward correctly. Other deductions and WHT contain manual values without a supporting note.</div>
+
+          <div class="issue-callout">
+            <span class="ico">!</span>
+            <div><b>These are not expected on invoice lines.</b> They are checked against the settlement base (1B), the contract rate and the previous document’s ending balance.</div>
+          </div>
+
+          <div class="diff-table">
+            <div class="dh"><span>Deduction</span><span>Current</span><span>Expected / check</span><span>Status</span></div>
+            <div class="dr"><span class="k">Advance payment</span><span class="v">0.00</span><span class="v">Opening 300,000.00 · balance 300,000.00</span><span><span class="status-chip green">✓</span></span></div>
+            <div class="dr"><span class="k">Retention · 5%</span><span class="v">64,206.80</span><span class="v">1,284,136.00 × 5%</span><span><span class="status-chip green">✓</span></span></div>
+            <div class="dr"><span class="k">Temp. labour · 0.45%</span><span class="v">5,778.61</span><span class="v">1,284,136.00 × 0.45%</span><span><span class="status-chip green">✓</span></span></div>
+            <div class="dr"><span class="k">Social insurance · 3.3%</span><span class="v">42,376.49</span><span class="v">1,284,136.00 × 3.3%</span><span><span class="status-chip green">✓</span></span></div>
+            <div class="dr bad"><span class="k">Other deductions · 0.30%</span><span class="v">3,852.41</span><span class="v">Rate is valid · description missing</span><span><span class="status-chip amber">⚠</span></span></div>
+            <div class="dr bad"><span class="k">WHT · manual</span><span class="v">25,682.72</span><span class="v">2.0% effective · outside 1/3/5%</span><span><span class="status-chip amber">⚠</span></span></div>
+          </div>
+
+          <div class="issue-actions">
+            <button class="rfbtn" data-toast="Other-deduction reason required">Add other-deduction reason</button>
+            <button class="rfbtn" data-toast="Opening WHT basis review">Review WHT basis</button>
+            <button class="rfbtn" data-toast="Settlement warning accepted with a note">Accept with note</button>
+          </div>
+        </div>
+
+        <!-- WHT basis -->
+        <div id="stepWhtBasis" hidden>
+          <div class="issue-eyebrow"><span class="status-chip amber">⚠ Warning</span> WHT basis · settlement item</div>
+          <div class="issue-title">Manual WHT amount is outside the standard rate set</div>
+          <div class="issue-sub">Current WHT is <b>25,682.72</b>, an effective <b>2.0%</b> of the 1,284,136.00 settlement base. The invoice WHT total is the same, but the document uses a manual amount instead of 1%, 3% or 5%.</div>
+
+          <div class="issue-callout">
+            <span class="ico">!</span>
+            <div><b>Why this is separate:</b> some invoices carry no WHT line at all. In that case the audit checks the contract rate, manual amount, supplier certificate and prior-document balance instead of invoice values.</div>
+          </div>
+
+          <div class="diff-table">
+            <div class="dh"><span>Field</span><span>Document</span><span>Check</span><span>Status</span></div>
+            <div class="dr bad"><span class="k">WHT rate</span><span class="v">Manual 2.0% eff.</span><span class="v">Standard 1% / 3% / 5%</span><span><span class="status-chip amber">⚠</span></span></div>
+            <div class="dr"><span class="k">WHT amount</span><span class="v">25,682.72</span><span class="v">Invoice total 25,682.72</span><span><span class="status-chip green">✓</span></span></div>
+            <div class="dr"><span class="k">Settlement base 1B</span><span class="v">1,284,136.00</span><span class="v">Current settlement</span><span><span class="status-chip green">✓</span></span></div>
+            <div class="dr"><span class="k">Prior WHT balance</span><span class="v">0.00</span><span class="v">Previous document 0.00</span><span><span class="status-chip green">✓</span></span></div>
+            <div class="dr"><span class="k">WHT-free certificate</span><span class="v">Valid to 26 Nov 2026</span><span class="v">Delta Construction Materials</span><span><span class="status-chip green">✓</span></span></div>
+          </div>
+
+          <div class="issue-actions">
+            <button class="rfbtn" data-toast="Contract 3% rate selected">Use 3% contract rate</button>
+            <button class="rfbtn" data-toast="Manual WHT kept with an audit note">Keep manual + note</button>
+            <button class="rfbtn" data-toast="Opening supplier WHT certificate">Open certificate</button>
+          </div>
+        </div>
+
+        <!-- passed / other steps -->
+        <div id="stepPassed" hidden>
+          <div class="issue-eyebrow"><span class="status-chip green">✓ Passed</span> Automatic check</div>
+          <div class="issue-title" id="passedTitle">Document header is valid</div>
+          <div class="issue-sub" id="passedSub">No action needed. This check is recorded automatically when you save the document.</div>
+          <div class="issue-callout" style="background:var(--green-bg);border-color:#bbf7d0;color:#166534">
+            <span class="ico" style="background:#dcfce7;border-color:#bbf7d0;color:#16a34a">✓</span>
+            <div><b>Passed.</b> You can continue to the next issue or close the review.</div>
+          </div>
+          <div class="issue-actions">
+            <button class="rfbtn primary" data-next-step>Next check →</button>
+            <button class="rfbtn" data-close-review>Close review</button>
+          </div>
+        </div>
+      </main>
+
+      <aside class="review-side">
+        <div class="side-card">
+          <h4>Invoice being reviewed</h4>
+          <div class="side-inv">
+            <div class="si-ico">2</div>
+            <div><b>INV-2024-000129</b><span>Nile Logistics · 14 Sep 2026</span></div>
+          </div>
+          <div style="margin-top:8px">
+            <div class="kv"><span>Net</span><b>350,000.00</b></div>
+            <div class="kv"><span>VAT</span><b>49,000.00</b></div>
+            <div class="kv"><span>WHT</span><b>7,000.00</b></div>
+            <div class="kv"><span>Total incl. VAT</span><b>399,000.00</b></div>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <h4>Why it matters</h4>
+          <div class="impact">The supplier name on the settlement should match the ETA invoice. A mismatch can delay approval or make the printed voucher inconsistent with the tax record.</div>
+        </div>
+
+        <div class="side-card">
+          <h4>Document impact</h4>
+          <div class="kv"><span>Blockers</span><b style="color:var(--red)">1</b></div>
+          <div class="kv"><span>Warnings</span><b style="color:var(--orange)">4</b></div>
+          <div class="kv"><span>Checklist</span><b>5 / 7</b></div>
+          <div class="kv"><span>Settlement checks</span><b style="color:var(--orange)">4 / 6</b></div>
+          <div class="kv"><span>Decision</span><b style="color:var(--orange)">Pending</b></div>
+        </div>
+
+        <div class="side-card">
+          <h4>Notes</h4>
+          <textarea class="textarea" placeholder="Add an audit note…" style="min-height:58px"></textarea>
+        </div>
+      </aside>
+    </div>
+
+    <div class="review-foot">
+      <div class="rf-note"><b>Review mode</b> keeps every result attached to the invoice, so closing the modal does not lose the audit.</div>
+      <div class="rf-actions">
+        <button class="rfbtn" data-prev-step>← Previous</button>
+        <button class="rfbtn" data-toast="Marked as reviewed · moving to next issue">Mark reviewed</button>
+        <button class="rfbtn green" data-next-step>Next issue →</button>
+        <button class="rfbtn primary" data-close-review>Save &amp; close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const views = {
+    a: document.getElementById('viewA'),
+    b: document.getElementById('viewB'),
+    c: document.getElementById('viewC')
+  };
+  const overlay = document.getElementById('reviewOverlay');
+
+  function selectView(key) {
+    document.querySelectorAll('.concept-switch button').forEach(b => {
+      const on = b.dataset.view === key;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    Object.entries(views).forEach(([k, el]) => { if (el) el.hidden = k !== key; });
+    if (key === 'c') {
+      openReview();
+    } else {
+      closeReview();
+    }
+  }
+
+  document.querySelectorAll('.concept-switch button').forEach(btn => {
+    btn.addEventListener('click', () => selectView(btn.dataset.view));
+  });
+
+  /* toast */
+  const toast = document.getElementById('toast');
+  let toastTimer = null;
+  function showToast(message) {
+    if (!message) return;
+    toast.textContent = message;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+  }
+  document.querySelectorAll('[data-toast]').forEach(el => {
+    el.addEventListener('click', e => { e.stopPropagation(); showToast(el.dataset.toast); });
+  });
+
+  /* invoice expansion in queue */
+  document.querySelectorAll('#viewB .q-row').forEach(row => {
+    row.addEventListener('click', e => {
+      if (e.target.closest('input') || e.target.closest('button')) return;
+      row.classList.toggle('expanded');
+    });
+    const chev = row.querySelector('.q-chev');
+    if (chev) chev.addEventListener('click', e => { e.stopPropagation(); row.classList.toggle('expanded'); });
+  });
+
+  /* checklist toggles */
+  document.querySelectorAll('.ci-btns').forEach(group => {
+    group.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        group.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+        btn.classList.add('on');
+      });
+    });
+  });
+
+  /* guided review */
+  const stepName = document.getElementById('stepName');
+  const stepDuplicate = document.getElementById('stepDuplicate');
+  const stepDeductions = document.getElementById('stepDeductions');
+  const stepWhtBasis = document.getElementById('stepWhtBasis');
+  const stepPassed = document.getElementById('stepPassed');
+  const passedTitle = document.getElementById('passedTitle');
+  const passedSub = document.getElementById('passedSub');
+  const reviewBar = document.getElementById('reviewBar');
+  const reviewCount = document.getElementById('reviewCount');
+  let currentStep = 'name';
+
+  const stepInfo = {
+    header: { title: 'Document header is valid', sub: 'Serial, buyer TAX ID and currency all pass their automatic checks.' },
+    totals: { title: 'Invoice totals match the settlement', sub: 'Net, VAT and WHT totals line up with the settlement fields.' },
+    wht: { title: 'WHT-free certificate is valid', sub: 'Delta Construction Materials has a certificate valid until 26 Nov 2026.' },
+    decision: { title: 'Final decision is locked', sub: 'Resolve the duplicate-payment blocker and the 2 settlement reviews to unlock Approve.' }
+  };
+  const stepProgress = {
+    header: ['1 of 8 checks', '13%'],
+    totals: ['2 of 8 checks', '25%'],
+    deductions: ['3 of 8 checks', '38%'],
+    name: ['4 of 8 checks', '50%'],
+    duplicate: ['4 of 8 checks', '50%'],
+    wht: ['5 of 8 checks', '63%'],
+    'wht-basis': ['6 of 8 checks', '75%'],
+    decision: ['7 of 8 checks', '88%']
+  };
+
+  function setStep(step) {
+    currentStep = step;
+    document.querySelectorAll('.rail-step').forEach(el => el.classList.toggle('on', el.dataset.step === step));
+    [stepName, stepDuplicate, stepDeductions, stepWhtBasis, stepPassed].forEach(el => { if (el) el.hidden = true; });
+    if (step === 'name') {
+      stepName.hidden = false;
+    } else if (step === 'duplicate') {
+      stepDuplicate.hidden = false;
+    } else if (step === 'deductions') {
+      stepDeductions.hidden = false;
+    } else if (step === 'wht-basis') {
+      stepWhtBasis.hidden = false;
+    } else {
+      stepPassed.hidden = false;
+      const info = stepInfo[step] || stepInfo.header;
+      passedTitle.textContent = info.title;
+      passedSub.textContent = info.sub;
+    }
+    const p = stepProgress[step] || stepProgress.name;
+    reviewCount.textContent = p[0];
+    reviewBar.style.width = p[1];
+  }
+
+  document.querySelectorAll('.rail-step').forEach(el => {
+    el.addEventListener('click', () => setStep(el.dataset.step));
+  });
+
+  function openReview() {
+    overlay.classList.add('show');
+    setStep(currentStep || 'name');
+  }
+  function closeReview() {
+    overlay.classList.remove('show');
+    if (document.querySelector('.concept-switch button.on')?.dataset.view === 'c') {
+      selectView('a');
+    }
+  }
+
+  document.querySelectorAll('[data-open-review]').forEach(el => el.addEventListener('click', openReview));
+  document.querySelectorAll('[data-close-review]').forEach(el => el.addEventListener('click', closeReview));
+  document.querySelectorAll('[data-next-step]').forEach(el => {
+    el.addEventListener('click', () => {
+      const order = ['header', 'totals', 'deductions', 'name', 'duplicate', 'wht', 'wht-basis', 'decision'];
+      const i = order.indexOf(currentStep);
+      setStep(order[Math.min(i + 1, order.length - 1)]);
+      showToast('Moved to the next check');
+    });
+  });
+  document.querySelectorAll('[data-prev-step]').forEach(el => {
+    el.addEventListener('click', () => {
+      const order = ['header', 'totals', 'deductions', 'name', 'duplicate', 'wht', 'wht-basis', 'decision'];
+      const i = order.indexOf(currentStep);
+      setStep(order[Math.max(i - 1, 0)]);
+    });
+  });
+
+  /* fake one-click fixes */
+  document.querySelectorAll('[data-fix]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const row = btn.closest('.diff-row, .dr');
+      if (row) {
+        row.classList.remove('mismatch', 'bad');
+        row.style.opacity = '.65';
+        btn.textContent = '✓ Used';
+        btn.disabled = true;
+      }
+      showToast(btn.dataset.fix);
+    });
+  });
+
+  /* invoice links from concept A */
+  document.querySelectorAll('[data-open-invoice]').forEach(el => {
+    el.addEventListener('click', () => {
+      selectView('b');
+      showToast('Opened invoice audit queue');
+    });
+  });
+
+  /* keyboard: escape closes review */
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeReview();
+  });
+
+  /* Open a concept directly with #a, #b or #c. A is the landing state. */
+  const initialView = location.hash.replace('#', '').toLowerCase();
+  selectView(['a', 'b', 'c'].includes(initialView) ? initialView : 'a');
+</script>
+</body>
+</html>

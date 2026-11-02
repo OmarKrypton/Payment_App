@@ -57,6 +57,8 @@ interface ImportCostRow {
 
 interface FormData {
   val_1A: string; val_1B: string; val_1C: string; val_1D: string;
+  /** True when 1D is a discount/credit note that reduces the VAT base. */
+  val_1D_reduces_vat: boolean;
   vat_rate: string; val_2A: string; val_2B: string; val_2C: string;
   ret_rate: string; val_4A: string; val_4B: string; val_4C: string;
   temp_rate: string; val_5A: string; val_5B: string; val_5C: string;
@@ -106,7 +108,7 @@ interface CalcResult {
 }
 
 const EMPTY_FORM: FormData = {
-  val_1A: "0.00", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00",
+  val_1A: "0.00", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00", val_1D_reduces_vat: true,
   vat_rate: "14%", val_2A: "0.00", val_2B: "0.00", val_2C: "0.00",
   ret_rate: "0%", val_4A: "0.00", val_4B: "0.00", val_4C: "0.00",
   temp_rate: "0%", val_5A: "0.00", val_5B: "0.00", val_5C: "0.00",
@@ -136,7 +138,7 @@ const EMPTY_FORM: FormData = {
 };
 
 const DEFAULT_FORM: FormData = {
-  val_1A: "0.00", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00",
+  val_1A: "0.00", val_1B: "0.00", val_1C: "0.00", val_1D: "0.00", val_1D_reduces_vat: true,
   vat_rate: "14%", val_2A: "0.00", val_2B: "0.00", val_2C: "0.00",
   ret_rate: "0%", val_4A: "0.00", val_4B: "0.00", val_4C: "0.00",
   temp_rate: "0%", val_5A: "0.00", val_5B: "0.00", val_5C: "0.00",
@@ -1582,6 +1584,10 @@ function App() {
           <Input label={t("本期结算金额", "Current settlement")} value={data.val_1B} onChange={v => { updateField("val_1B", v); }} confidence={ocrConf("val_1B")} numeric />
           <Input label={t("本期其他增项", "Other additions")} value={data.val_1C} onChange={v => updateField("val_1C", v)} confidence={ocrConf("val_1C")} numeric />
           <Input label={t("本期扣除额", "Current deductions")} value={data.val_1D} onChange={v => updateField("val_1D", v)} confidence={ocrConf("val_1D")} numeric />
+          <label className="toggle deduction-toggle">
+            <input type="checkbox" checked={data.val_1D_reduces_vat !== false} onChange={() => updateField("val_1D_reduces_vat", data.val_1D_reduces_vat === false)} />
+            {t("该扣除减少增值税", "This deduction reduces VAT")}
+          </label>
           <Computed label={t("本期供应商结算 (含税)", "Settlement incl. VAT")} value={computed.c_1G} />
           <Computed label={t("期末累计供应商结算", "Ending accumulative")} value={computed.c_1F} highlight />
         </div>
@@ -1774,11 +1780,13 @@ function App() {
     const invWhtRate = totals.net > 0 ? (totals.wht / totals.net) * 100 : 0;
     const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
     const docWhtRate = parseFloat((data.wht_rate || "0").replace('%', '')) || 0;
+    const dedReducesVat = data.val_1D_reduces_vat !== false;
+    const invoiceNetTarget = computed.c_1B - (dedReducesVat ? computed.c_1D : 0);
     const matcher = (label: string, inv: number, doc: number, fmtV: (n: number) => string, active = true, warn = false) => ({
       label, active, inv, doc, ok: Math.abs(inv - doc) <= 0.5, warn, fmtV,
     });
     const comparisons = [
-      matcher(t("净额 vs 结算−扣除(折扣)", "Net vs Settlement−Deductions"), totals.net, computed.c_1B - computed.c_1D, fmtShort),
+      matcher(dedReducesVat ? t("净额 vs 结算−折扣", "Net vs Settlement−Discount") : t("净额 vs 结算", "Net vs Settlement"), totals.net, invoiceNetTarget, fmtShort),
       matcher(t("VAT vs 本期VAT", "VAT vs Current VAT Amount"), totals.vat, computed.c_1E, fmtShort),
       matcher(t("VAT率 vs 设定税率", "VAT Rate vs Set VAT Rate"), invVatRate, docVatRate, n => `${n.toFixed(1)}%`, docVatRate > 0),
       // A supplier may invoice without WHT while we still withhold on the
@@ -2047,7 +2055,7 @@ function App() {
 
     // "Invoices Match Amount" (auto): the invoice totals must line up with the
     // values entered on the settlement document:
-    //   net          vs Current settlement (1B)
+    //   net          vs Current settlement less 1D when 1D reduces VAT
     //   VAT          vs Current VAT amount (1E)
     //   net + VAT    vs Settlement incl. VAT (1G)
     //   invoice VAT% vs the selected VAT rate (single-rate mode only)
@@ -2060,7 +2068,8 @@ function App() {
       const invVatRate = invNet > 0 ? (invVat / invNet) * 100 : 0;
       const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
       const tol = 0.5;
-      const okNet = Math.abs(invNet - computed.c_1B) <= tol;
+      const invoiceNetTarget = computed.c_1B - (data.val_1D_reduces_vat !== false ? computed.c_1D : 0);
+      const okNet = Math.abs(invNet - invoiceNetTarget) <= tol;
       // A remainder document carries no VAT of its own (it lives on the parent).
       const okVat = isRemainder || Math.abs(invVat - computed.c_1E) <= tol;
       const okTotal = isRemainder || Math.abs(invTotal - computed.c_1G) <= tol;
@@ -3571,6 +3580,7 @@ function App() {
       if (!parsed.import_costs) parsed.import_costs = [...DEFAULT_FORM.import_costs];
       if (!parsed.check_form_4_6) parsed.check_form_4_6 = false;
       if (!parsed.seller_tax_ids) parsed.seller_tax_ids = [];
+      if (parsed.val_1D_reduces_vat === undefined) parsed.val_1D_reduces_vat = true;
       if (!parsed.final_decision) parsed.final_decision = "";
       if (!parsed.conditional_reason) parsed.conditional_reason = "";
       if (!parsed.reject_reason) parsed.reject_reason = "";

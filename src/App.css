@@ -1023,6 +1023,10 @@ body {
   font-weight: 500;
 }
 
+.deduction-toggle {
+  margin: -2px 0 8px;
+}
+
 .toggle input[type="checkbox"] {
   width: 32px;
   height: 18px;
