@@ -173,11 +173,14 @@ pub fn update_snapshot(conn: &Connection, id: i64, label: &str, notes: &str, dat
     // the payload and label only, matching the cloud update path; otherwise a
     // local edit jumps to the top of History while the same edit on another
     // device keeps its original date.
-    conn.execute(
+    let n = conn.execute(
         "UPDATE snapshots SET label = ?1, notes = ?2, data = ?3 WHERE id = ?4",
         params![label, notes, data_json, id],
     )
     .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err(format!("Snapshot {} not found", id));
+    }
     Ok(())
 }
 
@@ -185,11 +188,14 @@ pub fn update_snapshot(conn: &Connection, id: i64, label: &str, notes: &str, dat
 /// Paid/Unpaid toggle: the document keeps its original position and date in the
 /// History Browser instead of jumping to the top as a full edit would.
 pub fn update_snapshot_data(conn: &Connection, id: i64, data_json: &str) -> Result<(), String> {
-    conn.execute(
+    let n = conn.execute(
         "UPDATE snapshots SET data = ?1 WHERE id = ?2",
         params![data_json, id],
     )
     .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err(format!("Snapshot {} not found", id));
+    }
     Ok(())
 }
 
@@ -248,8 +254,11 @@ pub fn load_snapshot(conn: &Connection, id: i64) -> Result<String, String> {
 }
 
 pub fn delete_snapshot(conn: &Connection, id: i64) -> Result<(), String> {
-    conn.execute("DELETE FROM snapshots WHERE id = ?1", params![id])
+    let n = conn.execute("DELETE FROM snapshots WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err(format!("Snapshot {} not found", id));
+    }
     Ok(())
 }
 

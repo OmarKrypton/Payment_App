@@ -683,28 +683,16 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
     let mut matched_entry_indices: Vec<usize> = Vec::new();
 
     // ── Currency alignment ──
-    // The invoice is stored in its sold currency (e.g. USD), and the Import tab
-    // keeps that invoice's EGP figures converted with the exchange rate typed in
-    // the document. Only the Import tab has such a rate, so only convert there.
-    // The Bank tab stores each invoice in its own currency (the pool's amount is
-    // the sold-currency figure), so compare the invoice's sold-currency amounts
-    // directly — converting with a document rate would use a different rate and
-    // report false mismatches for USD invoices.
-    let imported_rate = get_str("import_commercial_rate")
-        .chars().filter(|c| !c.is_whitespace()).collect::<String>()
-        .replace(',', "")
-        .parse::<f64>()
-        .unwrap_or(0.0);
-    let fx_factor = if doc_type == "import" && invoice.currency != "EGP" && imported_rate > 0.0 {
-        imported_rate
-    } else {
-        1.0
-    };
-    let to_egp = |v: f64| (v * fx_factor * 100.0).round() / 100.0;
-    let it_net = to_egp(invoice.net_amount);
-    let it_vat = to_egp(invoice.total_vat);
-    let it_wht = to_egp(invoice.total_wht);
-    let it_grand = to_egp(invoice.grand_total);
+    // ETA invoices are normalized to their sold currency above. The Bank tab
+    // stores invoice rows in that same currency, and the Import tab stores the
+    // raw invoice-currency amount plus the per-line rate used for EGP totals.
+    // Compare amounts in the invoice currency here; applying a document-level
+    // rate would create false mismatches when that rate is blank or differs
+    // from the rate on an individual line.
+    let it_net = (invoice.net_amount * 100.0).round() / 100.0;
+    let it_vat = (invoice.total_vat * 100.0).round() / 100.0;
+    let it_wht = (invoice.total_wht * 100.0).round() / 100.0;
+    let it_grand = (invoice.grand_total * 100.0).round() / 100.0;
 
     // ── Common checks ──
 
@@ -807,11 +795,15 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                     }
                 }
 
-                // Check VAT amount
-                if it_vat > 0.0 {
-                    let form_vat_total = form.get("import_total_vat").and_then(|v| v.as_str())
+                // Check VAT amount against this invoice row's own VAT.
+                let inv_num = |key: &str| -> f64 {
+                    inv.get(key)
+                        .and_then(|v| v.as_str())
                         .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                        .unwrap_or(0.0);
+                        .unwrap_or(0.0)
+                };
+                if it_vat > 0.0 {
+                    let form_vat_total = inv_num("vat");
                     if form_vat_total > 0.0 {
                         let diff = (it_vat - form_vat_total).abs();
                         if diff > 0.5 {
@@ -826,11 +818,9 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                     }
                 }
 
-                // Check WHT amount
+                // Check WHT amount against this invoice row's own WHT.
                 if it_wht > 0.0 {
-                    let form_wht_total = form.get("import_total_wht").and_then(|v| v.as_str())
-                        .and_then(|s| s.replace(',', "").parse::<f64>().ok())
-                        .unwrap_or(0.0);
+                    let form_wht_total = inv_num("wht");
                     if form_wht_total > 0.0 {
                         let diff = (it_wht - form_wht_total).abs();
                         if diff > 0.5 {
@@ -845,23 +835,27 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                     }
                 }
 
-                // Check per-line VAT rates
+                // Check per-line VAT rates. Egyptian VAT includes 5% and 9%
+                // rates in addition to the standard 14% and 10% service rates,
+                // so only flag rates outside the known set.
                 for (i, xml_line) in invoice.lines.iter().enumerate() {
                     if xml_line.vat_rate > 0.0 {
-                        // Check if 14% is expected for general services, 10% for inspection/clearance/testing
-                        let desc = xml_line.description.to_lowercase();
-                        let expected_rate = if desc.contains("inspection") || desc.contains("clearance") || desc.contains("testing") || desc.contains("custom") {
-                            10.0
-                        } else {
-                            14.0
-                        };
-                        if (xml_line.vat_rate - expected_rate).abs() > 0.5 {
+                        let known_rate = [5.0, 9.0, 10.0, 14.0]
+                            .iter()
+                            .any(|r| (xml_line.vat_rate - r).abs() <= 0.5);
+                        if !known_rate {
+                            let desc = xml_line.description.to_lowercase();
+                            let expected_rate = if desc.contains("inspection") || desc.contains("clearance") || desc.contains("testing") || desc.contains("custom") {
+                                10.0
+                            } else {
+                                14.0
+                            };
                             issues.push(ValidationIssue {
                                 field: format!("Line {} VAT Rate", i + 1),
                                 xml_value: format!("{:.0}%", xml_line.vat_rate),
                                 form_value: format!("{:.0}%", expected_rate),
                                 severity: "warning".into(),
-                                message: format!("Line '{}' has VAT {:.0}% — expected {:.0}% based on service type", xml_line.description, xml_line.vat_rate, expected_rate),
+                                message: format!("Line '{}' has VAT {:.0}% — expected one of 5%, 9%, 10%, or 14%", xml_line.description, xml_line.vat_rate),
                             });
                         }
                     }
@@ -928,11 +922,11 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 let mut form_vat_total = 0.0;
                 let mut form_wht_total = 0.0;
                 for e in &matched {
-                    let (egp, _amt, _rate, vat_rate, wht_rate, free_wht) = entry_numbers(e);
-                    form_total += egp;
-                    form_vat_total += egp * vat_rate / 100.0;
+                    let (_egp, amt, _rate, vat_rate, wht_rate, free_wht) = entry_numbers(e);
+                    form_total += amt;
+                    form_vat_total += amt * vat_rate / 100.0;
                     if !free_wht {
-                        form_wht_total += egp * wht_rate / 100.0;
+                        form_wht_total += amt * wht_rate / 100.0;
                     }
                 }
 
@@ -1004,15 +998,15 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
                 if invoice.lines.len() == matched.len() {
                     for (i, xml_line) in invoice.lines.iter().enumerate() {
                         let entry = matched[i];
-                        let (egp, _amt, _rate, vat_rate, _wht_rate, _free_wht) = entry_numbers(entry);
-                        let line_ttl = to_egp(xml_line.line_total);
-                        if line_ttl > 0.0 && egp > 0.0 && (line_ttl - egp).abs() > 0.5 {
+                        let (_egp, amt, _rate, vat_rate, _wht_rate, _free_wht) = entry_numbers(entry);
+                        let line_ttl = xml_line.line_total;
+                        if line_ttl > 0.0 && amt > 0.0 && (line_ttl - amt).abs() > 0.5 {
                             issues.push(ValidationIssue {
                                 field: format!("Line {} Amount", i + 1),
                                 xml_value: format!("{:.2}", line_ttl),
-                                form_value: format!("{:.2}", egp),
+                                form_value: format!("{:.2}", amt),
                                 severity: "error".into(),
-                                message: format!("Line amount differs by {:.2} (form amount × rate)", (line_ttl - egp).abs()),
+                                message: format!("Line amount differs by {:.2} (form amount)", (line_ttl - amt).abs()),
                             });
                         }
                         if xml_line.vat_rate > 0.0 && vat_rate > 0.0 && (xml_line.vat_rate - vat_rate).abs() > 0.5 {
@@ -1270,6 +1264,49 @@ mod tests {
     }
 
     #[test]
+    fn bank_accepts_five_and_nine_percent_vat() {
+        let xml = r#"<document>
+  <internalId>T-VAT-59</internalId>
+  <issuerId>111111111</issuerId><receiverId>222222222</receiverId>
+  <netAmount>100</netAmount><total>107.4</total>
+  <document>
+    {"invoiceLines":[
+      {"description":"Inspection service","quantity":1,
+       "unitValue":{"currencySold":"EGP","amountEGP":40,"amountSold":40},
+       "netTotal":40,"taxableItems":[{"taxType":"T1","amount":2,"subType":"V009","rate":5}]},
+      {"description":"Other service","quantity":1,
+       "unitValue":{"currencySold":"EGP","amountEGP":60,"amountSold":60},
+       "netTotal":60,"taxableItems":[{"taxType":"T1","amount":5.4,"subType":"V009","rate":9}]}
+    ],
+    "taxTotals":[{"taxType":"T1","amount":7.4}],
+    "netAmount":100,"totalAmount":107.4}
+  </document>
+</document>"#;
+        let inv = parse_eta_xml(xml).unwrap();
+        let form = r#"{
+            "doc_type": "bank",
+            "invoices": [{"invoice_no": "T-VAT-59", "seller_tax_id": "111111111", "amount": "100", "vat": "7.4", "wht": "0"}]
+        }"#;
+        let res = validate_eta_against_form(&inv, form).unwrap();
+        assert!(
+            !res.issues.iter().any(|i| i.field.contains("VAT Rate")),
+            "5% and 9% must not trigger VAT-rate warnings: {:#?}",
+            res.issues
+        );
+
+        let bad_form = r#"{
+            "doc_type": "bank",
+            "invoices": [{"invoice_no": "T-VAT-59", "seller_tax_id": "111111111", "amount": "100", "vat": "1.0", "wht": "0"}]
+        }"#;
+        let bad = validate_eta_against_form(&inv, bad_form).unwrap();
+        assert!(
+            bad.issues.iter().any(|i| i.field == "Total VAT"),
+            "Bank VAT must be checked against the invoice row: {:#?}",
+            bad.issues
+        );
+    }
+
+    #[test]
     fn matches_line_split_across_services() {
         // One XML line of 2600 is split into two services (1000 + 1600).
         // Positional line checks must not fire; the aggregate must pass.
@@ -1455,10 +1492,10 @@ mod tests {
     }
 
     #[test]
-    fn validates_usd_invoice_in_egp_against_form_rate() {
-        // USD invoice (341 net, 47.74 VAT). The import doc is filled in EGP using
-        // import_commercial_rate. Validation must convert the invoice back to EGP
-        // at that rate before comparing.
+    fn validates_usd_invoice_in_sold_currency_for_import() {
+        // USD invoice (341 net, 47.74 VAT). Import entries keep the raw USD
+        // amount, so validation must compare in USD instead of depending on the
+        // document commercial rate (which may be blank).
         let xml = r#"<document>
   <internalId>EGSOKAM260000812</internalId>
   <issuerId>202487288</issuerId>
@@ -1476,21 +1513,22 @@ mod tests {
         let inv = parse_eta_xml(xml).unwrap();
         assert_eq!(inv.currency, "USD");
 
-        // Form is in EGP. Rate 54.66 typed on the import doc. 341 * 54.66 = 18639.06.
+        // The entry stores the raw USD amount and its own rate for EGP totals.
+        // The document commercial rate is deliberately blank.
         let form = r#"{
             "doc_type": "import",
             "buyer_tax_id": "100489095",
             "seller_tax_ids": ["202487288"],
-            "import_commercial_rate": "54.66",
+            "import_commercial_rate": "",
             "import_total_vat": "2609.47",
             "import_total_wht": "0",
-            "invoices": [{"invoice_no": "EGSOKAM260000812", "amount": "18639.06"}],
+            "invoices": [],
             "import_entries": [
                 {"service_name": "MSC Import Inv: EGSOKAM260000812", "amount": "341", "rate": "54.66", "vat_rate": "14%", "wht_rate": "0%", "free_wht": false}
             ]
         }"#;
         let res = validate_eta_against_form(&inv, form).unwrap();
-        assert!(res.is_valid, "should pass after EGP conversion: {:#?}", res.issues);
+        assert!(res.is_valid, "should pass in sold currency: {:#?}", res.issues);
     }
 
     #[test]

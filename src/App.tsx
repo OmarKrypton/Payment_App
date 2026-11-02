@@ -6297,6 +6297,10 @@ function App() {
         label = String(doc.doc_serial || target.entry.label || "").trim();
       }
     } catch {}
+    if (doc.doc_type === "import") {
+      showAlert(t("进口文件没有付款状态。", "Import documents do not have a paid status."));
+      return;
+    }
     // Count the invoices that are actually claimed to this document right now,
     // not just every attached row (a row may already have been released).
     let count = paidClaimCount(doc);
@@ -6308,6 +6312,13 @@ function App() {
   // snapshot instead of saving the whole form, so unrelated unsaved edits are
   // never written by a simple status toggle.
   const applyPaidStatus = async (next: boolean, target: { kind: "current" } | { kind: "history"; entry: HistoryEntry }, release: boolean) => {
+    const targetIsImport = target.kind === "current"
+      ? formRef.current.doc_type === "import"
+      : (() => {
+          try { return JSON.parse(target.entry.data_json || "{}").doc_type === "import"; }
+          catch { return false; }
+        })();
+    if (targetIsImport) return;
     const at = next ? new Date().toISOString() : "";
     const by = next ? (authUser || "local") : "";
     setPaidBusy(true);
@@ -6842,7 +6853,7 @@ function App() {
             <span className={`doc-pill ${docPill.cls}`}>
               {docPill.label}
             </span>
-            {data.paid && <span className="doc-pill paid">✓ {t("已付款", "Paid")}</span>}
+            {!isImport && data.paid && <span className="doc-pill paid">✓ {t("已付款", "Paid")}</span>}
           </div>
           <div className="doc-context">
             {`${(isImport ? (data.import_entries ?? []).filter((e: any) => e.attached_invoice) : (data.invoices ?? [])).length} ${t("发票", "invoices")}`}
@@ -6855,20 +6866,22 @@ function App() {
               {synced ? t("已同步", "Synced") : t("未同步", "Not synced")}
             </span>
           </div>
-          <div className={`doc-pay-row${data.paid ? " is-paid" : ""}`}>
-            <span className="doc-pay-state">
-              {data.paid
-                ? `✓ ${t("已付款", "Paid")}${data.paid_at ? ` · ${paidDateLabel(data.paid_at)}` : ""}`
-                : `○ ${t("未付款", "Unpaid")}`}
-            </span>
-            <button
-              className={`doc-pay-btn${data.paid ? " unpay" : ""}`}
-              onClick={() => requestPaidChange(!data.paid, { kind: "current" })}
-              title={overwriteTarget ? t("立即更新保存的文档", "Updates the saved document immediately") : t("保存文档时一并保存", "Saved with the document")}
-            >
-              {data.paid ? `↺ ${t("标记未付款", "Mark unpaid")}` : `✓ ${t("标记已付款", "Mark paid")}`}
-            </button>
-          </div>
+          {!isImport && (
+            <div className={`doc-pay-row${data.paid ? " is-paid" : ""}`}>
+              <span className="doc-pay-state">
+                {data.paid
+                  ? `✓ ${t("已付款", "Paid")}${data.paid_at ? ` · ${paidDateLabel(data.paid_at)}` : ""}`
+                  : `○ ${t("未付款", "Unpaid")}`}
+              </span>
+              <button
+                className={`doc-pay-btn${data.paid ? " unpay" : ""}`}
+                onClick={() => requestPaidChange(!data.paid, { kind: "current" })}
+                title={overwriteTarget ? t("立即更新保存的文档", "Updates the saved document immediately") : t("保存文档时一并保存", "Saved with the document")}
+              >
+                {data.paid ? `↺ ${t("标记未付款", "Mark unpaid")}` : `✓ ${t("标记已付款", "Mark paid")}`}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Live totals for the document being edited */}
@@ -7229,8 +7242,12 @@ function App() {
             <button className={`st-pending ${historyStatusFilter === "pending" ? "active" : ""}`} onClick={() => setHistoryStatusFilter("pending")}>{t("待删除", "Pending delete")}</button>
           </div>
           <div className="history-filters history-status history-pay-filters">
-            <button className={`st-paid ${historyPaidFilter === "paid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "paid" ? "all" : "paid")}>{t("已付款", "Paid")} <b>{historyList.filter(h => h.paid).length}</b></button>
-            <button className={`st-unpaid ${historyPaidFilter === "unpaid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "unpaid" ? "all" : "unpaid")}>{t("未付款", "Unpaid")} <b>{historyList.filter(h => !h.paid).length}</b></button>
+            {historyFilter !== "import" && (
+              <>
+                <button className={`st-paid ${historyPaidFilter === "paid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "paid" ? "all" : "paid")}>{t("已付款", "Paid")} <b>{historyList.filter(h => h.doc_type !== "import" && h.paid).length}</b></button>
+                <button className={`st-unpaid ${historyPaidFilter === "unpaid" ? "active" : ""}`} onClick={() => setHistoryPaidFilter(historyPaidFilter === "unpaid" ? "all" : "unpaid")}>{t("未付款", "Unpaid")} <b>{historyList.filter(h => h.doc_type !== "import" && !h.paid).length}</b></button>
+              </>
+            )}
             <GlassSelect
               className="history-sort-select"
               value={historySort}
@@ -7248,7 +7265,12 @@ function App() {
             ) : (() => {
               const typeFiltered = historyFilter === "all" ? historyList : historyList.filter(h => historyFilter === "import" ? h.doc_type === "import" : h.doc_type !== "import");
               const statusFiltered = typeFiltered.filter(h => historyStatusFilter === "all" ? true : historyStatusFilter === "pending" ? h.delete_requested_at != null : (h.final_decision || "") === historyStatusFilter);
-              const paidFiltered = statusFiltered.filter(h => historyPaidFilter === "all" ? true : historyPaidFilter === "paid" ? h.paid === true : h.paid !== true);
+              const paidFiltered = statusFiltered.filter(h => {
+                if (h.doc_type === "import") {
+                  return historyFilter === "import" || historyPaidFilter === "all";
+                }
+                return historyPaidFilter === "all" ? true : historyPaidFilter === "paid" ? h.paid === true : h.paid !== true;
+              });
               const sorted = [...paidFiltered].sort((a, b) => {
                 if (historySort === "label") return String(a.label || "").localeCompare(String(b.label || ""));
                 const at = a.ts ?? snapshotTs(a.created_at);
@@ -7293,9 +7315,11 @@ function App() {
                   } catch { return [] as { label: string; value: string }[]; }
                 })();
                 const remInfo = snapInfo.find(r => r.label === t("剩余部分", "Remainder of"));
-                const paidInfo = h.paid
-                  ? [t("已付款", "Paid"), h.paid_at ? paidDateLabel(h.paid_at) : "", h.paid_by ? h.paid_by.split("@")[0] : ""].filter(Boolean).join(" · ")
-                  : t("未付款", "Not paid");
+                const paidInfo = h.doc_type === "import"
+                  ? ""
+                  : h.paid
+                    ? [t("已付款", "Paid"), h.paid_at ? paidDateLabel(h.paid_at) : "", h.paid_by ? h.paid_by.split("@")[0] : ""].filter(Boolean).join(" · ")
+                    : t("未付款", "Not paid");
                 const snapCurrency = (() => {
                   try {
                     const p = JSON.parse(h.data_json || "{}");
@@ -7309,7 +7333,7 @@ function App() {
                   } catch { return "EGP"; }
                 })();
                 return (
-                <div key={h.id} className={`hc-item ${h.final_decision === "approve" ? "ap" : h.final_decision === "conditional" ? "co" : h.final_decision === "reject" ? "rj" : ""}${pendingDelete ? " pending" : ""}${h.paid ? " paid-doc" : " unpaid-doc"}`}>
+                <div key={h.id} className={`hc-item ${h.final_decision === "approve" ? "ap" : h.final_decision === "conditional" ? "co" : h.final_decision === "reject" ? "rj" : ""}${pendingDelete ? " pending" : ""}${h.doc_type === "import" ? "" : h.paid ? " paid-doc" : " unpaid-doc"}`}>
                   <span className="hc-bar" />
                   <div className="hc-row1">
                     <strong className="hc-serial">{h.label}</strong>
@@ -7318,22 +7342,24 @@ function App() {
                     {h.final_decision === "reject" && <span className="hc-pill hc-rj">{t("已拒绝", "Rejected")}</span>}
                     <span className={`hc-pill ${h.doc_type === "import" ? "hc-imp" : "hc-bank"}`}>{h.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
                     <span className={`hc-pill hc-cur${snapCurrency === "EGP" ? " egp" : ""}`} title={t("文档币种", "Document currency")}>{snapCurrency}</span>
-                    <button
-                      type="button"
-                      className={`hc-pill hc-pill-toggle ${h.paid ? "hc-paid" : "hc-unpaid"}`}
-                      title={h.paid ? t("点击标记未付款", "Click to mark unpaid") : t("点击标记已付款", "Click to mark paid")}
-                      aria-label={h.paid ? t("标记未付款", "Mark unpaid") : t("标记已付款", "Mark paid")}
-                      onClick={() => requestPaidChange(!h.paid, { kind: "history", entry: h })}
-                    >
-                      {h.paid ? `✓ ${t("已付款", "Paid")}` : `○ ${t("未付款", "Unpaid")}`}
-                    </button>
+                    {h.doc_type !== "import" && (
+                      <button
+                        type="button"
+                        className={`hc-pill hc-pill-toggle ${h.paid ? "hc-paid" : "hc-unpaid"}`}
+                        title={h.paid ? t("点击标记未付款", "Click to mark unpaid") : t("点击标记已付款", "Click to mark paid")}
+                        aria-label={h.paid ? t("标记未付款", "Mark unpaid") : t("标记已付款", "Mark paid")}
+                        onClick={() => requestPaidChange(!h.paid, { kind: "history", entry: h })}
+                      >
+                        {h.paid ? `✓ ${t("已付款", "Paid")}` : `○ ${t("未付款", "Unpaid")}`}
+                      </button>
+                    )}
                     {pendingDelete && <span className="hc-pill hc-del">{t("待删除", "Pending delete")}</span>}
                     <span className="hc-date">{h.created_at}</span>
                   </div>
                   <div className="hc-meta">
                     {isOwn ? t("我的", "Mine") : t("他人", "Other user")}
                     {auditorName ? ` · ${t("审核", "auditor")} ${auditorName}` : ""}
-                    <span className={h.paid ? " hc-paid-meta" : ""}> · {paidInfo}</span>
+                    <span className={h.doc_type !== "import" && h.paid ? " hc-paid-meta" : ""}>{paidInfo ? ` · ${paidInfo}` : ""}</span>
                     {remInfo ? ` · ⤷ ${t("剩余", "remainder of")} ${remInfo.value}` : ""}
                   </div>
                   {snapInfo.length > 0 && (

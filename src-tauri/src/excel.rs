@@ -252,6 +252,11 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
             tax_ids.insert(&inv.seller_tax_id);
         }
     }
+    for entry in &data.import_entries {
+        if !entry.seller_tax_id.is_empty() {
+            tax_ids.insert(&entry.seller_tax_id);
+        }
+    }
     let tax_str = tax_ids.into_iter().collect::<Vec<_>>().join(", ");
     sheet2
         .write_with_format(r, 1, &tax_str, &normal_fmt)

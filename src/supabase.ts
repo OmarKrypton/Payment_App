@@ -104,11 +104,13 @@ export async function deleteSnapshotRemote(id: number): Promise<void> {
 export async function updateSnapshotRemote(id: number, label: string, notes: string, dataJson: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("snapshots")
     .update({ label, notes, data_json: dataJson })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   if (error) throw error;
+  if (!data || data.length === 0) throw new Error("Update had no effect — row may not exist or RLS blocked it");
 }
 
 export async function changePassword(newPassword: string): Promise<void> {
@@ -126,11 +128,13 @@ export async function isAdmin(): Promise<boolean> {
 export async function requestDeleteSnapshot(id: number): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("snapshots")
     .update({ delete_requested_at: new Date().toISOString(), delete_requested_by: session.user.id })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   if (error) throw error;
+  if (!data || data.length === 0) throw new Error("Delete request had no effect — row may not exist or RLS blocked it");
 }
 
 export async function approveDeleteSnapshot(id: number): Promise<void> {
@@ -138,11 +142,13 @@ export async function approveDeleteSnapshot(id: number): Promise<void> {
 }
 
 export async function rejectDeleteSnapshot(id: number): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("snapshots")
     .update({ delete_requested_at: null, delete_requested_by: null })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
   if (error) throw error;
+  if (!data || data.length === 0) throw new Error("Reject had no effect — row may not exist or RLS blocked it");
 }
 
 export interface PoolInvoiceRow {
