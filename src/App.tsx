@@ -6146,6 +6146,78 @@ function App() {
     return { ...doc, invoices: (doc?.invoices || []).filter((i: any) => !i?.attached_invoice) };
   };
 
+  // Remove only the document rows that reference the pool rows being released
+  // or deleted. A free-text row that merely contains a matching invoice number
+  // is left alone: only actual claims (attached_invoice / attached_uuid) count.
+  const documentWithoutPoolRows = (doc: any, rows: any[]): any => {
+    if (!rows.length) return doc;
+    const matches = (row: any, poolRow: any) => {
+      if (!row?.attached_invoice && !row?.attached_uuid) return false;
+      const rowUuid = String(row.attached_uuid || "").trim().toUpperCase();
+      const poolUuid = String(poolRow?.uuid || "").trim().toUpperCase();
+      if (rowUuid && poolUuid) return rowUuid === poolUuid;
+      const rowNo = String(row.attached_invoice || row.invoice_no || "").trim();
+      const poolNo = String(poolRow?.invoice_id || "").trim();
+      if (!rowNo || !poolNo || rowNo !== poolNo) return false;
+      const rowSeller = normalizeTaxIdInput(
+        row.seller_tax_id || (isImportDocument(doc) ? entrySellerOf(row) : ""),
+      );
+      const poolSeller = normalizeTaxIdInput(poolRow?.seller_tax_id);
+      return !rowSeller || !poolSeller || rowSeller === poolSeller;
+    };
+    if (isImportDocument(doc)) {
+      const entries = doc?.import_entries || [];
+      const next = entries.filter((e: any) => !rows.some((p: any) => matches(e, p)));
+      return next.length === entries.length ? doc : { ...doc, import_entries: next };
+    }
+    const invoices = doc?.invoices || [];
+    const next = invoices.filter((i: any) => !rows.some((p: any) => matches(i, p)));
+    return next.length === invoices.length ? doc : { ...doc, invoices: next };
+  };
+
+  // Keep the open form and its saved snapshot in step when a pool invoice is
+  // unclaimed or deleted. Patching the stored snapshot is important: otherwise
+  // reopening the document would restore the old claim and bring the pill back.
+  const removePoolRowsFromOpenDocument = async (rows: any[]) => {
+    const targets = rows.filter(Boolean);
+    if (!targets.length) return;
+    const current = formRef.current;
+    const visible = documentWithoutPoolRows(current, targets);
+    if (visible !== current) {
+      formRef.current = visible;
+      await recalc(visible);
+      queueFlush();
+    }
+    if (!overwriteTarget) return;
+    if (overwriteTarget.remote && !authUser) {
+      showAlert(t(
+        "会话已失效，无法更新云端快照。请重新登录后再试。",
+        "Your session has expired, so the cloud snapshot cannot be updated. Please sign in again."
+      ));
+      return;
+    }
+    try {
+      const raw = overwriteTarget.remote
+        ? await loadSnapshotRemote(overwriteTarget.id)
+        : await invoke<string>("load_history", { id: overwriteTarget.id });
+      const base = raw ? JSON.parse(raw) : {};
+      const patched = documentWithoutPoolRows(base, targets);
+      if (patched === base) return;
+      const dataJson = JSON.stringify(patched);
+      if (overwriteTarget.remote) {
+        await updateSnapshotRemote(overwriteTarget.id, overwriteTarget.label, "", dataJson);
+      } else {
+        await invoke("update_history_data", { id: overwriteTarget.id, dataJson });
+      }
+      savedJsonRef.current = dataJson;
+      setSynced(true);
+      loadHistoryList(historySearch);
+      loadSavedDocsIndex();
+    } catch (e: any) {
+      showAlert(`${t("更新已保存文档失败", "Could not update the saved document")}: ${e.message || e}`);
+    }
+  };
+
   const paidDateLabel = (at: string): string => {
     if (!at) return "";
     const d = new Date(at);
@@ -6301,6 +6373,9 @@ function App() {
     if (!p) return;
     try {
       await releasePoolRows([p]);
+      // The pool row is free now; remove its attachment from the document that
+      // is open so the pill and the invoice line disappear immediately.
+      await removePoolRowsFromOpenDocument([p]);
     } catch (e: any) {
       showAlert(`${t("解除认领失败", "Unclaim failed")}: ${e.message || e}`);
     }
@@ -6593,6 +6668,7 @@ function App() {
     try {
       const p = poolList.find((x: any) => x.id === id);
       const invUuid = p?.uuid;
+      let deletedNow = false;
       if (authUser) {
         if (isAdminUser) {
           if (!invUuid) throw new Error("Missing invoice uuid");
@@ -6600,14 +6676,27 @@ function App() {
           // to remove their local copy instead of re-uploading it.
           await markPoolInvoiceDeletedRemote(invUuid);
           await invoke("delete_pool_invoice", { id });
-          showAlert(t("发票已删除", "Invoice deleted"));
+          deletedNow = true;
         } else {
           await invoke("request_pool_delete", { id, requestedBy: authUserId || authUser });
           try { if (invUuid) await requestPoolDeleteRemote(invUuid); } catch (e) { console.error("requestPoolDeleteRemote failed", e); }
-          showAlert(t("删除请求已提交，等待管理员确认", "Delete request submitted, awaiting admin approval"));
         }
       } else {
         await invoke("delete_pool_invoice", { id });
+        deletedNow = true;
+      }
+      if (deletedNow && p) {
+        // Remove the claim from the open document (and its saved snapshot)
+        // before the alert, so I don't leave a stale pill pointing at a
+        // pool invoice that no longer exists.
+        await removePoolRowsFromOpenDocument([p]);
+      }
+      if (authUser) {
+        if (isAdminUser) {
+          showAlert(t("发票已删除", "Invoice deleted"));
+        } else {
+          showAlert(t("删除请求已提交，等待管理员确认", "Delete request submitted, awaiting admin approval"));
+        }
       }
       loadPool();
     } catch (e: any) {
