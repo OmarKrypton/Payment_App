@@ -994,8 +994,19 @@ const serviceNameContainsInvoice = (serviceName: string, invoiceId: string): boo
   const candidates: string[] = [normalizeId(upper)];
   const invIdx = upper.indexOf("INV:");
   if (invIdx >= 0) candidates.push(normalizeId(upper.slice(invIdx + 4)));
-  for (const token of upper.split(/[^A-Z0-9]+/)) {
-    if (normalizeId(token) === invNorm) return true;
+  // Match a standalone invoice id, but not a segment of a compound number.
+  // For example, invoice 210 must not match "Commercial Invoice: 210-2026-173":
+  // that string is a different supplier invoice number whose first segment
+  // happens to be 210.
+  const tokenRe = /[A-Z0-9]+/g;
+  let token: RegExpExecArray | null;
+  while ((token = tokenRe.exec(upper))) {
+    const start = token.index;
+    const end = start + token[0].length;
+    const before = start > 0 ? upper[start - 1] : "";
+    const after = end < upper.length ? upper[end] : "";
+    if (before === "-" || before === "/" || after === "-" || after === "/") continue;
+    if (normalizeId(token[0]) === invNorm) return true;
   }
   return candidates.some((c) => {
     if (!c) return false;
@@ -4417,24 +4428,73 @@ function App() {
   };
 
   // Non-destructive: keep the form consistent with the pool by showing a pill on
-  // any service whose name references an invoice already marked "used" in the pool.
-  // It never changes pool status, so invoices stay used across documents.
+  // any service whose name references an invoice already marked "used" in the pool
+  // and owned by this document (or unowned). It never changes pool status, so
+  // invoices stay used across documents. It also clears an old false pill when
+  // the invoice is actually owned by another saved document.
   const reconcilePillsFromPool = async () => {
     try {
-      const entries = formRef.current.import_entries ?? [];
+      const doc = formRef.current;
+      const entries = doc.import_entries ?? [];
       const list = await invoke<any[]>("list_invoice_pool_summary");
       const used = list.filter((p: any) => p.status === 'used');
       if (used.length === 0) return;
+      // A saved document's serial is its identity in the pool. Never let a
+      // reconciliation pass claim an invoice that is already owned elsewhere.
+      const serial = String(doc.doc_serial || draftLabel(doc.draft_no)).trim();
+      const sameSeller = (e: any, p: any) => {
+        const es = String(e.seller_tax_id || "").trim();
+        const ps = String(p.seller_tax_id || "").trim();
+        return !es || !ps || es === ps;
+      };
+      const poolRowForEntry = (e: any) => {
+        const uuid = String(e.attached_uuid || "").trim().toUpperCase();
+        if (uuid) {
+          const byUuid = used.find(p => String(p.uuid || "").trim().toUpperCase() === uuid);
+          if (byUuid) return byUuid;
+        }
+        const invoiceNo = String(e.attached_invoice || "").trim();
+        if (!invoiceNo) return undefined;
+        return used.find((p: any) =>
+          String(p.invoice_id || "").trim() === invoiceNo && sameSeller(e, p));
+      };
+      const ownedByThisDocument = (p: any) => {
+        const owner = String(p.used_by_label || "").trim();
+        return !owner || owner === serial;
+      };
       let changed = false;
       const updated = entries.map((e: any) => {
-        if (!e || e.attached_invoice || !e.service_name) return e;
-        const es = String(e.seller_tax_id || "").trim();
+        if (!e) return e;
+        const attached = !!(e.attached_invoice || e.attached_uuid);
+        if (attached) {
+          const row = poolRowForEntry(e);
+          if (!row) return e;
+          const owner = String(row.used_by_label || "").trim();
+          // Existing false attachment: the pool row belongs to another saved
+          // document, and the service name only references a longer invoice
+          // number that happens to start with this id. Detach the pill but
+          // keep the legitimate expense line intact.
+          if (
+            owner &&
+            owner !== serial &&
+            e.service_name &&
+            !serviceNameContainsInvoice(e.service_name, row.invoice_id)
+          ) {
+            changed = true;
+            const cleared = { ...e };
+            delete cleared.attached_invoice;
+            delete cleared.attached_uuid;
+            return cleared;
+          }
+          return e;
+        }
+        if (!e.service_name) return e;
         // Match by invoice id AND seller tax id (ids repeat across suppliers),
         // and record the pool row's uuid so the claim stays exact.
         const match = used.find((p: any) => {
+          if (!ownedByThisDocument(p)) return false;
           if (!serviceNameContainsInvoice(e.service_name, p.invoice_id)) return false;
-          const ps = String(p.seller_tax_id || "").trim();
-          return !es || !ps || es === ps;
+          return sameSeller(e, p);
         });
         if (match) {
           changed = true;

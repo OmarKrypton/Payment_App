@@ -207,10 +207,31 @@ fn service_matches_invoice(service_name: &str, invoice_id: &str) -> bool {
     if let Some(pos) = upper.find("INV:") {
         candidates.push(normalize_id(&upper[pos + 4..]));
     }
-    // Match any standalone alphanumeric token (covers numbers typed without "Inv:",
-    // even when embedded in the middle of the text)
-    for token in upper.split(|c: char| !c.is_alphanumeric()) {
-        if normalize_id(token) == invoice_norm {
+    // Match a standalone alphanumeric token (covers numbers typed without "Inv:",
+    // even when embedded in the middle of the text). Do not treat a segment of
+    // a compound number as a separate invoice: invoice 210 must not match
+    // "Commercial Invoice: 210-2026-173".
+    let mut token_start: Option<usize> = None;
+    for (idx, ch) in upper.char_indices() {
+        if ch.is_ascii_alphanumeric() {
+            if token_start.is_none() {
+                token_start = Some(idx);
+            }
+        } else if let Some(start) = token_start.take() {
+            let before = upper[..start].chars().next_back();
+            if matches!(before, Some('-') | Some('/')) || matches!(ch, '-' | '/') {
+                continue;
+            }
+            if normalize_id(&upper[start..idx]) == invoice_norm {
+                return true;
+            }
+        }
+    }
+    if let Some(start) = token_start {
+        let before = upper[..start].chars().next_back();
+        if !matches!(before, Some('-') | Some('/'))
+            && normalize_id(&upper[start..]) == invoice_norm
+        {
             return true;
         }
     }
@@ -1086,6 +1107,11 @@ mod tests {
         assert!(service_matches_invoice("A4 KPI CC 0206ADT", "0206ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026 Inv: 0206 ADT", "0205ADT"));
         assert!(!service_matches_invoice("A4 KPI CC TAX ID: 721067026", "0206ADT"));
+        // A segment of a longer supplier invoice number is not a reference to
+        // that pool invoice.
+        assert!(!service_matches_invoice("Commercial Invoice: 210-2026-173", "210"));
+        assert!(!service_matches_invoice("Commercial Invoice: 210/2026-173", "210"));
+        assert!(service_matches_invoice("Commercial Invoice 210 from supplier", "210"));
     }
 
     #[test]
