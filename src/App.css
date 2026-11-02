@@ -1457,7 +1457,17 @@ body {
 /* ── Invoice review queue ── */
 .invoice-queue .iq-count { font-size: 11px; color: var(--text-muted); font-weight: 500; white-space: nowrap; }
 .invoice-queue .iq-count b { color: var(--orange); }
-.invoice-queue .iq-intro { color: var(--text-muted); font-size: 11px; line-height: 1.45; margin-bottom: 9px; }
+.invoice-queue .iq-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin-bottom: 9px;
+}
 .invoice-queue .iq-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
 .invoice-queue .iq-tabs button {
   border: 1px solid var(--border);

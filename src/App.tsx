@@ -2698,15 +2698,22 @@ function App() {
 
     return (
       <div className="card invoice-queue">
-        <h3 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span>{t("发票审核队列", "Invoice Review Queue")}</span>
+        <div className="iq-intro">
+          <span>
+            {t(
+              "按问题优先排列。展开一行可对比 XML 与表单值，并直接采用 XML 金额。",
+              "Issues first. Expand a row to compare XML with the form and apply an XML value.",
+            )}
+          </span>
           <span className="iq-count">
             {counts.passed}/{rows.length} {t("通过", "passed")}
-            {counts.issues > 0 && <> · <b>{counts.issues} {t("待处理", "to review")}</b></>}
+            {counts.issues > 0 && (
+              <>
+                {" "}
+                · <b>{counts.issues} {t("待处理", "to review")}</b>
+              </>
+            )}
           </span>
-        </h3>
-        <div className="iq-intro">
-          {t("按问题优先排列。展开一行可对比 XML 与表单值，并直接采用 XML 金额。", "Issues first. Expand a row to compare XML with the form and apply an XML value.")}
         </div>
 
         <div className="iq-tabs">
@@ -5785,6 +5792,16 @@ function App() {
     }
   };
 
+  // ETA invoices carry the buyer's tax ID in receiverId. Use it to fill a blank
+  // document automatically, but never overwrite a value the user already set.
+  const withBuyerTaxFromPool = (form: any, rows: any[]) => {
+    if (String(form?.buyer_tax_id || "").trim()) return form;
+    const buyer = rows
+      .map((p: any) => normalizeTaxIdInput(p?.buyer_tax_id))
+      .find(Boolean);
+    return buyer ? { ...form, buyer_tax_id: buyer } : form;
+  };
+
   const attachImportEntryFromPool = async (id: number) => {
     const p = poolList.find((x: any) => x.id === id);
     if (!p) return;
@@ -5819,8 +5836,12 @@ function App() {
     } else {
       nextEntries = [...current, poolToImportEntry(p)];
     }
-    formRef.current = { ...formRef.current, import_entries: nextEntries };
-    await recalc(formRef.current);
+    const nextForm = withBuyerTaxFromPool(
+      { ...formRef.current, import_entries: nextEntries },
+      [p],
+    );
+    formRef.current = nextForm;
+    await recalc(nextForm);
     await markPoolClaimed(id);
     await validateImportEntries(nextEntries);
   };
@@ -5863,8 +5884,12 @@ function App() {
       if (usedClaimed.length > 0) showAlert(t("选中的发票已在此文档中", "Selected invoices are already in this document"));
       return;
     }
-    formRef.current = { ...formRef.current, import_entries: entries };
-    await recalc(formRef.current);
+    const nextForm = withBuyerTaxFromPool(
+      { ...formRef.current, import_entries: entries },
+      toClaim,
+    );
+    formRef.current = nextForm;
+    await recalc(nextForm);
     const serial = currentClaimLabel();
     const freshIds = toClaim.map(p => p.id);
     try {
@@ -5913,8 +5938,12 @@ function App() {
       currency: p.currency || "EGP",
       exchange_rate: p.exchange_rate || 0,
     }];
-    formRef.current = { ...formRef.current, invoices: arr };
-    await recalc(formRef.current);
+    const nextForm = withBuyerTaxFromPool(
+      { ...formRef.current, invoices: arr },
+      [p],
+    );
+    formRef.current = nextForm;
+    await recalc(nextForm);
     await ensureDraftNo();
     await markPoolClaimed(id);
     // Compare every pool-attached invoice still in this document against the
@@ -5977,8 +6006,12 @@ function App() {
         exchange_rate: p!.exchange_rate || 0,
       })),
     ];
-    formRef.current = { ...formRef.current, invoices: arr };
-    await recalc(formRef.current);
+    const nextForm = withBuyerTaxFromPool(
+      { ...formRef.current, invoices: arr },
+      fresh,
+    );
+    formRef.current = nextForm;
+    await recalc(nextForm);
     await ensureDraftNo();
     const serial = currentClaimLabel();
     const freshIds = fresh.map(p => p!.id);
