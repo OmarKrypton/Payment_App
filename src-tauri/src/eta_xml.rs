@@ -751,8 +751,18 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
 
         // Find matching invoice in the form
         if let Some(inv_list) = invoices {
+            // Match on both invoice number and seller tax ID. Invoice numbers
+            // are only unique per seller, so matching by number alone can pick
+            // another supplier's row when two attachments share a number.
             let matching_inv = inv_list.iter().find(|inv| {
-                inv.get("invoice_no").and_then(|v| v.as_str()) == Some(&invoice.invoice_id)
+                let same_number = inv.get("invoice_no").and_then(|v| v.as_str())
+                    == Some(&invoice.invoice_id);
+                if !same_number { return false; }
+                let form_seller = inv.get("seller_tax_id").and_then(|v| v.as_str())
+                    .unwrap_or("").trim();
+                form_seller.is_empty()
+                    || invoice.seller_tax_id.trim().is_empty()
+                    || normalize_id(form_seller) == normalize_id(&invoice.seller_tax_id)
             });
 
             if let Some(inv) = matching_inv {
@@ -1015,8 +1025,18 @@ pub fn validate_eta_against_form(invoice: &EtaInvoice, form_json: &str) -> Resul
         // Check commercial invoice amounts for import
         let invoices = form.get("invoices").and_then(|v| v.as_array());
         if let Some(inv_list) = invoices {
+            // Match on both invoice number and seller tax ID. Invoice numbers
+            // are only unique per seller, so matching by number alone can pick
+            // another supplier's row when two attachments share a number.
             let matching_inv = inv_list.iter().find(|inv| {
-                inv.get("invoice_no").and_then(|v| v.as_str()) == Some(&invoice.invoice_id)
+                let same_number = inv.get("invoice_no").and_then(|v| v.as_str())
+                    == Some(&invoice.invoice_id);
+                if !same_number { return false; }
+                let form_seller = inv.get("seller_tax_id").and_then(|v| v.as_str())
+                    .unwrap_or("").trim();
+                form_seller.is_empty()
+                    || invoice.seller_tax_id.trim().is_empty()
+                    || normalize_id(form_seller) == normalize_id(&invoice.seller_tax_id)
             });
             if let Some(inv) = matching_inv {
                 let inv_amt = inv.get("amount").and_then(|v| v.as_str())

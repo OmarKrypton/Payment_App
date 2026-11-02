@@ -10,6 +10,10 @@ import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshot
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
+// CSCEC's buyer tax ID is fixed for every settlement document. Keep it in one
+// place so the document warning and the import defaults cannot drift apart.
+const BUYER_TAX_ID = "100489095";
+
 interface OcrFieldInfo {
   field: string;
   value: string;
@@ -73,7 +77,7 @@ interface FormData {
   check_cover: boolean; check_invoices: boolean; check_company_name: boolean; check_wht_cert: boolean; audit_notes: string;
   check_sad: boolean; check_import_invoice: boolean; check_bill_lading: boolean; check_packing_list: boolean; check_cert_origin: boolean; check_nafeza: boolean; check_form_4_6: boolean;
   checklist: Record<string, { s: "" | "pass" | "fail" | "na"; n?: string }>;
-  final_decision: string; conditional_reason: string; reject_reason: string; auditor: string;
+  final_decision: string; conditional_reason: string; reject_reason: string; auditor: string; audited_at: string;
   /** Saved-document payment status. Lives in the snapshot JSON (no DB column). */
   paid: boolean; paid_at: string; paid_by: string;
   vat_manual: boolean; wht_manual: boolean; oth_manual: boolean; soc_manual: boolean;
@@ -121,7 +125,7 @@ const EMPTY_FORM: FormData = {
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   checklist: {},
-  final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
+  final_decision: "", conditional_reason: "", reject_reason: "", auditor: "", audited_at: "",
   paid: false, paid_at: "", paid_by: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
@@ -151,7 +155,7 @@ const DEFAULT_FORM: FormData = {
   draft_no: null, check_cover: false, check_invoices: false, check_company_name: false, check_wht_cert: false, audit_notes: "",
   check_sad: false, check_import_invoice: false, check_bill_lading: false, check_packing_list: false, check_cert_origin: false, check_nafeza: false, check_form_4_6: false,
   checklist: {},
-  final_decision: "", conditional_reason: "", reject_reason: "", auditor: "",
+  final_decision: "", conditional_reason: "", reject_reason: "", auditor: "", audited_at: "",
   paid: false, paid_at: "", paid_by: "",
   vat_manual: false, wht_manual: false, oth_manual: false, soc_manual: false, wht_manual_amount: false,
   invoices: [],
@@ -1094,6 +1098,7 @@ function App() {
     });
   }, []);
   const [computed, setComputed] = useState<CalcResult>(EMPTY_CALC);
+  const [ackedWarningSig, setAckedWarningSig] = useState("");
   const overlayRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLElement>(null);
   const [progressMsg, setProgressMsg] = useState("");
@@ -1138,6 +1143,8 @@ function App() {
   const [paidBusy, setPaidBusy] = useState(false);
   const [etaResult, setEtaResult] = useState<any[] | null>(null);
   const [showEtaResult, setShowEtaResult] = useState(false);
+  const [invoiceQueueFilter, setInvoiceQueueFilter] = useState<"all" | "issues" | "passed" | "manual">("all");
+  const [expandedQueueKey, setExpandedQueueKey] = useState<string | null>(null);
   // ── Daily Entries (journal documents from Daily Entries PDF reports) ──
   const [deEntries, setDeEntries] = useState<any[]>([]);
   const [deTotal, setDeTotal] = useState(0);
@@ -1793,7 +1800,7 @@ function App() {
       // settlement, so invoice WHT of 0 vs a non-zero document WHT is a warning,
       // not an error.
       matcher(t("WHT vs 本期WHT", "WHT vs Current WHT Amount"), totals.wht, computed.c_6B, fmtShort, computed.c_6B > 0 || totals.wht > 0, totals.wht <= 0.005 && computed.c_6B > 0.005),
-      matcher(t("WHT率 vs 设定税率", "WHT Rate vs Set WHT Rate"), invWhtRate, docWhtRate, n => `${n.toFixed(1)}%`, docWhtRate > 0, invWhtRate <= 0.0005 && docWhtRate > 0),
+      matcher(t("WHT率 vs 设定税率", "WHT Rate vs Set WHT Rate"), invWhtRate, docWhtRate, n => `${n.toFixed(1)}%`, !isRemainder && !data.wht_manual && !data.wht_manual_amount && docWhtRate > 0, invWhtRate <= 0.0005 && !isRemainder && !data.wht_manual && !data.wht_manual_amount && docWhtRate > 0),
       {
         label: t("本期实付 vs 净应付(9A)", "Current Paid vs Net Payable (9A)"),
         active: computed.c_9A > 0 || computed.c_10A > 0,
@@ -1821,11 +1828,47 @@ function App() {
       {data.invoices.map((inv, i) => {
         const c = curOf(inv);
         const showCur = c !== docCur;
+        const isDuplicate = doublePayWarnings.some(w => w.invoice === inv.invoice_no);
+        let etaPill: { label: string; cls: string; title: string } | null = null;
+        if (inv.attached_invoice || inv.attached_uuid) {
+          if (!etaResult || etaResult.length === 0) {
+            etaPill = { label: t("ETA 未检查", "ETA not checked"), cls: "eta-na", title: t("尚未运行 ETA 验证", "ETA validation has not been run yet") };
+          } else {
+            const er = etaResult.find((r: any) => {
+              const sameNo = r.invoice?.invoice_id === inv.invoice_no;
+              const rSeller = String(r.invoice?.seller_tax_id || "").trim();
+              const iSeller = String(inv.seller_tax_id || "").trim();
+              return sameNo && (!rSeller || !iSeller || rSeller === iSeller);
+            });
+            if (!er) {
+              etaPill = { label: t("ETA 未检查", "ETA not checked"), cls: "eta-na", title: t("该发票没有匹配的验证结果", "No validation result matched this invoice") };
+            } else {
+              const errors = (er.issues || []).filter((x: any) => x.severity === "error").length;
+              const warnings = (er.issues || []).filter((x: any) => x.severity === "warning").length;
+              etaPill = er.is_valid
+                ? { label: t("ETA 有效", "ETA valid"), cls: "eta-ok", title: t("ETA XML 验证通过", "ETA XML validation passed") }
+                : { label: `${errors > 0 ? `${errors} ${t("错误", "error")}` : ""}${errors > 0 && warnings > 0 ? " · " : ""}${warnings > 0 ? `${warnings} ${t("警告", "warning")}` : ""}`, cls: "eta-bad", title: t("ETA XML 验证发现问题", "ETA XML validation found issues") };
+            }
+          }
+        }
         return (
-        <div key={i} className={`invoice-row${inv.attached_invoice || showCur ? ' has-pill' : ''}`}>
+        <div key={i} className={`invoice-row${inv.attached_invoice || inv.attached_uuid || showCur || isDuplicate ? ' has-pill' : ''}`}>
           <div className="invoice-company">
             {inv.attached_invoice && (
               <div className="attached-pill" title={`${t("已附加发票", "Attached invoice")}: ${inv.attached_invoice}`}>✓ {inv.attached_invoice}</div>
+            )}
+            {!inv.attached_invoice && !inv.attached_uuid && (
+              <div className="attached-pill manual" title={t("手动录入的发票，没有 ETA XML 可供验证", "Manually entered invoice; no ETA XML to validate")}>
+                {t("手动 · 无 XML", "Manual · no XML")}
+              </div>
+            )}
+            {isDuplicate && (
+              <div className="attached-pill dup" title={t("该发票已在其他文档中被引用", "This invoice is already referenced in another document")}>
+                {t("重复", "Duplicate")}
+              </div>
+            )}
+            {etaPill && (
+              <div className={`attached-pill ${etaPill.cls}`} title={etaPill.title}>{etaPill.label}</div>
             )}
             {isCreditNote(poolFor(inv)) && (
               <div className="attached-pill cn" title={t("该文档是贷项通知单，不能付款", "This document is a credit note and cannot be paid")}>
@@ -2053,6 +2096,40 @@ function App() {
 
     const invs = data.invoices || [];
 
+    // Invoices referenced by the document being edited that are ALSO referenced
+    // by other saved documents and not reconciled through a remainder link.
+    // Invoice ids like "61" repeat across suppliers, so match on the ETA uuid when
+    // present, otherwise on (invoice id + seller tax id) — never the id alone.
+    // Keep this before the checklist so the derived checks can use it.
+    const currentSqlDefault = (formRef.current.doc_serial || "").trim();
+    const currentInvs: { no: string; seller: string; uuid: string }[] = [];
+    if (isImportDocument(formRef.current)) {
+      (formRef.current.import_entries || []).forEach((e: any) => {
+        if (e.attached_invoice) currentInvs.push({ no: String(e.attached_invoice), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
+      });
+    } else {
+      (formRef.current.invoices || []).forEach((inv: any) => {
+        if (inv.invoice_no) currentInvs.push({ no: String(inv.invoice_no), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
+      });
+    }
+    const sameInvoiceRef = (a: { no: string; seller: string; uuid: string }, b: any): boolean => {
+      const bu = String(b?.uuid || "").trim();
+      const bs = String(b?.seller || "").trim();
+      if (a.uuid && bu) return a.uuid === bu;
+      if (a.no !== String(b?.no || "")) return false;
+      if (a.seller && bs) return a.seller === bs;
+      // Only treat as the same when neither side identifies a seller; if one does,
+      // a matching id alone is too weak to flag (different suppliers reuse ids).
+      return !a.seller && !bs;
+    };
+    const doublePayWarnings: { invoice: string; serials: string[] }[] = [];
+    if (!formRef.current.remainder_of) {
+      for (const cur of currentInvs) {
+        const others = savedDocsIndex.filter((d: any) => d.label !== currentSqlDefault && d.invoices.some((i: any) => sameInvoiceRef(cur, i)));
+        if (others.length > 0) doublePayWarnings.push({ invoice: cur.no, serials: others.map(o => o.label) });
+      }
+    }
+
     // "Invoices Match Amount" (auto): the invoice totals must line up with the
     // values entered on the settlement document:
     //   net          vs Current settlement less 1D when 1D reduces VAT
@@ -2074,10 +2151,9 @@ function App() {
       const okVat = isRemainder || Math.abs(invVat - computed.c_1E) <= tol;
       const okTotal = isRemainder || Math.abs(invTotal - computed.c_1G) <= tol;
       const okRate = isRemainder || data.vat_manual || invNet <= 0 || Math.abs(invVatRate - docVatRate) <= tol;
-      // If some invoice could not be converted into the document currency it is
-      // not part of the displayed totals, so the comparison must not pass.
-      const allConverted = bankTotals.unconverted.length === 0;
-      check_invoices_auto = (allConverted && okNet && okVat && okTotal && okRate) ? "pass" : "fail";
+      // Currency conversion is a separate checklist item; this check only
+      // covers the invoice amounts that could be converted.
+      check_invoices_auto = (okNet && okVat && okTotal && okRate) ? "pass" : "fail";
     }
 
     // "WHT-Free Company Provided WHT Certificate" (auto): driven by the
@@ -2098,14 +2174,49 @@ function App() {
     (data.seller_tax_ids || []).forEach((x: string) => { if (x && x.trim()) docSellerTaxIds.add(x.trim()); });
     if (data.seller_tax_id) docSellerTaxIds.add(String(data.seller_tax_id).trim());
     for (const inv of invs) { const t2 = String(inv.seller_tax_id || "").trim(); if (t2) docSellerTaxIds.add(t2); }
-    const hasWhtFreeSeller = [...docSellerTaxIds].some(isWhtFreeTaxId);
-    // If this document actually withholds WHT, it clearly is not treating the
-    // supplier as WHT-free, so the auto-check must not read as "pass".
-    const whtApplied = (computed.c_6B || 0) > 0.005 || (parseFloat((data.wht_rate || "0").replace('%', '')) || 0) > 0;
-    let check_wht_cert_auto: "pass" | "na" | "" = "";
-    if (docSellerTaxIds.size > 0) check_wht_cert_auto = (hasWhtFreeSeller && !whtApplied) ? "pass" : "na";
-    const whtFreeShown = cl["check_wht_cert"]?.s || check_wht_cert_auto;
-    const whtFreeConflict = !isImport && whtFreeShown === "pass" && whtApplied;
+
+    // Attribute invoice WHT to the seller it belongs to. This prevents one
+    // WHT-free supplier from hiding WHT withheld from a different supplier.
+    const whtBySeller = new Map<string, number>();
+    for (const inv of invs) {
+      const seller = String(inv.seller_tax_id || "").trim();
+      if (!seller) continue;
+      const wt = invoiceToDocCurrency(toNum(inv.wht || "0"), inv);
+      if (wt.ok && wt.v > 0.005) whtBySeller.set(seller, (whtBySeller.get(seller) || 0) + wt.v);
+    }
+    const invoiceWhtTotal = [...whtBySeller.values()].reduce((a, b) => a + b, 0);
+    const docWhtRate = parseFloat((data.wht_rate || "0").replace('%', '')) || 0;
+    const docWhtApplied = (computed.c_6B || 0) > 0.005 || docWhtRate > 0;
+    const whtFreeSellers = [...docSellerTaxIds].filter(isWhtFreeTaxId);
+    const hasWhtFreeSeller = whtFreeSellers.length > 0;
+    const whtFreeWithWht = whtFreeSellers.filter(s => (whtBySeller.get(s) || 0) > 0.005);
+    // If the document withholds WHT but the invoices do not allocate it, we
+    // cannot tell which seller it belongs to; be conservative and flag every
+    // WHT-free seller on the document.
+    const unattributedWht = docWhtApplied && invoiceWhtTotal <= 0.005;
+    const whtConflictSellers = unattributedWht ? whtFreeSellers : whtFreeWithWht;
+    const hasWhtConflict = hasWhtFreeSeller && whtConflictSellers.length > 0;
+    let check_wht_cert_auto: "pass" | "fail" | "na" | "" = "";
+    if (docSellerTaxIds.size > 0) {
+      if (hasWhtConflict) check_wht_cert_auto = "fail";
+      else if (hasWhtFreeSeller) check_wht_cert_auto = "pass";
+      else check_wht_cert_auto = "na";
+    }
+    const whtFreeConflict = !isImport && hasWhtConflict;
+
+    // Derived checklist rows. These stay separate from check_invoices so each
+    // failure has one clear owner and can be overridden independently.
+    let check_duplicate_payment_auto: "pass" | "fail" | "na" | "" = "";
+    if (invs.length && !isRemainder) {
+      check_duplicate_payment_auto = doublePayWarnings.length === 0 ? "pass" : "fail";
+    }
+    let check_currency_auto: "pass" | "fail" | "na" | "" = "";
+    if (invs.length) {
+      check_currency_auto = invoiceDocTotals(invs).unconverted.length === 0 ? "pass" : "fail";
+    }
+    let check_buyer_tax_auto: "pass" | "fail" | "na" | "" = "";
+    const buyerTaxId = String(data.buyer_tax_id || "").trim();
+    if (buyerTaxId) check_buyer_tax_auto = buyerTaxId === BUYER_TAX_ID ? "pass" : "fail";
 
     const idxExists = (label: string) => (savedDocsIndex || []).some((d: any) => d.label === label);
     let rem_parent_auto: "pass" | "fail" | "" = "";
@@ -2121,12 +2232,14 @@ function App() {
 
     const ITEM_ZH: Record<string, string> = {
       check_cover: "封面及结算核对", check_invoices: "发票金额核对", check_company_name: "封面公司名与发票公司名一致", check_wht_cert: "免WHT公司提供WHT证明",
+      check_duplicate_payment: "无重复付款", check_currency: "发票币种已换算", check_buyer_tax: "买方税号正确",
       check_sad: "SAD 报关单", check_import_invoice: "商业发票", check_bill_lading: "提单", check_packing_list: "装箱单",
       check_cert_origin: "原产地证明", check_nafeza: "Nafeza 文件", check_form_4_6: "Form 4 或 6",
       rem_parent: "父文档存在于历史记录", rem_reconcile: "剩余金额与父文档核对一致",
     };
     const ITEM_EN: Record<string, string> = {
       check_cover: "Cover & Settlement Check", check_invoices: "Invoices Match Amount", check_company_name: "Company Name on Cover Matches Invoices", check_wht_cert: "WHT-Free Company Provided WHT Certificate",
+      check_duplicate_payment: "No duplicate payment", check_currency: "Invoice currencies converted", check_buyer_tax: "Buyer TAX ID correct",
       check_sad: "SAD Customs Declaration", check_import_invoice: "Commercial Invoice", check_bill_lading: "Bill of Lading", check_packing_list: "Packing List",
       check_cert_origin: "Certificate of Origin", check_nafeza: "Nafeza Paper", check_form_4_6: "Form 4 or 6",
       rem_parent: "Parent document exists in history", rem_reconcile: "Remainder amount reconciles with parent",
@@ -2141,6 +2254,9 @@ function App() {
         { key: "check_invoices", auto: check_invoices_auto },
         { key: "check_company_name" },
         { key: "check_wht_cert", auto: check_wht_cert_auto },
+        { key: "check_duplicate_payment", auto: check_duplicate_payment_auto },
+        { key: "check_currency", auto: check_currency_auto },
+        { key: "check_buyer_tax", auto: check_buyer_tax_auto },
         ...(isRemainder ? [
           { key: "rem_parent", auto: rem_parent_auto },
           { key: "rem_reconcile", hint: remHint, remainder: true },
@@ -2162,8 +2278,8 @@ function App() {
           </div>
         )}
         {doublePayWarnings.length > 0 && (
-          <div className="field-warning" style={{color: 'var(--orange)'}}>
-            <div>{t("发票已在其他文档中被引用（可能重复支付）", "Invoice(s) already referenced in other documents (possible double payment):")}</div>
+          <div className="field-warning" style={{color: 'var(--red)'}}>
+            <div>{t("阻塞: 发票已在其他文档中被引用（重复支付）", "Blocker: invoice(s) already referenced in other documents (duplicate payment):")}</div>
             {doublePayWarnings.map(w => (
               <div key={w.invoice}>· {w.invoice} → {w.serials.join(", ")}</div>
             ))}
@@ -2208,8 +2324,8 @@ function App() {
       )}
         <div className="field"><label className="field-label">{t("日期", "Date")}</label><div className="computed-value">{new Date().toLocaleDateString()}</div></div>
         <Input label={t("买方税号", "Buyer TAX ID")} value={data.buyer_tax_id} onChange={v => updateField("buyer_tax_id", normalizeTaxIdInput(v))} />
-        {data.buyer_tax_id && data.buyer_tax_id !== "100489095" && (
-          <div className="field-warning">{t("警告: 买方税号不是 100489095!", "Warning: Buyer TAX ID is not 100489095!")}</div>
+        {data.buyer_tax_id && data.buyer_tax_id !== BUYER_TAX_ID && (
+          <div className="field-warning">{t(`警告: 买方税号不是 ${BUYER_TAX_ID}!`, `Warning: Buyer TAX ID is not ${BUYER_TAX_ID}!`)}</div>
         )}
         <div className="field"><label className="field-label">{t("卖方税号", "Seller TAX IDs")}</label></div>
         {data.seller_tax_ids.map((tid, i) => (
@@ -2221,6 +2337,560 @@ function App() {
         <button className="btn-add" onClick={addSellerTaxId}>+ {t("添加卖方税号", "Add Seller TAX ID")}</button>
     </div>
   );
+
+  const getBankAuditSignals = () => {
+    const signals: { sev: "blocker" | "warning" | "info"; title: string; detail?: string }[] = [];
+    if (isSerialDuplicate) {
+      signals.push({ sev: "blocker", title: t("文档编号已存在", "Document serial already exists"), detail: data.doc_serial });
+    }
+    if (data.buyer_tax_id && data.buyer_tax_id !== BUYER_TAX_ID) {
+      signals.push({ sev: "blocker", title: t("买方税号不正确", "Buyer TAX ID is incorrect"), detail: `${data.buyer_tax_id} ≠ ${BUYER_TAX_ID}` });
+    }
+    if (doublePayWarnings.length > 0) {
+      signals.push({
+        sev: "blocker",
+        title: t("发票已在其他文档中被引用（重复付款）", "Invoice(s) already referenced in another document (duplicate payment)"),
+        detail: doublePayWarnings.map(w => `${w.invoice} → ${w.serials.join(", ")}`).join(" · "),
+      });
+    }
+    const creditInvoices = invs.filter(inv => isCreditNote(poolForInvoice(inv)) || isCancelledByCredit(poolForInvoice(inv)));
+    if (creditInvoices.length > 0) {
+      signals.push({
+        sev: "blocker",
+        title: t("包含贷项通知单或已取消发票", "Credit note or cancelled invoice included"),
+        detail: creditInvoices.map(inv => inv.invoice_no).join(", "),
+      });
+    }
+    const bankTotals = invoiceDocTotals(invs);
+    if (bankTotals.unconverted.length > 0) {
+      signals.push({
+        sev: "blocker",
+        title: t("发票币种无法换算", "Invoice currency cannot be converted"),
+        detail: bankTotals.unconverted.join(", "),
+      });
+    }
+    if (whtFreeConflict) {
+      signals.push({
+        sev: "warning",
+        title: t("WHT 免税供应商仍被预扣 WHT", "WHT withheld from a WHT-free seller"),
+        detail: whtConflictSellers.join(", "),
+      });
+    }
+    if (!isRemainder && data.wht_manual_amount && computed.c_1B > 0 && computed.c_6B > 0) {
+      const effWht = (computed.c_6B / computed.c_1B) * 100;
+      if (![1, 3, 5].some(r => Math.abs(effWht - r) <= 0.05)) {
+        signals.push({
+          sev: "warning",
+          title: t("手动 WHT 有效税率不在标准范围内", "Manual WHT effective rate is outside the standard range"),
+          detail: `${effWht.toFixed(2)}% · ${t("标准为 1% / 3% / 5%", "standard is 1% / 3% / 5%")}`,
+        });
+      }
+    }
+    if (check_invoices_auto === "fail" && bankTotals.unconverted.length === 0) {
+      signals.push({
+        sev: "blocker",
+        title: t("发票金额或税率与结算字段不一致", "Invoice amounts or rates do not match the settlement fields"),
+      });
+    }
+    const manualInvoices = invs.filter(inv => !inv.attached_invoice && !inv.attached_uuid);
+    if (manualInvoices.length > 0) {
+      signals.push({
+        sev: "info",
+        title: t("手动发票无 ETA XML", "Manual invoice(s) have no ETA XML"),
+        detail: manualInvoices.map(inv => inv.invoice_no).join(", "),
+      });
+    }
+    return signals;
+  };
+
+  const BankAuditCenterCard = () => {
+    const signals = getBankAuditSignals();
+    const blockers = signals.filter(s => s.sev === "blocker").length;
+    const warnings = signals.filter(s => s.sev === "warning").length;
+    const infos = signals.filter(s => s.sev === "info").length;
+    const totalChecks = items.length;
+    const passed = passedCount;
+    const pct = totalChecks > 0 ? Math.round((passed / totalChecks) * 100) : 0;
+    const allClear = blockers === 0 && warnings === 0 && failedItems.length === 0;
+    return (
+      <div className="card audit-center">
+        <div className="ac-top">
+          <div>
+            <h3>{t("审计中心", "Audit Center")}</h3>
+            <div className="ac-sub">
+              {blockers > 0 || warnings > 0
+                ? `${blockers} ${t("个阻塞", "blocker(s)")} · ${warnings} ${t("个警告", "warning(s)")}${infos > 0 ? ` · ${infos} ${t("条提示", "info")}` : ""}`
+                : t("没有阻塞项或警告", "No blockers or warnings")}
+            </div>
+          </div>
+          <div className="ac-ring" style={{ background: `conic-gradient(var(--green) 0 ${pct}%, #e2e8f0 ${pct}% 100%)` }}>
+            <div className="ac-ring-in">
+              <b>{passed}/{totalChecks}</b>
+              <span>{t("通过", "passed")}</span>
+            </div>
+          </div>
+        </div>
+        <div className="ac-stats">
+          <div className={`ac-stat${blockers > 0 ? " bad" : ""}`}><b>{blockers}</b><span>{t("阻塞", "Blockers")}</span></div>
+          <div className={`ac-stat${warnings > 0 ? " warn" : ""}`}><b>{warnings}</b><span>{t("警告", "Warnings")}</span></div>
+          <div className={`ac-stat${failedItems.length > 0 ? " bad" : ""}`}><b>{failedItems.length}</b><span>{t("清单失败", "Checklist fails")}</span></div>
+          <div className="ac-stat"><b>{invs.length}</b><span>{t("发票", "Invoices")}</span></div>
+        </div>
+        {signals.length > 0 && (
+          <div className="audit-signals ac-signals">
+            <div className="as-head">{t("需要处理", "Needs attention")}</div>
+            {signals.map((s, i) => (
+              <div key={i} className={`as-item ${s.sev}`}>
+                <span className="as-dot" />
+                <div>
+                  <b>{s.title}</b>
+                  {s.detail && <span>{s.detail}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {allClear && (
+          <div className="ac-clear">
+            ✓ {t("所有自动检查已通过。仍需人工核对清单和结算扣款。", "All automatic checks passed. Manual checklist and settlement reviews still apply.")}
+          </div>
+        )}
+        <div className="ac-foot">
+          <span>{t("已通过", "Passed")}: {passed}/{totalChecks}</span>
+          <button className="btn-add" onClick={() => document.getElementById("sec-checklist")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            {t("打开核对清单", "Open checklist")}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const BankSettlementAuditCard = () => {
+    const amountOf = (v: any) => parseFloat(String(v ?? "0").replace(/,/g, "")) || 0;
+    const tol = 0.005;
+    const rows: any[] = [];
+
+    rows.push({
+      key: "advance",
+      label: t("预付款", "Advance"),
+      basis: computed.c_2A,
+      rate: "—",
+      opening: computed.c_2B,
+      current: computed.c_2C,
+      returned: "—",
+      ending: computed.c_2D,
+      status: computed.c_2D > computed.c_2A + tol || computed.c_2E < -tol ? "warn" : "pass",
+      note: `${t("余额", "Balance")} ${fmtShort(computed.c_2E)}`,
+    });
+
+    rows.push({
+      key: "retention",
+      label: t("保留金", "Retention"),
+      basis: computed.c_1B,
+      rate: data.ret_rate || "0%",
+      opening: computed.c_4A,
+      current: computed.c_4B,
+      returned: amountOf(data.val_4C),
+      ending: computed.c_4D,
+      status: computed.c_4D < -tol ? "warn" : "pass",
+      note: computed.c_4D < -tol ? t("期末为负，请检查返还金额", "Ending is negative; check the return amount") : undefined,
+    });
+
+    rows.push({
+      key: "temp",
+      label: t("临时工社保", "Temp. labour"),
+      basis: computed.c_1B,
+      rate: isRemainder ? "—" : (data.temp_rate || "0%"),
+      opening: computed.c_5A,
+      current: computed.c_5B,
+      returned: amountOf(data.val_5C),
+      ending: computed.c_5D,
+      status: isRemainder ? "na" : computed.c_5D < -tol ? "warn" : "pass",
+      note: isRemainder ? t("在父文档上计算", "Applied on the parent document") : undefined,
+    });
+
+    rows.push({
+      key: "social",
+      label: t("社保", "Social insurance"),
+      basis: computed.c_1B,
+      rate: data.soc_rate || "0%",
+      opening: computed.c_12A,
+      current: computed.c_12B,
+      returned: "—",
+      ending: computed.c_12C,
+      status: data.soc_manual || computed.c_12C < -tol ? "warn" : "pass",
+      note: data.soc_manual ? t("手动行需要原因/审批", "Manual rows need a reason/approval") : undefined,
+    });
+
+    rows.push({
+      key: "other",
+      label: t("其他扣款", "Other deductions"),
+      basis: computed.c_1B,
+      rate: isRemainder ? "—" : (data.oth_rate || "0%"),
+      opening: computed.c_8A,
+      current: computed.c_8B,
+      returned: "—",
+      ending: computed.c_8C,
+      status: isRemainder ? "na" : data.oth_manual || computed.c_8C < -tol ? "warn" : "pass",
+      note: isRemainder
+        ? t("在父文档上计算", "Applied on the parent document")
+        : data.oth_manual
+          ? t("手动行需要原因/审批", "Manual rows need a reason/approval")
+          : undefined,
+    });
+
+    let whtStatus: "pass" | "warn" | "na" = "pass";
+    let whtNote = "";
+    if (isRemainder) {
+      whtStatus = "na";
+      whtNote = t("在父文档上计算", "Applied on the parent document");
+    } else if (whtFreeConflict) {
+      whtStatus = "warn";
+      whtNote = `${t("免税供应商", "WHT-free seller")}: ${whtConflictSellers.join(", ") || "—"}`;
+    } else if (data.wht_manual_amount && computed.c_1B > 0 && computed.c_6B > 0) {
+      const effWht = (computed.c_6B / computed.c_1B) * 100;
+      if (![1, 3, 5].some(r => Math.abs(effWht - r) <= 0.05)) {
+        whtStatus = "warn";
+        whtNote = `${effWht.toFixed(2)}% ${t("不在 1% / 3% / 5% 范围内", "outside 1% / 3% / 5%")}`;
+      }
+    }
+    if (whtStatus !== "na" && computed.c_6C < -tol) {
+      whtStatus = "warn";
+      whtNote = t("期末为负，请检查期初或本期 WHT", "Ending is negative; check opening/current WHT");
+    }
+    rows.push({
+      key: "wht",
+      label: t("预提税", "WHT"),
+      basis: computed.c_1B,
+      rate: data.wht_manual_amount
+        ? `${t("手动", "Manual")} ${computed.c_1B > 0 ? ((computed.c_6B / computed.c_1B) * 100).toFixed(2) : "0.00"}%`
+        : data.wht_manual
+          ? t("多税率", "Multi-rate")
+          : (data.wht_rate || "0%"),
+      opening: computed.c_6A,
+      current: computed.c_6B,
+      returned: "—",
+      ending: computed.c_6C,
+      status: whtStatus,
+      note: whtNote || undefined,
+    });
+
+    const passCount = rows.filter(r => r.status === "pass").length;
+    const reviewCount = rows.filter(r => r.status === "warn").length;
+    return (
+      <div className="card settlement-audit">
+        <h3 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span>{t("结算扣款审计", "Settlement Audit")}</span>
+          <span className="sa-count">
+            {passCount} {t("通过", "passed")}
+            {reviewCount > 0 && <> · <b>{reviewCount} {t("复核", "review")}</b></>}
+          </span>
+        </h3>
+        <div className="sa-intro">
+          {t("这些扣款来自结算基数，不是发票行。按基数、费率、期初/本期/返还/期末核对。", "These deductions come from the settlement base, not invoice lines. Check base, rate, opening/current/return/ending.")}
+        </div>
+        <div className="sa-table">
+          <div className="sa-row sa-head">
+            <div>{t("扣款", "Deduction")}</div>
+            <div>{t("基数", "Basis")}</div>
+            <div>{t("费率", "Rate")}</div>
+            <div>{t("期初", "Opening")}</div>
+            <div>{t("本期", "Current")}</div>
+            <div>{t("返还", "Return")}</div>
+            <div>{t("期末", "Ending")}</div>
+            <div>{t("状态", "Status")}</div>
+          </div>
+          {rows.map(r => (
+            <div key={r.key} className={`sa-row sa-${r.status}`}>
+              <div className="sa-name"><b>{r.label}</b>{r.note && <span>{r.note}</span>}</div>
+              <div className="sa-num">{fmtShort(r.basis)}</div>
+              <div>{r.rate}</div>
+              <div className="sa-num">{fmtShort(r.opening)}</div>
+              <div className="sa-num">{fmtShort(r.current)}</div>
+              <div className="sa-num">{typeof r.returned === "number" ? fmtShort(r.returned) : r.returned}</div>
+              <div className="sa-num">{fmtShort(r.ending)}</div>
+              <div className="sa-status">{r.status === "pass" ? "✓" : r.status === "warn" ? "⚠" : "—"}</div>
+            </div>
+          ))}
+        </div>
+        <div className="sa-foot">
+          <span>ⓘ {t("WHT 先对比发票 WHT；若发票无 WHT，再核对费率、手动金额、证书和期初余额。", "WHT first compares to invoice WHT; if invoices have no WHT, check rate, manual amount, certificate and opening balance.")}</span>
+          <button className="btn-add" onClick={() => document.getElementById("sec-wht")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            {t("查看 WHT", "Review WHT")}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const BankInvoiceQueueCard = () => {
+    const amountOf = (v: any) => parseFloat(String(v ?? "0").replace(/,/g, "")) || 0;
+    const { unconverted } = invoiceDocTotals(data.invoices ?? []);
+    const rows = (data.invoices ?? []).map((inv, index) => {
+      const attached = !!(inv.attached_invoice || inv.attached_uuid);
+      const isManual = !attached;
+      const er = (etaResult || []).find((r: any) => {
+        const sameNo = r.invoice?.invoice_id === inv.invoice_no;
+        const rSeller = String(r.invoice?.seller_tax_id || "").trim();
+        const iSeller = String(inv.seller_tax_id || "").trim();
+        return sameNo && (!rSeller || !iSeller || rSeller === iSeller);
+      });
+      const issues = er?.issues || [];
+      const errors = issues.filter((x: any) => x.severity === "error").length;
+      const warnings = issues.filter((x: any) => x.severity === "warning").length;
+      const duplicate = doublePayWarnings.find(w => w.invoice === inv.invoice_no);
+      const unconvertedRow = unconverted.includes(String(inv.attached_invoice || inv.invoice_no || "—"));
+      const credit = isCreditNote(poolForInvoice(inv));
+      const cancelled = isCancelledByCredit(poolForInvoice(inv));
+      const notChecked = attached && !er;
+      const hardIssue = errors > 0 || !!duplicate || unconvertedRow || credit || cancelled || notChecked;
+      const hasWarning = warnings > 0;
+      const passed = !isManual && !hardIssue && !hasWarning;
+      const status: "manual" | "blocked" | "warning" | "passed" =
+        isManual ? "manual" : hardIssue ? "blocked" : hasWarning ? "warning" : "passed";
+      const issueCount = errors + warnings + (duplicate ? 1 : 0) + (unconvertedRow ? 1 : 0)
+        + (credit ? 1 : 0) + (cancelled ? 1 : 0) + (notChecked ? 1 : 0);
+      const invCur = invoiceCurrency(inv);
+      const xmlCur = String(er?.invoice?.currency || "").trim().toUpperCase();
+      const canUseXml = !!er && (!xmlCur || xmlCur === invCur);
+      return {
+        inv, index, er, issues, errors, warnings, duplicate, unconvertedRow, credit, cancelled, isManual,
+        notChecked, hardIssue, hasWarning, passed, status, issueCount, invCur, canUseXml,
+        key: `${index}:${inv.invoice_no}`,
+      };
+    });
+
+    if (rows.length === 0) return null;
+
+    const counts = {
+      all: rows.length,
+      issues: rows.filter(r => r.hardIssue || r.hasWarning).length,
+      passed: rows.filter(r => r.passed).length,
+      manual: rows.filter(r => r.isManual).length,
+    };
+    const ordered = [...rows].sort((a, b) =>
+      Number(b.hardIssue || b.hasWarning) - Number(a.hardIssue || a.hasWarning) || a.index - b.index
+    );
+    const visible = ordered.filter(r =>
+      invoiceQueueFilter === "all" ? true :
+      invoiceQueueFilter === "issues" ? (r.hardIssue || r.hasWarning) :
+      invoiceQueueFilter === "passed" ? r.passed :
+      r.isManual
+    );
+
+    const statusText = (r: any) =>
+      r.status === "manual" ? t("手动", "Manual") :
+      r.status === "blocked" ? `${t("问题", "Issues")}${r.issueCount ? ` · ${r.issueCount}` : ""}` :
+      r.status === "warning" ? `${r.warnings} ${t("警告", "warning")}` :
+      t("通过", "Passed");
+
+    const diffRow = (label: string, xml: number, form: number) => {
+      const bad = Math.abs(xml - form) > 0.5;
+      return (
+        <div className={`iq-diff-row ${bad ? "bad" : "ok"}`}>
+          <span>{label}</span>
+          <span>{fmtShort(xml)}</span>
+          <span>{fmtShort(form)}</span>
+          <span>{bad ? "✗" : "✓"}</span>
+        </div>
+      );
+    };
+
+    return (
+      <div className="card invoice-queue">
+        <h3 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span>{t("发票审核队列", "Invoice Review Queue")}</span>
+          <span className="iq-count">
+            {counts.passed}/{rows.length} {t("通过", "passed")}
+            {counts.issues > 0 && <> · <b>{counts.issues} {t("待处理", "to review")}</b></>}
+          </span>
+        </h3>
+        <div className="iq-intro">
+          {t("按问题优先排列。展开一行可对比 XML 与表单值，并直接采用 XML 金额。", "Issues first. Expand a row to compare XML with the form and apply an XML value.")}
+        </div>
+
+        <div className="iq-tabs">
+          {([
+            ["all", t("全部", "All"), counts.all],
+            ["issues", t("问题", "Issues"), counts.issues],
+            ["passed", t("通过", "Passed"), counts.passed],
+            ["manual", t("手动", "Manual"), counts.manual],
+          ] as [typeof invoiceQueueFilter, string, number][]).map(([key, label, count]) => (
+            <button
+              key={key}
+              className={invoiceQueueFilter === key ? "on" : ""}
+              onClick={() => setInvoiceQueueFilter(key)}
+            >
+              {label} <span>{count}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="iq-table">
+          <div className="iq-row iq-head">
+            <div>{t("发票", "Invoice")}</div>
+            <div>{t("销售方", "Seller")}</div>
+            <div className="iq-num">{t("净额", "Net")}</div>
+            <div className="iq-num">VAT</div>
+            <div className="iq-num">WHT</div>
+            <div>{t("状态", "Status")}</div>
+            <div />
+          </div>
+          {visible.length === 0 ? (
+            <div className="iq-empty">
+              {invoiceQueueFilter === "issues"
+                ? t("没有待处理发票。", "No invoices need review.")
+                : invoiceQueueFilter === "passed"
+                  ? t("还没有通过审核的发票。", "No invoices have passed yet.")
+                  : invoiceQueueFilter === "manual"
+                    ? t("没有手动录入的发票。", "No manual invoices.")
+                    : t("没有发票。", "No invoices.")}
+            </div>
+          ) : visible.map(r => {
+            const open = expandedQueueKey === r.key;
+            const xmlNet = r.er?.invoice?.net_amount ?? 0;
+            const xmlVat = r.er?.invoice?.total_vat ?? 0;
+            const xmlWht = r.er?.invoice?.total_wht ?? 0;
+            const formNet = amountOf(r.inv.amount);
+            const formVat = amountOf(r.inv.vat);
+            const formWht = amountOf(r.inv.wht);
+            const xmlSeller = String(r.er?.invoice?.seller_name || "").trim();
+            const xmlTax = String(r.er?.invoice?.seller_tax_id || "").trim();
+            const formSeller = String(r.inv.company_name || "").trim();
+            const formTax = String(r.inv.seller_tax_id || "").trim();
+            const sellerMismatch = !!xmlSeller && !!formSeller && xmlSeller.toLowerCase() !== formSeller.toLowerCase();
+            const taxMismatch = !!xmlTax && !!formTax && xmlTax !== formTax;
+            return (
+              <div key={r.key} className={`iq-item iq-${r.status}`}>
+                <div className="iq-row" onClick={() => setExpandedQueueKey(open ? null : r.key)}>
+                  <div className="iq-inv">
+                    <b>{r.inv.invoice_no || "—"}</b>
+                    <span>{r.invCur}{r.isManual ? ` · ${t("手动", "manual")}` : ""}</span>
+                  </div>
+                  <div className="iq-seller">
+                    <b>{r.inv.company_name || "—"}</b>
+                    <span>{r.inv.seller_tax_id || "—"}</span>
+                  </div>
+                  <div className="iq-num">{fmtShort(formNet)}</div>
+                  <div className="iq-num">{fmtShort(formVat)}</div>
+                  <div className="iq-num">{fmtShort(formWht)}</div>
+                  <div className={`iq-status ${r.status}`}>{statusText(r)}</div>
+                  <div className="iq-chev">{open ? "▾" : "▸"}</div>
+                </div>
+
+                {open && (
+                  <div className="iq-detail">
+                    {r.duplicate && (
+                      <div className="iq-note bad">
+                        <b>{t("重复付款", "Duplicate payment")}:</b>{" "}
+                        {t("该发票已被其他文档引用", "This invoice is already referenced in another document")}
+                        {" — "}{r.duplicate.serials.join(", ")}
+                      </div>
+                    )}
+                    {r.unconvertedRow && (
+                      <div className="iq-note bad">
+                        <b>{t("无法换算", "Cannot convert")}:</b>{" "}
+                        {t("该发票没有可用的 ETA 汇率，未计入文档合计。", "This invoice has no usable ETA rate and is excluded from the document totals.")}
+                      </div>
+                    )}
+                    {(r.credit || r.cancelled) && (
+                      <div className="iq-note bad">
+                        <b>{r.credit ? t("贷项通知单", "Credit note") : t("已被取消", "Cancelled")}:</b>{" "}
+                        {t("付款前必须移除该发票。", "Remove this invoice before payment.")}
+                      </div>
+                    )}
+                    {r.isManual && (
+                      <div className="iq-note">
+                        {t("手动发票没有 ETA XML，无法执行 XML 校验；请人工核对。", "Manual invoice has no ETA XML, so XML validation cannot run; review it manually.")}
+                      </div>
+                    )}
+                    {r.notChecked && (
+                      <div className="iq-note">
+                        {t("已附加发票，但尚未运行 ETA 校验。", "Attached invoice, but ETA validation has not been run.")}
+                      </div>
+                    )}
+
+                    {r.er && (
+                      <>
+                        {sellerMismatch || taxMismatch ? (
+                          <div className="iq-note warn">
+                            <b>{t("销售方不一致", "Seller mismatch")}:</b>{" "}
+                            XML {xmlSeller || "—"} / {xmlTax || "—"}
+                            {" · "}
+                            {t("表单", "Form")} {formSeller || "—"} / {formTax || "—"}
+                          </div>
+                        ) : null}
+                        <div className="iq-diff">
+                          <div className="iq-diff-row iq-diff-head">
+                            <span>{t("字段", "Field")}</span>
+                            <span>XML</span>
+                            <span>{t("表单", "Form")}</span>
+                            <span />
+                          </div>
+                          {diffRow(t("净额", "Net"), xmlNet, formNet)}
+                          {diffRow("VAT", xmlVat, formVat)}
+                          {diffRow("WHT", xmlWht, formWht)}
+                        </div>
+                        {r.issues.length > 0 && (
+                          <div className="iq-issues">
+                            {r.issues.map((issue: any, idx: number) => (
+                              <div key={idx} className={`iq-issue ${issue.severity}`}>
+                                <span>{issue.severity === "error" ? "✗" : "⚠"}</span>
+                                <div>
+                                  <b>{issue.field}</b>
+                                  <div>{issue.message}</div>
+                                  <small>XML: {issue.xml_value} · {t("表单", "Form")}: {issue.form_value}</small>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {r.canUseXml && (
+                          <div className="iq-actions">
+                            {Math.abs(formNet - xmlNet) > 0.5 && (
+                              <button className="btn-add" onClick={() => updInv(r.index, "amount", xmlNet.toFixed(2))}>
+                                {t("采用 XML 净额", "Use XML net")}
+                              </button>
+                            )}
+                            {Math.abs(formVat - xmlVat) > 0.5 && (
+                              <button className="btn-add" onClick={() => updInv(r.index, "vat", xmlVat.toFixed(2))}>
+                                {t("采用 XML VAT", "Use XML VAT")}
+                              </button>
+                            )}
+                            {Math.abs(formWht - xmlWht) > 0.5 && (
+                              <button className="btn-add" onClick={() => updInv(r.index, "wht", xmlWht.toFixed(2))}>
+                                {t("采用 XML WHT", "Use XML WHT")}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {!r.canUseXml && (
+                          <div className="iq-note">
+                            {t("XML 币种与表单币种不同，未提供一键采用。", "XML currency differs from the form currency; one-click apply is disabled.")}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="iq-foot">
+          <span>ⓘ {t("ETA 校验只覆盖已附加 XML 的发票。", "ETA validation only covers invoices with attached XML.")}</span>
+          <button
+            className="btn-validation"
+            onClick={openValidationResults}
+            disabled={!rows.some(r => !r.isManual)}
+          >
+            {t("重新审核全部", "Re-run audit on all")}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const AuditChecklistCard = () => (
     <div className="card">
@@ -2234,7 +2904,9 @@ function App() {
         </h3>
         {whtFreeConflict && (
           <div className="field-warning" style={{ color: 'var(--orange)', marginBottom: 8 }}>
-            {t("警告: 该供应商为 WHT 免税，但本文档仍预扣了 WHT，请核对。", "Warning: this supplier is WHT-free, but this document still withholds WHT — please review.")}
+            {t("警告: 以下 WHT 免税供应商仍被预扣了 WHT，请核对: ", "Warning: WHT is still withheld from these WHT-free seller(s) — please review: ")}
+            <b>{whtConflictSellers.join(", ") || "—"}</b>
+            {unattributedWht && ` (${t("文档级 WHT，无法按发票归属", "document-level WHT; cannot attribute to an invoice")})`}
           </div>
         )}
         {items.map((it: any) => {
@@ -2267,7 +2939,29 @@ function App() {
     </div>
   );
 
-  const AuditNotesDecisionCard = () => (
+  const setDecision = (decision: string) => {
+    if (decision === "approve") {
+      const signals = getBankAuditSignals();
+      const failures = items.filter((it: any) => shownOf(it) === "fail");
+      const warnings = signals.filter(s => s.sev === "warning");
+      const warningSig = warnings.map(s => s.title).join(" | ");
+      if (signals.some(s => s.sev === "blocker") || failures.length > 0) return;
+      if (warnings.length > 0 && ackedWarningSig !== warningSig) return;
+    }
+    updateField("final_decision", decision);
+    updateField("audited_at", new Date().toISOString());
+  };
+
+  const AuditNotesDecisionCard = () => {
+    const signals = getBankAuditSignals();
+    const signalBlockers = signals.filter(s => s.sev === "blocker");
+    const checklistFailures = items.filter((it: any) => shownOf(it) === "fail");
+    const warnings = signals.filter(s => s.sev === "warning");
+    const warningSig = warnings.map(s => s.title).join(" | ");
+    const warningsAcked = warningSig !== "" && ackedWarningSig === warningSig;
+    const approveLocked = signalBlockers.length > 0 || checklistFailures.length > 0;
+    const approveBlocked = approveLocked || (warnings.length > 0 && !warningsAcked);
+    return (
     <>
       <div className="card">
         <h3>{t("审计备注", "Audit Notes")}</h3>
@@ -2275,18 +2969,36 @@ function App() {
       </div>
       <div className="card">
         <h3>{t("最终决定", "Final Decision")}</h3>
+        {approveLocked && (
+          <div className="decision-gate bad">
+            <b>{t("批准已锁定", "Approve is locked")}</b>
+            <span>
+              {[
+                signalBlockers.length > 0 ? `${signalBlockers.length} ${t("个阻塞项", "blocker(s)")}` : "",
+                checklistFailures.length > 0 ? `${checklistFailures.length} ${t("个清单失败项", "failed checklist item(s)")}` : "",
+              ].filter(Boolean).join(" · ")}
+              {" — "}{t("请先解决上方问题。", "Resolve the issues above first.")}
+            </span>
+          </div>
+        )}
+        {warnings.length > 0 && (
+          <label className="decision-ack">
+            <input type="checkbox" checked={warningsAcked} onChange={e => setAckedWarningSig(e.target.checked ? warningSig : "")} />
+            <span>{t("我已核对所有警告", "I have reviewed all warnings")} ({warnings.length})</span>
+          </label>
+        )}
         <div className="decision-options">
-          <label className={`decision-option ${data.final_decision === "approve" ? "decision-selected approve" : ""}`}>
-            <input type="radio" name="final_decision" checked={data.final_decision === "approve"} onChange={() => updateField("final_decision", "approve")} />
+          <label className={`decision-option ${data.final_decision === "approve" ? "decision-selected approve" : ""}${approveBlocked ? " decision-disabled" : ""}`}>
+            <input type="radio" name="final_decision" checked={data.final_decision === "approve"} disabled={approveBlocked} onChange={() => setDecision("approve")} />
             <span className="decision-label">{t("批准", "Approve")}</span>
           </label>
           <label className={`decision-option ${data.final_decision === "conditional" ? "decision-selected conditional" : ""}`}>
-            <input type="radio" name="final_decision" checked={data.final_decision === "conditional"} onChange={() => updateField("final_decision", "conditional")} />
+            <input type="radio" name="final_decision" checked={data.final_decision === "conditional"} onChange={() => setDecision("conditional")} />
             <span className="decision-label">{t("有条件批准", "Conditional Approve")}</span>
           </label>
           <label className={`decision-option ${data.final_decision === "reject" ? "decision-selected reject" : ""}`}>
             <input type="radio" name="final_decision" checked={data.final_decision === "reject"} onChange={() => {
-              updateField("final_decision", "reject");
+              setDecision("reject");
               if (failedItems.length && !(data.reject_reason || "").trim()) {
                 updateField("reject_reason", failedItems.map(l => `• ${l}`).join("\n"));
               }
@@ -2294,6 +3006,11 @@ function App() {
             <span className="decision-label">{t("拒绝", "Reject")}</span>
           </label>
         </div>
+        {data.final_decision && data.audited_at && (
+          <div className="field-sub" style={{ marginTop: 8 }}>
+            {t("审计时间", "Audited at")}: {new Date(data.audited_at).toLocaleString()}
+          </div>
+        )}
         {data.final_decision === "conditional" && (
           <div className="field" style={{marginTop: 12}}>
             <label className="field-label">{t("有条件批准原因", "Reason for Conditional Approve")}</label>
@@ -2315,7 +3032,8 @@ function App() {
         )}
     </div>
     </>
-  );
+    );
+  };
 
   const ImportTab = () => {
     return (
@@ -3415,7 +4133,11 @@ function App() {
         conditional_reason: data.final_decision === "conditional" ? (data.conditional_reason || "") : "",
         reject_reason: data.final_decision === "reject" ? (data.reject_reason || "") : "",
         auditor: data.auditor || authUser || "",
+        audited_at: data.final_decision ? (data.audited_at || new Date().toISOString()) : "",
       };
+      if (!formRef.current.audited_at && saveData.audited_at) {
+        formRef.current = { ...formRef.current, audited_at: saveData.audited_at };
+      }
       const dataJson = JSON.stringify(saveData);
       if (target.remote && authUser) {
         try {
@@ -3473,7 +4195,15 @@ function App() {
       } catch {}
     }
     const label = serial || draftLabel(draftNumber);
-    const saveData = { ...data, draft_no: draftNumber, auditor: data.auditor || authUser || "" };
+    const saveData = {
+      ...data,
+      draft_no: draftNumber,
+      auditor: data.auditor || authUser || "",
+      audited_at: data.final_decision ? (data.audited_at || new Date().toISOString()) : "",
+    };
+    if (!formRef.current.audited_at && saveData.audited_at) {
+      formRef.current = { ...formRef.current, audited_at: saveData.audited_at };
+    }
     // Enforce settlement rules for remainder docs: the parent document carries
     // all VAT/WHT/temp-labour/other deductions for the whole settlement, so
     // this one must not apply them a second time.
@@ -3591,6 +4321,7 @@ function App() {
         }
       }
       if (!parsed.auditor) parsed.auditor = "";
+      if (!parsed.audited_at) parsed.audited_at = "";
       if (parsed.paid !== true) parsed.paid = false;
       if (!parsed.paid_at) parsed.paid_at = "";
       if (!parsed.paid_by) parsed.paid_by = "";
@@ -4923,39 +5654,6 @@ function App() {
     setShowRemainderPicker(false);
   };
 
-  // Invoices referenced by the document being edited that are ALSO referenced
-  // by other saved documents and not reconciled through a remainder link.
-  // Invoice ids like "61" repeat across suppliers, so match on the ETA uuid when
-  // present, otherwise on (invoice id + seller tax id) — never the id alone.
-  const currentSqlDefault = (formRef.current.doc_serial || "").trim();
-  const currentInvs: { no: string; seller: string; uuid: string }[] = [];
-  if (isImportDocument(formRef.current)) {
-    (formRef.current.import_entries || []).forEach((e: any) => {
-      if (e.attached_invoice) currentInvs.push({ no: String(e.attached_invoice), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
-    });
-  } else {
-    (formRef.current.invoices || []).forEach((inv: any) => {
-      if (inv.invoice_no) currentInvs.push({ no: String(inv.invoice_no), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
-    });
-  }
-  const sameInvoiceRef = (a: { no: string; seller: string; uuid: string }, b: any): boolean => {
-    const bu = String(b?.uuid || "").trim();
-    const bs = String(b?.seller || "").trim();
-    if (a.uuid && bu) return a.uuid === bu;
-    if (a.no !== String(b?.no || "")) return false;
-    if (a.seller && bs) return a.seller === bs;
-    // Only treat as the same when neither side identifies a seller; if one does,
-    // a matching id alone is too weak to flag (different suppliers reuse ids).
-    return !a.seller && !bs;
-  };
-  const doublePayWarnings: { invoice: string; serials: string[] }[] = [];
-  if (!formRef.current.remainder_of) {
-    for (const cur of currentInvs) {
-      const others = savedDocsIndex.filter((d: any) => d.label !== currentSqlDefault && d.invoices.some((i: any) => sameInvoiceRef(cur, i)));
-      if (others.length > 0) doublePayWarnings.push({ invoice: cur.no, serials: others.map(o => o.label) });
-    }
-  }
-
   const openPoolForSelect = () => {
     setShowPool(true);
     setPoolSearch("");
@@ -6179,6 +6877,8 @@ function App() {
             <div className="bank-jump">
               {([
                 ["sec-info", t("文件", "Document")],
+                ["sec-audit", t("审计", "Audit")],
+                ["sec-settlement", t("结算审计", "Settlement")],
                 ["sec-supplier", t("供应商", "Supplier")],
                 ["sec-advance", t("预付款", "Advance")],
                 ["sec-payable", t("应付", "Payable")],
@@ -6190,6 +6890,7 @@ function App() {
                 ["sec-net", t("净应付", "Net")],
                 ["sec-paidtotals", t("实付合计", "Paid Totals")],
                 ["sec-invoices", t("发票", "Invoices")],
+                ["sec-queue", t("队列", "Queue")],
                 ["sec-checklist", t("清单", "Checklist")],
               ] as [string, string][]).map(([id, label]) => (
                 <button key={id} className={bankRowId(bankSection) === bankRowId(id) ? "on" : ""} onClick={() => {
@@ -6199,6 +6900,8 @@ function App() {
             </div>
 
             <div id="sec-info" className="bank-anchor">{AuditInfoCard()}</div>
+            <div id="sec-audit" className="bank-anchor"><BankAuditCenterCard /></div>
+            <div id="sec-settlement" className="bank-anchor"><BankSettlementAuditCard /></div>
             <CollapsibleSection id="sec-supplier" title={t("1. 供应商结算", "1. Supplier Settlement")} summary={`${t("含税结算", "Settlement incl. VAT")} ${fmt(computed.c_1G)}`}>{Card1()}</CollapsibleSection>
             <div className="card-row">
               <CollapsibleSection id="sec-advance" title={t("2. 预付款", "2. Advance Payment")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_2E)}`}>{Card2()}</CollapsibleSection>
@@ -6218,6 +6921,11 @@ function App() {
             </div>
             <CollapsibleSection id="sec-paidtotals" title={t("10 & 11. 实付合计", "10 & 11. Paid Totals")} summary={fmt(computed.c_11B)}>{Card11()}</CollapsibleSection>
             {!isImport && <CollapsibleSection id="sec-invoices" title={t("发票", "Invoices")} summary={`${(data.invoices ?? []).length}`}>{InvoicesCard()}</CollapsibleSection>}
+            {!isImport && (data.invoices ?? []).length > 0 && (
+              <CollapsibleSection id="sec-queue" title={t("发票审核队列", "Invoice Review Queue")} summary={`${(data.invoices ?? []).length}`}>
+                {BankInvoiceQueueCard()}
+              </CollapsibleSection>
+            )}
             <div id="sec-checklist" className="bank-anchor">{AuditChecklistCard()}</div>
             {AuditNotesDecisionCard()}
           </>

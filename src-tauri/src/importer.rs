@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use crate::models::{FormData, InvoiceData, OcrFieldInfo};
+use crate::models::{FormData, InvoiceData, OcrFieldInfo, BUYER_TAX_ID};
 
 pub type ProgressFn = Box<dyn Fn(&str, &str) + Send>;
 
@@ -514,7 +514,7 @@ pub fn parse_text(text: &str) -> FormData {
     };
 
     // Tax IDs — buyer is always CSCEC
-    data.buyer_tax_id = "100489095".to_string();
+    data.buyer_tax_id = BUYER_TAX_ID.to_string();
     let detected_buyer = extract_tax_val(&norm_text, &[
         r"(?i)买方税号[：:\s]*([\w\-]+)",
         r"(?i)buyer[_\s]*tax[_\s]*id[^:]*[:：\s]*([\w\-]+)",
@@ -522,7 +522,7 @@ pub fn parse_text(text: &str) -> FormData {
         r"(?i)(?:纳税人识别号|税务登记号)[^：:\n]{0,10}?[:：]\s*([\w\-]+)",
     ]);
     // Flag if detected buyer tax ID differs from expected
-    if !detected_buyer.is_empty() && detected_buyer != "100489095" {
+    if !detected_buyer.is_empty() && detected_buyer != BUYER_TAX_ID {
         data.buyer_tax_id = detected_buyer;
     }
     data.seller_tax_id = extract_tax_val(&norm_text, &[
@@ -550,8 +550,8 @@ pub fn parse_text(text: &str) -> FormData {
         ]);
     }
     // Ensure buyer tax ID is the fixed expected value (override any OCR detection)
-    if data.buyer_tax_id != "100489095" {
-        data.buyer_tax_id = "100489095".to_string();
+    if data.buyer_tax_id != BUYER_TAX_ID {
+        data.buyer_tax_id = BUYER_TAX_ID.to_string();
     }
     // Extract multiple seller tax IDs from invoice lines (only on original text for Chinese patterns)
     {
@@ -561,7 +561,7 @@ pub fn parse_text(text: &str) -> FormData {
                 .get(1)
                 .map(|m| m.as_str().chars().filter(|c| c.is_ascii_digit()).collect())
                 .unwrap_or_default();
-            if tid.len() == 9 && tid != "100489095" && !data.seller_tax_ids.contains(&tid) {
+            if tid.len() == 9 && tid != BUYER_TAX_ID && !data.seller_tax_ids.contains(&tid) {
                 data.seller_tax_ids.push(tid);
             }
         }

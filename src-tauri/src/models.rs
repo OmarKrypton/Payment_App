@@ -4,6 +4,10 @@ fn default_true() -> bool {
     true
 }
 
+/// CSCEC's fixed buyer tax ID. Imported documents and the UI warning must use
+/// the same value.
+pub const BUYER_TAX_ID: &str = "100489095";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrFieldInfo {
     pub field: String,
@@ -96,6 +100,9 @@ pub struct FormData {
     pub reject_reason: String,
     #[serde(default)]
     pub auditor: String,
+    /// When the current approval/conditional/rejection decision was recorded.
+    #[serde(default)]
+    pub audited_at: String,
     /// Payment status of the saved document. Stored in the snapshot itself so it
     /// stays local-first and syncs through the existing snapshot table (no
     /// schema migration). Older documents simply default to unpaid.
@@ -190,6 +197,7 @@ impl Default for FormData {
             conditional_reason: String::new(),
             reject_reason: String::new(),
             auditor: String::new(),
+            audited_at: String::new(),
             paid: false,
             paid_at: String::new(),
             paid_by: String::new(),
