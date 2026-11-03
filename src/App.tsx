@@ -2693,8 +2693,6 @@ function App() {
       };
     });
 
-    if (rows.length === 0) return null;
-
     const counts = {
       all: rows.length,
       issues: rows.filter(r => r.hardIssue || r.hasWarning).length,
