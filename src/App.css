@@ -4079,3 +4079,21 @@ mark.de-hl {
   text-transform: uppercase;
   color: var(--text-muted);
 }
+
+/* Clickable audit ring */
+.audit-center .ac-ring-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.16s ease, filter 0.16s ease;
+}
+.audit-center .ac-ring-button:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.04);
+}
+.audit-center .ac-ring-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}

@@ -2039,7 +2039,7 @@ function App() {
     if (docSellerTaxIds.size > 0) {
       if (hasWhtConflict) check_wht_cert_auto = "fail";
       else if (hasWhtFreeSeller) check_wht_cert_auto = "pass";
-      else check_wht_cert_auto = "na";
+      else check_wht_cert_auto = "pass";
     }
     const whtFreeConflict = !isImport && hasWhtConflict;
 
@@ -2262,7 +2262,13 @@ function App() {
                 : t("没有阻塞项或警告", "No blockers or warnings")}
             </div>
           </div>
-          <div className="ac-ring" aria-label={`${pct}% ${t("通过", "passed")}`}>
+          <button
+          type="button"
+          className="ac-ring ac-ring-button"
+          title={t("打开核对清单", "Open checklist")}
+          aria-label={`${pct}% ${t("通过", "passed")}`}
+          onClick={() => document.getElementById("sec-checklist")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        >
           <svg className="ac-ring-svg" viewBox="0 0 72 72" aria-hidden="true">
             <defs>
               <linearGradient id="acRingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -2283,9 +2289,9 @@ function App() {
           </svg>
           <div className="ac-ring-in">
             <b>{pct}%</b>
-            <span>{passed}/{totalChecks} {t("通过", "passed")}</span>
+            <span>{t("审计", "Audit")}</span>
           </div>
-        </div>
+        </button>
         </div>
         <div className="ac-stats">
           <div className={`ac-stat${blockers > 0 ? " bad" : ""}`}><b>{blockers}</b><span>{t("阻塞", "Blockers")}</span></div>
@@ -2312,12 +2318,6 @@ function App() {
             ✓ {t("所有自动检查已通过。仍需人工核对清单和结算扣款。", "All automatic checks passed. Manual checklist and settlement reviews still apply.")}
           </div>
         )}
-        <div className="ac-foot">
-          <span>{t("已通过", "Passed")}: {passed}/{totalChecks}</span>
-          <button className="btn-add" onClick={() => document.getElementById("sec-checklist")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-            {t("打开核对清单", "Open checklist")}
-          </button>
-        </div>
       </div>
     );
   };
