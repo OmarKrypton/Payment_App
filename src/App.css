@@ -1453,6 +1453,17 @@ body {
   line-height: 1.4;
 }
 .settlement-audit .sa-foot .btn-add { flex: none; }
+
+/* Keep the audit columns visually aligned with their headers. */
+.settlement-audit .sa-head > div:nth-child(2),
+.settlement-audit .sa-head > div:nth-child(4),
+.settlement-audit .sa-head > div:nth-child(5),
+.settlement-audit .sa-head > div:nth-child(6),
+.settlement-audit .sa-head > div:nth-child(7) { text-align: right; }
+.settlement-audit .sa-head > div:nth-child(8) { text-align: center; }
+.settlement-audit .sa-row:not(.sa-head):nth-child(even) { background: rgba(148, 163, 184, 0.06); }
+.settlement-audit .sa-row:not(.sa-head):hover { background: rgba(59, 130, 246, 0.055); }
+.settlement-audit .sa-row.sa-warn:not(.sa-head) { background: rgba(234, 88, 12, 0.06); }
 .settlement-audit .sa-kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1574,6 +1585,71 @@ body {
 /* ── Invoice review queue ── */
 .invoice-queue .iq-count { font-size: 11px; color: var(--text-muted); font-weight: 500; white-space: nowrap; }
 .invoice-queue .iq-count b { color: var(--orange); }
+.invoice-queue .iq-desc { font-size: 10px; line-height: 1.35; color: var(--text-muted); overflow-wrap: anywhere; }
+.invoice-queue .iq-edit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 8px;
+  padding: 8px 0 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+.invoice-queue .iq-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.invoice-queue .iq-edit .field-input,
+.invoice-queue .iq-edit .fast-input { width: 100%; }
+.invoice-queue .iq-totals {
+  margin-top: 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.invoice-queue .iq-total-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 9px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.invoice-queue .iq-total {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) 116px 116px 22px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 9px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+.invoice-queue .iq-total b,
+.invoice-queue .iq-total-doc { font-family: var(--mono); text-align: right; }
+.invoice-queue .iq-total b { color: var(--text); }
+.invoice-queue .iq-total-doc { color: var(--text-muted); }
+.invoice-queue .iq-total-flag { text-align: center; font-weight: 700; }
+.invoice-queue .iq-total.pass .iq-total-flag { color: var(--green); }
+.invoice-queue .iq-total.warn .iq-total-flag { color: var(--orange); }
+.invoice-queue .iq-total.bad .iq-total-flag { color: var(--red); }
+.invoice-queue .iq-total.warn { background: rgba(234, 88, 12, 0.05); }
+.invoice-queue .iq-total.bad { background: rgba(239, 68, 68, 0.045); }
+.invoice-queue .iq-total-note {
+  padding: 6px 9px;
+  border-top: 1px solid var(--border);
+  color: var(--orange);
+  font-size: 10px;
+}
+.invoice-queue .iq-foot-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .invoice-queue .iq-intro {
   display: flex;
   align-items: center;
@@ -1602,7 +1678,7 @@ body {
 .invoice-queue .iq-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .invoice-queue .iq-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1.35fr) minmax(150px, 1.1fr) 88px 76px 76px 112px 24px;
+  grid-template-columns: minmax(140px, 1.15fr) minmax(145px, 1.05fr) minmax(150px, 1.1fr) 88px 76px 76px 112px 24px;
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
@@ -1690,7 +1766,7 @@ body {
 
 @media (max-width: 900px) {
   .invoice-queue .iq-table { overflow-x: auto; }
-  .invoice-queue .iq-row { min-width: 760px; }
+  .invoice-queue .iq-row { min-width: 940px; }
   .invoice-queue .iq-foot { align-items: flex-start; flex-direction: column; }
 }
 

@@ -48,6 +48,7 @@ interface InvoiceData {
   vat?: string;
   wht?: string;
   company_name?: string;
+  description?: string;
   attached_invoice?: string;
   attached_uuid?: string;
   currency?: string;        // invoice currency from the pool (EGP/USD/...)
@@ -1469,6 +1470,17 @@ function App() {
 
   const data = formRef.current;
 
+  // Buyer TAX ID is the CSCEC registration number shown for the recipient on
+  // every ETA invoice. Bank documents with invoices must always carry it; fill
+  // it automatically for existing/saved documents as well as new attachments.
+  useEffect(() => {
+    if ((data.doc_type || "bank") === "import") return;
+    if (!(data.invoices ?? []).length) return;
+    if (String(formRef.current.buyer_tax_id || "").trim() === BUYER_TAX_ID) return;
+    formRef.current = { ...formRef.current, buyer_tax_id: BUYER_TAX_ID };
+    queueFlush();
+  }, [data.doc_type, data.invoices?.length, queueFlush]);
+
   // Bank tab: highlight the section chip nearest the top of the scroll area.
   useEffect(() => {
     if (tab !== "bank" && tab !== "import") return;
@@ -1781,7 +1793,7 @@ function App() {
   }
 
   const addInvoice = () => {
-    const arr = [...data.invoices, { invoice_no: `Invoice-${data.invoices.length + 1}`, seller_tax_id: "", amount: "0.00", vat: "0.00", wht: "0.00", company_name: "" }];
+    const arr = [...data.invoices, { invoice_no: `Invoice-${data.invoices.length + 1}`, seller_tax_id: "", amount: "0.00", vat: "0.00", wht: "0.00", company_name: "", description: "" }];
     formRef.current = { ...formRef.current, invoices: arr };
     recalc(formRef.current);
   };
@@ -2292,6 +2304,8 @@ function App() {
     );
   };
 
+  void InvoicesCard;
+
   const BankSettlementAuditCard = () => {
     const amountOf = (v: any) => parseFloat(String(v ?? "0").replace(/,/g, "")) || 0;
     const tol = 0.005;
@@ -2697,6 +2711,30 @@ function App() {
       r.isManual
     );
 
+    // Prefer the description stored on the invoice; fall back to the ETA line
+    // descriptions so attached invoices still show what they are for.
+    const descOf = (r: any) => {
+      const stored = String(r?.inv?.description || "").trim();
+      if (stored) return stored;
+      const lines = r?.er?.invoice?.lines || [];
+      return Array.from(new Set(
+        lines.map((l: any) => String(l?.description || "").trim()).filter(Boolean),
+      )).join("; ");
+    };
+
+    const invoiceTotals = invoiceDocTotals(data.invoices ?? []);
+    const totalInvoice = invoiceTotals.net + invoiceTotals.vat - invoiceTotals.wht;
+    const totalComparisons = [
+      { key: "net", label: t("净额合计", "Total net"), inv: invoiceTotals.net, doc: computed.c_1B, optional: false },
+      { key: "vat", label: t("VAT 合计", "Total VAT"), inv: invoiceTotals.vat, doc: computed.c_1E, optional: false },
+      { key: "wht", label: t("WHT 合计", "Total WHT"), inv: invoiceTotals.wht, doc: computed.c_6B, optional: true },
+      { key: "total", label: t("发票合计", "Total invoices"), inv: totalInvoice, doc: computed.c_9A, optional: false },
+    ].map(c => ({
+      ...c,
+      ok: Math.abs(c.inv - c.doc) <= 0.5,
+      warn: c.optional && (c.inv <= 0.005) !== (c.doc <= 0.005),
+    }));
+
     const statusText = (r: any) =>
       r.status === "manual" ? t("手动", "Manual") :
       r.status === "blocked" ? `${t("问题", "Issues")}${r.issueCount ? ` · ${r.issueCount}` : ""}` :
@@ -2755,6 +2793,7 @@ function App() {
         <div className="iq-table">
           <div className="iq-row iq-head">
             <div>{t("发票", "Invoice")}</div>
+            <div>{t("描述", "Description")}</div>
             <div>{t("销售方", "Seller")}</div>
             <div className="iq-num">{t("净额", "Net")}</div>
             <div className="iq-num">VAT</div>
@@ -2793,6 +2832,9 @@ function App() {
                     <b>{r.inv.invoice_no || "—"}</b>
                     <span>{r.invCur}{r.isManual ? ` · ${t("手动", "manual")}` : ""}</span>
                   </div>
+                  <div className="iq-desc">
+                    <span>{descOf(r) || "—"}</span>
+                  </div>
                   <div className="iq-seller">
                     <b>{r.inv.company_name || "—"}</b>
                     <span>{r.inv.seller_tax_id || "—"}</span>
@@ -2806,6 +2848,36 @@ function App() {
 
                 {open && (
                   <div className="iq-detail">
+                    <div className="iq-edit">
+                      <label>
+                        <span>{t("描述", "Description")}</span>
+                        <FastInput value={r.inv.description || ""} onChange={v => updInv(r.index, "description", v)} />
+                      </label>
+                      <label>
+                        <span>{t("公司", "Company")}</span>
+                        <FastInput value={r.inv.company_name || ""} onChange={v => updInv(r.index, "company_name", v)} />
+                      </label>
+                      <label>
+                        <span>{t("发票号", "Invoice No")}</span>
+                        <FastInput value={r.inv.invoice_no || ""} onChange={v => updInv(r.index, "invoice_no", v)} />
+                      </label>
+                      <label>
+                        <span>{t("销售方税号", "Seller TAX ID")}</span>
+                        <FastInput value={r.inv.seller_tax_id || ""} onChange={v => updInv(r.index, "seller_tax_id", v)} />
+                      </label>
+                      <label>
+                        <span>{t("净额", "Net")}</span>
+                        <NumericInput value={r.inv.amount || ""} onChange={v => updInv(r.index, "amount", v)} />
+                      </label>
+                      <label>
+                        <span>VAT</span>
+                        <NumericInput value={r.inv.vat || ""} onChange={v => updInv(r.index, "vat", v)} />
+                      </label>
+                      <label>
+                        <span>WHT</span>
+                        <NumericInput value={r.inv.wht || ""} onChange={v => updInv(r.index, "wht", v)} />
+                      </label>
+                    </div>
                     {r.duplicate && (
                       <div className="iq-note bad">
                         <b>{t("重复付款", "Duplicate payment")}:</b>{" "}
@@ -2904,15 +2976,43 @@ function App() {
           })}
         </div>
 
+        <div className="iq-totals">
+          <div className="iq-total-head">
+            <span>{t("发票合计对比", "Invoice totals vs document")}</span>
+            <span>{t("发票", "Invoices")} → {t("文档", "Document")}</span>
+          </div>
+          {totalComparisons.map(c => (
+            <div key={c.key} className={`iq-total ${c.warn ? "warn" : c.ok ? "pass" : "bad"}`}>
+              <span>{c.label}</span>
+              <b>{fmt(c.inv)}</b>
+              <span className="iq-total-doc">→ {fmt(c.doc)}</span>
+              <span className="iq-total-flag">{c.warn ? "⚠" : c.ok ? "✓" : "✗"}</span>
+            </div>
+          ))}
+          {invoiceTotals.unconverted.length > 0 && (
+            <div className="iq-total-note">
+              {t("有发票缺少汇率，未计入合计。", "Some invoices have no exchange rate and are excluded from the totals.")}
+            </div>
+          )}
+        </div>
+
         <div className="iq-foot">
           <span>ⓘ {t("ETA 校验只覆盖已附加 XML 的发票。", "ETA validation only covers invoices with attached XML.")}</span>
-          <button
-            className="btn-validation"
-            onClick={openValidationResults}
-            disabled={!rows.some(r => !r.isManual)}
-          >
-            {t("重新审核全部", "Re-run audit on all")}
-          </button>
+          <div className="iq-foot-actions">
+            <button className="btn-add" onClick={openPoolForSelect}>
+              + {t("从发票池添加", "Add from Pool")}
+            </button>
+            <button className="btn-add" onClick={addInvoice}>
+              + {t("手动发票", "Manual Invoice")}
+            </button>
+            <button
+              className="btn-validation"
+              onClick={openValidationResults}
+              disabled={!rows.some(r => !r.isManual)}
+            >
+              {t("重新审核全部", "Re-run audit on all")}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -5863,6 +5963,11 @@ function App() {
   // ETA invoices carry the buyer's tax ID in receiverId. Use it to fill a blank
   // document automatically, but never overwrite a value the user already set.
   const withBuyerTaxFromPool = (form: any, rows: any[]) => {
+    // Bank documents always use CSCEC's recipient registration number. ETA
+    // invoices carry it as receiverId, but the value is fixed for this app.
+    if (form?.doc_type !== "import" && rows.length > 0) {
+      return { ...form, buyer_tax_id: BUYER_TAX_ID };
+    }
     if (String(form?.buyer_tax_id || "").trim()) return form;
     const buyer = rows
       .map((p: any) => normalizeTaxIdInput(p?.buyer_tax_id))
@@ -7082,7 +7187,6 @@ function App() {
                 ["sec-info", t("文件", "Document")],
                 ["sec-audit", t("审计", "Audit")],
                 ["sec-settlement", t("结算审计", "Settlement")],
-                ["sec-invoices", t("发票", "Invoices")],
                 ["sec-queue", t("队列", "Queue")],
                 ["sec-checklist", t("清单", "Checklist")],
               ] as [string, string][]).map(([id, label]) => (
@@ -7095,7 +7199,6 @@ function App() {
             <div id="sec-info" className="bank-anchor">{AuditInfoCard()}</div>
             <div id="sec-audit" className="bank-anchor"><BankAuditCenterCard /></div>
             <div id="sec-settlement" className="bank-anchor"><BankSettlementAuditCard /></div>
-            {!isImport && <CollapsibleSection id="sec-invoices" title={t("发票", "Invoices")} summary={`${(data.invoices ?? []).length}`}>{InvoicesCard()}</CollapsibleSection>}
             {!isImport && (data.invoices ?? []).length > 0 && (
               <CollapsibleSection id="sec-queue" title={t("发票审核队列", "Invoice Review Queue")} summary={`${(data.invoices ?? []).length}`}>
                 {BankInvoiceQueueCard()}
