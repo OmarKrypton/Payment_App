@@ -2262,12 +2262,30 @@ function App() {
                 : t("没有阻塞项或警告", "No blockers or warnings")}
             </div>
           </div>
-          <div className="ac-ring" style={{ background: `conic-gradient(var(--green) 0 ${pct}%, #e2e8f0 ${pct}% 100%)` }}>
-            <div className="ac-ring-in">
-              <b>{passed}/{totalChecks}</b>
-              <span>{t("通过", "passed")}</span>
-            </div>
+          <div className="ac-ring" aria-label={`${pct}% ${t("通过", "passed")}`}>
+          <svg className="ac-ring-svg" viewBox="0 0 72 72" aria-hidden="true">
+            <defs>
+              <linearGradient id="acRingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="var(--green)" />
+                <stop offset="100%" stopColor="var(--accent)" />
+              </linearGradient>
+            </defs>
+            <circle className="ac-ring-track" cx="36" cy="36" r="30" />
+            <circle
+              className="ac-ring-bar"
+              cx="36"
+              cy="36"
+              r="30"
+              pathLength={100}
+              strokeDasharray={`${pct} 100`}
+              transform="rotate(-90 36 36)"
+            />
+          </svg>
+          <div className="ac-ring-in">
+            <b>{pct}%</b>
+            <span>{passed}/{totalChecks} {t("通过", "passed")}</span>
           </div>
+        </div>
         </div>
         <div className="ac-stats">
           <div className={`ac-stat${blockers > 0 ? " bad" : ""}`}><b>{blockers}</b><span>{t("阻塞", "Blockers")}</span></div>
@@ -4486,6 +4504,7 @@ function App() {
       await recalc(parsed);
       await reconcilePillsFromPool();
       await restoreClaimsFromDocument();
+      await autoValidateAttachedInvoices();
       // Whatever the load auto-reconciled (pool claims, draft numbering) is the
       // baseline, so a freshly loaded document is never considered "unsaved".
       savedJsonRef.current = JSON.stringify(formRef.current);
@@ -6707,10 +6726,41 @@ function App() {
     return null;
   };
 
-  const showEtaResults = (results: any[]) => {
+  const autoValidateAttachedInvoices = async () => {
+    const cur = formRef.current;
+    const entries = cur.doc_type === "import" ? cur.import_entries ?? [] : cur.invoices ?? [];
+    const attached = entries.filter((e: any) => e?.attached_invoice);
+    if (!attached.length) return;
+    let poolRows: any[] = [];
+    try {
+      poolRows = await invoke<any[]>("list_invoice_pool_summary");
+    } catch (e) {
+      console.warn("auto validation skipped: pool summary unavailable", e);
+      return;
+    }
+    const ids = attached.map((e: any) => {
+      const row = e.attached_uuid
+        ? poolRows.find((x: any) => x.uuid === e.attached_uuid)
+        : poolRows.find((x: any) => x.invoice_id === e.attached_invoice &&
+            (!e.seller_tax_id || !x.seller_tax_id || x.seller_tax_id === e.seller_tax_id));
+      return row?.id;
+    }).filter((id: any): id is number => id != null);
+    if (!ids.length) return;
+    try {
+      const results = await invoke<any[]>("validate_from_pool", {
+        ids: Array.from(new Set(ids)),
+        formJson: JSON.stringify(cur),
+      });
+      if (results?.length) showEtaResults(results, true);
+    } catch (e) {
+      console.warn("auto validation failed", e);
+    }
+  };
+
+  const showEtaResults = (results: any[], silent = false) => {
     setEtaResult(results);
     setResultSearch("");
-    setShowEtaResult(true);
+    if (!silent) setShowEtaResult(true);
     // Persist the ETA line descriptions onto the invoice rows so the queue can
     // show them after the document is reopened (validation results are not
     // stored with the snapshot). Never overwrite a description the user edited.

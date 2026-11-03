@@ -4021,3 +4021,61 @@ mark.de-hl {
 .settlement-audit .sa-dot-warn { background: var(--orange); box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.12); }
 .settlement-audit .sa-dot-na { background: var(--text-muted); opacity: 0.5; }
 .settlement-audit .sa-status { text-align: center; }
+
+/* Professional audit-center donut */
+.audit-center .ac-ring {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+.audit-center .ac-ring-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.audit-center .ac-ring-track {
+  fill: none;
+  stroke: rgba(148, 163, 184, 0.22);
+  stroke-width: 6;
+}
+.audit-center .ac-ring-bar {
+  fill: none;
+  stroke: url(#acRingGradient);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dasharray 420ms ease;
+}
+.audit-center .ac-ring-in {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.audit-center .ac-ring-in b {
+  font-size: 15px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.audit-center .ac-ring-in span {
+  margin-top: 2px;
+  font-size: 7px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
