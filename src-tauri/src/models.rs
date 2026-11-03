@@ -229,11 +229,27 @@ impl Default for FormData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InvoiceData {
     pub invoice_no: String,
     pub seller_tax_id: String,
     pub amount: String,
+    #[serde(default)]
+    pub vat: String,
+    #[serde(default)]
+    pub wht: String,
+    #[serde(default)]
+    pub company_name: String,
+    #[serde(default)]
+    pub attached_invoice: String,
+    #[serde(default)]
+    pub attached_uuid: String,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub exchange_rate: f64,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

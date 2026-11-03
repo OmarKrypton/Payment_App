@@ -577,7 +577,7 @@ pub fn parse_text(text: &str) -> FormData {
             let inv_no = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
             let amount = caps.get(2).map(|m| m.as_str().replace(",", "")).unwrap_or("0.00".to_string());
             if !inv_no.is_empty() {
-                data.invoices.push(InvoiceData { invoice_no: inv_no, seller_tax_id: String::new(), amount });
+                data.invoices.push(InvoiceData { invoice_no: inv_no, seller_tax_id: String::new(), amount, ..Default::default() });
             }
         }
     }
@@ -589,7 +589,7 @@ pub fn parse_text(text: &str) -> FormData {
                 let inv_no = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string();
                 let amount = caps.get(2).map(|m| m.as_str().replace(",", "")).unwrap_or("0.00".to_string());
                 if !inv_no.is_empty() && inv_no.len() > 3 {
-                    data.invoices.push(InvoiceData { invoice_no: inv_no, seller_tax_id: String::new(), amount });
+                    data.invoices.push(InvoiceData { invoice_no: inv_no, seller_tax_id: String::new(), amount, ..Default::default() });
                 }
             }
         }
@@ -606,7 +606,7 @@ pub fn parse_text(text: &str) -> FormData {
                 // Skip all-digit strings > 3 chars (likely an amount)
                 if raw.chars().all(|c| c.is_ascii_digit()) && raw.len() > 3 { continue; }
                 if !raw.is_empty() {
-                    data.invoices.push(InvoiceData { invoice_no: raw, seller_tax_id: String::new(), amount: String::new() });
+                    data.invoices.push(InvoiceData { invoice_no: raw, seller_tax_id: String::new(), amount: String::new(), ..Default::default() });
                     inv_count += 1;
                 }
             }
