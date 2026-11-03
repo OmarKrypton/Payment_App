@@ -665,25 +665,6 @@ function Input({ label, sub, value, onChange, width, confidence, numeric, maxDec
   );
 }
 
-function Select({ label, sub, value, options, onChange, disabled }: {
-  label: string; sub?: string; value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean;
-}) {
-  return (
-    <div className="field">
-      <label className="field-label">{label}{sub ? <><br /><span className="field-sub">{sub}</span></> : null}</label>
-      <select
-        className="field-select" value={value} disabled={!!disabled}
-        onChange={e => onChange(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Escape') { e.currentTarget.blur(); }
-        }}
-      >
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
-    </div>
-  );
-}
-
 // Glass dropdown used by the Invoice Pool filters and the History sort: a frosted
 // control with a chevron pinned to the right (it never shifts with the selected
 // text) and a glass popover menu instead of the native select list. Optionally
@@ -1567,12 +1548,6 @@ function App() {
     }
   };
 
-  const ocrConf = (field: string): number | undefined => {
-    if (!data.ocr_meta) return undefined;
-    const m = data.ocr_meta.find(o => o.field === field);
-    return m ? m.confidence : undefined;
-  };
-
   const renderRateRows = (rows: RateRow[], parent: string, rates: string[]) => (
     <div className="rate-rows">
       {rows.map((r, i) => (
@@ -1585,165 +1560,6 @@ function App() {
         </div>
       ))}
       <button className="btn-add" onClick={() => addRow(parent)}>+ Add Row</button>
-    </div>
-  );
-
-  const renderAutoRate = (key: string, value: string, rates: string[], disabled?: boolean) => (
-    <Select label="" value={value} options={rates} onChange={v => updateField(key as any, v)} disabled={disabled} />
-  );
-
-  // ── Cards ──
-  const Card1 = () => (
-    <div className="card">
-      <h3>{t("1. 供应商结算", "1. Supplier Settlement")}</h3>
-      <div className="card-grid">
-        <div className="card-left">
-          <Input label={t("期初累计结算款", "Opening accum.")} value={data.val_1A} onChange={v => updateField("val_1A", v)} confidence={ocrConf("val_1A")} numeric />
-          <Input label={t("本期结算金额", "Current settlement")} value={data.val_1B} onChange={v => { updateField("val_1B", v); }} confidence={ocrConf("val_1B")} numeric />
-          <Input label={t("本期其他增项", "Other additions")} value={data.val_1C} onChange={v => updateField("val_1C", v)} confidence={ocrConf("val_1C")} numeric />
-          <Input label={t("本期扣除额", "Current deductions")} value={data.val_1D} onChange={v => updateField("val_1D", v)} confidence={ocrConf("val_1D")} numeric />
-          <label className="toggle deduction-toggle">
-            <input type="checkbox" checked={data.val_1D_reduces_vat !== false} onChange={() => updateField("val_1D_reduces_vat", data.val_1D_reduces_vat === false)} />
-            {t("该扣除减少增值税", "This deduction reduces VAT")}
-          </label>
-          <Computed label={t("本期供应商结算 (含税)", "Settlement incl. VAT")} value={computed.c_1G} />
-          <Computed label={t("期末累计供应商结算", "Ending accumulative")} value={computed.c_1F} highlight />
-        </div>
-        <div className="card-right">
-          <div className="section-header">
-            <span>{t("增值税率", "VAT Rates")}</span>
-            <label className="toggle">
-              <input type="checkbox" checked={data.vat_manual} onChange={() => toggleManual("vat_manual")} />
-              {t("多税率模式", "Multi-Rate")}
-            </label>
-          </div>
-{data.vat_manual && !isRemainder ? (
-              <>
-                {renderRateRows(data.vat_rows, "vat_rows", ["0%", "5%", "9%", "10%", "14%"])}
-                <div className="rate-total">VAT: {fmt(computed.c_1E)}</div>
-              </>
-            ) : (
-            renderAutoRate("vat_rate", data.vat_rate, ["0%", "5%", "9%", "10%", "14%"], isRemainder)
-          )}
-          <Computed label={t("本期增值税额", "Current VAT amount")} sub={t("", "VAT")} value={computed.c_1E} />
-        </div>
-      </div>
-    </div>
-  );
-
-  const Card2 = () => (
-    <div className="card">
-      <h3>{t("2. 预付款", "2. Advance Payment")}</h3>
-      <Input label={t("预付款总额", "Total advance")} value={data.val_2A} onChange={v => updateField("val_2A", v)} confidence={ocrConf("val_2A")} numeric />
-      <Input label={t("期初预付款扣除", "Initial deduction")} value={data.val_2B} onChange={v => updateField("val_2B", v)} confidence={ocrConf("val_2B")} numeric />
-      <Input label={t("本期预付款扣除", "Current deduction")} value={data.val_2C} onChange={v => updateField("val_2C", v)} confidence={ocrConf("val_2C")} numeric />
-      <Computed label={t("期末预付款扣除金额", "Ending deduction")} value={computed.c_2D} highlight />
-      <Computed label={t("期末预付款余额", "Ending balance")} value={computed.c_2E} highlight />
-    </div>
-  );
-
-  const Card3 = () => (
-    <div className="card">
-      <h3>{t("3. 应付金额", "3. Amount Payable")}</h3>
-      <Computed label={t("期末累计应付金额", "Ending accum. payable")} value={computed.c_3A} highlight />
-    </div>
-  );
-
-  const Card4 = () => (
-    <div className="card">
-      <h3>{t("4. 保留金", "4. Retention")}</h3>
-      <Input label={t("期初保留金", "Initial retention")} value={data.val_4A} onChange={v => updateField("val_4A", v)} confidence={ocrConf("val_4A")} numeric />
-      <Select label={t("保留金率", "Retention rate")} value={data.ret_rate} options={["0%", "0.5%", "3%", "5%", "10%", "15%"]} onChange={v => updateField("ret_rate", v)} />
-      <Computed label={t("本期应扣保留金", "Current deduction")} value={computed.c_4B} />
-      <Input label={t("本期返还保留金", "Current return")} value={data.val_4C} onChange={v => updateField("val_4C", v)} confidence={ocrConf("val_4C")} numeric />
-      <Computed label={t("期末保留金余额", "Ending balance")} value={computed.c_4D} highlight />
-    </div>
-  );
-
-  const Card5 = () => (
-    <div className="card">
-      <h3>{t("5. 临时工社保", "5. Temp. Labour Insurance")}</h3>
-      <Input label={t("期初余额", "Initial balance")} value={data.val_5A} onChange={v => updateField("val_5A", v)} confidence={ocrConf("val_5A")} numeric />
-      <Select label={t("临时工社保率", "Temp labour rate")} value={data.temp_rate} options={["0%", "0.45%"]} onChange={v => updateField("temp_rate", v)} disabled={isRemainder} />
-      <Computed label={t("本期应扣", "Current deductible")} value={computed.c_5B} />
-      <Input label={t("本期返还", "Current return")} value={data.val_5C} onChange={v => updateField("val_5C", v)} confidence={ocrConf("val_5C")} numeric />
-      <Computed label={t("期末余额", "Ending balance")} value={computed.c_5D} highlight />
-    </div>
-  );
-
-  const Card6 = () => (
-    <div className="card">
-      <h3>{t("6. 预提税", "6. WHT")}</h3>
-      <Input label={t("期初累计预提税", "Initial accum. WHT")} value={data.val_6A} onChange={v => updateField("val_6A", v)} confidence={ocrConf("val_6A")} numeric />
-      <div className="section-header" style={{flexWrap:'wrap',gap:8}}>
-        <label className="toggle">
-          <input type="checkbox" checked={data.wht_manual} disabled={isRemainder} onChange={() => toggleManual("wht_manual")} />
-          {t("多税率", "Multi-Rate")}
-        </label>
-        <label className="toggle">
-          <input type="checkbox" checked={data.wht_manual_amount} disabled={isRemainder} onChange={() => toggleManual("wht_manual_amount")} />
-          {t("手动金额", "Manual Amount")}
-        </label>
-      </div>
-      {!isRemainder && data.wht_manual_amount ? (
-        <>
-          <Input label={t("本期预提税（手动，可为负值）", "Current WHT (manual, may be negative)")} value={data.val_6B} onChange={v => updateField("val_6B", v)} confidence={ocrConf("val_6B")} numeric />
-          <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
-        </>
-      ) : !isRemainder && data.wht_manual ? (
-        <>
-          {renderRateRows(data.wht_rows, "wht_rows", ["0%", "1%", "3%", "5%"])}
-          <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
-        </>
-      ) : (
-        <>
-          <Select label={t("预提税率", "WHT Rate")} value={data.wht_rate} options={["0%", "1%", "3%", "5%"]} onChange={v => updateField("wht_rate", v)} disabled={isRemainder} />
-          <Computed label={t("本期预提税", "Current WHT")} value={computed.c_6B} />
-        </>
-      )}
-      <Computed label={t("期末累计预提税", "Ending WHT")} value={computed.c_6C} />
-      <Computed label={t("决算含税减去预提税", "Settlement minus WHT")} value={computed.c_6D} highlight />
-    </div>
-  );
-
-  const Card78 = () => (
-    <div className="card">
-      <h3>{t("8 & 12. 其他扣款与社保", "8 & 12. Others & Social")}</h3>
-      <h4>{t("其他扣款", "Other Deductions")}</h4>
-      <Input label={t("期初其他扣款", "Initial other")} value={data.val_8A} onChange={v => updateField("val_8A", v)} numeric />
-      <Select label={t("扣除费率", "Other rate")} value={data.oth_rate} options={["0%", "0.15%", "0.3%", "0.45%", "0.6%"]} onChange={v => updateField("oth_rate", v)} disabled={isRemainder} />
-      <Computed label={t("本期其他扣款", "Current other")} value={computed.c_8B} />
-      <Computed label={t("期末累计其他扣款", "Ending other")} value={computed.c_8C} highlight />
-
-      <h4>{t("社保", "Social Insurance")}</h4>
-      <Input label={t("期初累计社保", "Initial social")} value={data.val_12A} onChange={v => updateField("val_12A", v)} numeric />
-      <Select label={t("社保比例", "Social rate")} value={data.soc_rate} options={["0%", "3.3%", "3.6%", "11.86%"]} onChange={v => updateField("soc_rate", v)} />
-      <Computed label={t("本期应扣社保", "Current social")} value={computed.c_12B} />
-      <Computed label={t("期末累计社保", "Ending social")} value={computed.c_12C} highlight />
-    </div>
-  );
-
-  const Card9 = () => (
-    <div className="card">
-      <h3>{t("7. 已付款", "7. Amount Paid")}</h3>
-      <Input label={t("期初累计实付", "Initial accum. paid")} value={data.val_7A} onChange={v => updateField("val_7A", v)} confidence={ocrConf("val_7A")} numeric />
-      <Computed label={t("期初累计已付款项合计", "Total initial paid")} value={computed.c_7B} />
-    </div>
-  );
-
-  const Card10 = () => (
-    <div className="card">
-      <h3>{t("9. 净应付", "9. Net Payable")}</h3>
-      <Computed label={t("最终净应付金额", "Net amount payable")} value={computed.c_9A} highlight />
-    </div>
-  );
-
-  const Card11 = () => (
-    <div className="card">
-      <h3>{t("10 & 11. 实付合计", "10 & 11. Paid Totals")}</h3>
-      <Input label={t("本期实付", "Current paid")} value={data.val_10A} onChange={v => updateField("val_10A", v)} confidence={ocrConf("val_10A")} numeric />
-      <Computed label={t("期末累计实付", "Ending accum. paid")} value={computed.c_11A} highlight />
-      <Computed label={t("期末累计已付合计", "Ending total paid")} value={computed.c_11B} highlight />
     </div>
   );
 
@@ -2479,7 +2295,83 @@ function App() {
   const BankSettlementAuditCard = () => {
     const amountOf = (v: any) => parseFloat(String(v ?? "0").replace(/,/g, "")) || 0;
     const tol = 0.005;
+    const vatRates = ["0%", "5%", "9%", "10%", "14%"];
+    const whtRates = ["0%", "1%", "3%", "5%"];
+    const retRates = ["0%", "0.5%", "3%", "5%", "10%", "15%"];
+    const tempRates = ["0%", "0.45%"];
+    const socRates = ["0%", "3.3%", "3.6%", "11.86%"];
+    const othRates = ["0%", "0.15%", "0.3%", "0.45%", "0.6%"];
+
+    const rateSelect = (key: any, value: string, rates: string[], disabled = false) => (
+      <select
+        className="field-select small sa-rate-select"
+        value={rates.includes(value) ? value : rates[0]}
+        onChange={(e) => updateField(key, e.target.value)}
+        disabled={disabled}
+      >
+        {rates.map((r) => <option key={r} value={r}>{r}</option>)}
+      </select>
+    );
+
+    const effectiveRate = (amount: number, tax: number) =>
+      amount > 0 && tax > 0 ? Math.round((tax / amount) * 10000) / 100 : null;
+    const invoiceVatRates = Array.from(new Set(
+      (data.invoices ?? [])
+        .map((inv: any) => effectiveRate(amountOf(inv.amount), amountOf(inv.vat)))
+        .filter((r): r is number => r != null),
+    )).sort((a, b) => a - b);
+    const invoiceWhtRates = Array.from(new Set(
+      (data.invoices ?? [])
+        .map((inv: any) => effectiveRate(amountOf(inv.amount), amountOf(inv.wht)))
+        .filter((r): r is number => r != null),
+    )).sort((a, b) => a - b);
+    const rateList = (rates: number[]) => rates.map((r) => `${r}%`).join(", ");
+
+    const vatBase = data.val_1D_reduces_vat !== false
+      ? computed.c_1B - amountOf(data.val_1D)
+      : computed.c_1B;
+    const vatRateControl = isRemainder
+      ? "—"
+      : data.vat_manual
+        ? <span className="sa-rate-tag">{t("多税率", "Multi-rate")}</span>
+        : rateSelect("vat_rate", data.vat_rate, vatRates, isRemainder);
+    const whtRateControl = isRemainder
+      ? "—"
+      : data.wht_manual_amount
+        ? <span className="sa-rate-tag">{t("手动金额", "Manual amount")}</span>
+        : data.wht_manual
+          ? <span className="sa-rate-tag">{t("多税率", "Multi-rate")}</span>
+          : rateSelect("wht_rate", data.wht_rate, whtRates, isRemainder);
+
     const rows: any[] = [];
+
+    rows.push({
+      key: "settlement",
+      label: t("供应商结算", "Supplier settlement"),
+      basis: computed.c_1A,
+      rate: "—",
+      opening: computed.c_1A,
+      current: computed.c_1B,
+      returned: "—",
+      ending: computed.c_1F,
+      status: computed.c_1F < -tol ? "warn" : "pass",
+      note: `${t("含税结算", "Settlement incl. VAT")} ${fmtShort(computed.c_1G)}`,
+    });
+
+    rows.push({
+      key: "vat",
+      label: "VAT",
+      basis: vatBase,
+      rate: vatRateControl,
+      opening: "—",
+      current: computed.c_1E,
+      returned: "—",
+      ending: "—",
+      status: computed.c_1E < -tol ? "warn" : "pass",
+      note: invoiceVatRates.length > 1
+        ? `${t("发票税率", "Invoice rates")}: ${rateList(invoiceVatRates)}`
+        : undefined,
+    });
 
     rows.push({
       key: "advance",
@@ -2498,7 +2390,7 @@ function App() {
       key: "retention",
       label: t("保留金", "Retention"),
       basis: computed.c_1B,
-      rate: data.ret_rate || "0%",
+      rate: rateSelect("ret_rate", data.ret_rate, retRates),
       opening: computed.c_4A,
       current: computed.c_4B,
       returned: amountOf(data.val_4C),
@@ -2511,7 +2403,7 @@ function App() {
       key: "temp",
       label: t("临时工社保", "Temp. labour"),
       basis: computed.c_1B,
-      rate: isRemainder ? "—" : (data.temp_rate || "0%"),
+      rate: isRemainder ? "—" : rateSelect("temp_rate", data.temp_rate, tempRates, isRemainder),
       opening: computed.c_5A,
       current: computed.c_5B,
       returned: amountOf(data.val_5C),
@@ -2524,7 +2416,7 @@ function App() {
       key: "social",
       label: t("社保", "Social insurance"),
       basis: computed.c_1B,
-      rate: data.soc_rate || "0%",
+      rate: rateSelect("soc_rate", data.soc_rate, socRates),
       opening: computed.c_12A,
       current: computed.c_12B,
       returned: "—",
@@ -2537,7 +2429,7 @@ function App() {
       key: "other",
       label: t("其他扣款", "Other deductions"),
       basis: computed.c_1B,
-      rate: isRemainder ? "—" : (data.oth_rate || "0%"),
+      rate: isRemainder ? "—" : rateSelect("oth_rate", data.oth_rate, othRates, isRemainder),
       opening: computed.c_8A,
       current: computed.c_8B,
       returned: "—",
@@ -2569,21 +2461,45 @@ function App() {
       whtStatus = "warn";
       whtNote = t("期末为负，请检查期初或本期 WHT", "Ending is negative; check opening/current WHT");
     }
+    if (invoiceWhtRates.length > 1) {
+      whtNote = [whtNote, `${t("发票税率", "Invoice rates")}: ${rateList(invoiceWhtRates)}`].filter(Boolean).join(" · ");
+    }
     rows.push({
       key: "wht",
       label: t("预提税", "WHT"),
       basis: computed.c_1B,
-      rate: data.wht_manual_amount
-        ? `${t("手动", "Manual")} ${computed.c_1B > 0 ? ((computed.c_6B / computed.c_1B) * 100).toFixed(2) : "0.00"}%`
-        : data.wht_manual
-          ? t("多税率", "Multi-rate")
-          : (data.wht_rate || "0%"),
+      rate: whtRateControl,
       opening: computed.c_6A,
       current: computed.c_6B,
       returned: "—",
       ending: computed.c_6C,
       status: whtStatus,
       note: whtNote || undefined,
+    });
+
+    rows.push({
+      key: "net",
+      label: t("净应付", "Net payable"),
+      basis: computed.c_1B,
+      rate: "—",
+      opening: "—",
+      current: computed.c_9A,
+      returned: "—",
+      ending: computed.c_9A,
+      status: computed.c_9A < -tol ? "warn" : "pass",
+    });
+
+    rows.push({
+      key: "paid",
+      label: t("已付款", "Amount paid"),
+      basis: computed.c_1B,
+      rate: "—",
+      opening: computed.c_7A,
+      current: computed.c_10A,
+      returned: "—",
+      ending: computed.c_11A,
+      status: computed.c_11A < -tol ? "warn" : "pass",
+      note: `${t("已付合计", "Paid totals")} ${fmtShort(computed.c_11B)}`,
     });
 
     const passCount = rows.filter(r => r.status === "pass").length;
@@ -2598,16 +2514,22 @@ function App() {
           </span>
         </h3>
         <div className="sa-intro">
-          {t("这些扣款来自结算基数，不是发票行。按基数、费率、期初/本期/返还/期末核对。", "These deductions come from the settlement base, not invoice lines. Check base, rate, opening/current/return/ending.")}
+          {t("累计在前、本期在后。费率可直接在表格中选择；多税率在下方配置。", "Cumulative comes before current. Pick single rates in the table; configure multi-rates below.")}
+        </div>
+        <div className="sa-kpis">
+          <div><span>{t("本期结算", "Current settlement")}</span><b>{fmt(computed.c_1B)}</b></div>
+          <div><span>VAT</span><b>{fmt(computed.c_1E)}</b></div>
+          <div><span>WHT</span><b>{fmt(computed.c_6C)}</b></div>
+          <div><span>{t("本期应付", "Current payable")}</span><b>{fmt(computed.c_9A)}</b></div>
         </div>
         <div className="sa-table">
           <div className="sa-row sa-head">
-            <div>{t("扣款", "Deduction")}</div>
+            <div>{t("项目", "Component")}</div>
             <div>{t("基数", "Basis")}</div>
             <div>{t("费率", "Rate")}</div>
-            <div>{t("期初", "Opening")}</div>
+            <div>{t("期初/累计", "Opening / cumulative")}</div>
             <div>{t("本期", "Current")}</div>
-            <div>{t("返还", "Return")}</div>
+            <div>{t("返还/调整", "Return / adj.")}</div>
             <div>{t("期末", "Ending")}</div>
             <div>{t("状态", "Status")}</div>
           </div>
@@ -2615,7 +2537,7 @@ function App() {
             <div key={r.key} className={`sa-row sa-${r.status}`}>
               <div className="sa-name"><b>{r.label}</b>{r.note && <span>{r.note}</span>}</div>
               <div className="sa-num">{fmtShort(r.basis)}</div>
-              <div>{r.rate}</div>
+              <div className="sa-rate-cell">{r.rate}</div>
               <div className="sa-num">{fmtShort(r.opening)}</div>
               <div className="sa-num">{fmtShort(r.current)}</div>
               <div className="sa-num">{typeof r.returned === "number" ? fmtShort(r.returned) : r.returned}</div>
@@ -2624,10 +2546,96 @@ function App() {
             </div>
           ))}
         </div>
+        <div className="sa-rate-options">
+          <div className="sa-rate-panel">
+            <div className="sa-rate-panel-head">
+              <b>{t("VAT 税率", "VAT rates")}</b>
+              <label className="sa-check">
+                <input type="checkbox" checked={!!data.vat_manual} onChange={() => toggleManual("vat_manual")} />
+                {t("多税率", "Multi-rate")}
+              </label>
+            </div>
+            {data.vat_manual && !isRemainder && (
+              <div className="sa-rate-editor">{renderRateRows(data.vat_rows, "vat_rows", vatRates)}</div>
+            )}
+            {!data.vat_manual && (
+              <div className="sa-rate-hint">{t("单税率在表格中直接选择。", "Pick the single rate directly in the table.")}</div>
+            )}
+          </div>
+          <div className="sa-rate-panel">
+            <div className="sa-rate-panel-head">
+              <b>{t("WHT 税率", "WHT rates")}</b>
+              <label className="sa-check">
+                <input type="checkbox" checked={!!data.wht_manual} onChange={() => toggleManual("wht_manual")} />
+                {t("多税率", "Multi-rate")}
+              </label>
+              <label className="sa-check">
+                <input type="checkbox" checked={!!data.wht_manual_amount} onChange={() => toggleManual("wht_manual_amount")} />
+                {t("手动金额", "Manual amount")}
+              </label>
+            </div>
+            {data.wht_manual_amount && (
+              <Input label={t("WHT 金额", "WHT amount")} value={data.val_6B} onChange={(v) => updateField("val_6B", v)} numeric />
+            )}
+            {data.wht_manual && (
+              <div className="sa-rate-editor">{renderRateRows(data.wht_rows, "wht_rows", whtRates)}</div>
+            )}
+            {!data.wht_manual && !data.wht_manual_amount && (
+              <div className="sa-rate-hint">{t("单税率在表格中直接选择。", "Pick the single rate directly in the table.")}</div>
+            )}
+          </div>
+        </div>
+        <details className="sa-values" id="sa-values">
+          <summary>{t("调整金额与期初余额", "Adjust amounts & opening balances")}</summary>
+          <div className="sa-values-grid">
+            <section>
+              <h4>{t("供应商结算", "Supplier settlement")}</h4>
+              <Input label={t("期初累计", "Opening accum.")} value={data.val_1A} onChange={(v) => updateField("val_1A", v)} numeric />
+              <Input label={t("本期结算", "Current settlement")} value={data.val_1B} onChange={(v) => updateField("val_1B", v)} numeric />
+              <Input label={t("其他增加", "Other additions")} value={data.val_1C} onChange={(v) => updateField("val_1C", v)} numeric />
+              <Input label={t("本期扣减", "Current deductions")} value={data.val_1D} onChange={(v) => updateField("val_1D", v)} numeric />
+              <label className="sa-check">
+                <input
+                  type="checkbox"
+                  checked={data.val_1D_reduces_vat !== false}
+                  onChange={() => updateField("val_1D_reduces_vat", data.val_1D_reduces_vat === false)}
+                />
+                {t("该扣减减少增值税", "This deduction reduces VAT")}
+              </label>
+            </section>
+            <section>
+              <h4>{t("预付款与保留金", "Advance & retention")}</h4>
+              <Input label={t("预付款总额", "Total advance")} value={data.val_2A} onChange={(v) => updateField("val_2A", v)} numeric />
+              <Input label={t("预付款期初", "Advance opening")} value={data.val_2B} onChange={(v) => updateField("val_2B", v)} numeric />
+              <Input label={t("预付款本期", "Advance current")} value={data.val_2C} onChange={(v) => updateField("val_2C", v)} numeric />
+              <Input label={t("保留金期初", "Retention opening")} value={data.val_4A} onChange={(v) => updateField("val_4A", v)} numeric />
+              <Input label={t("保留金返还", "Retention return")} value={data.val_4C} onChange={(v) => updateField("val_4C", v)} numeric />
+            </section>
+            <section>
+              <h4>{t("其他扣款", "Other deductions")}</h4>
+              <Input label={t("临时工期初", "Temp. labour opening")} value={data.val_5A} onChange={(v) => updateField("val_5A", v)} numeric />
+              <Input label={t("临时工返还", "Temp. labour return")} value={data.val_5C} onChange={(v) => updateField("val_5C", v)} numeric />
+              <Input label={t("其他扣款期初", "Other opening")} value={data.val_8A} onChange={(v) => updateField("val_8A", v)} numeric />
+              <Input label={t("社保期初", "Social opening")} value={data.val_12A} onChange={(v) => updateField("val_12A", v)} numeric />
+              <Input label={t("WHT 期初", "WHT opening")} value={data.val_6A} onChange={(v) => updateField("val_6A", v)} numeric />
+            </section>
+            <section>
+              <h4>{t("已付款", "Amount paid")}</h4>
+              <Input label={t("期初累计实付", "Initial accum. paid")} value={data.val_7A} onChange={(v) => updateField("val_7A", v)} numeric />
+              <Input label={t("本期实付", "Current paid")} value={data.val_10A} onChange={(v) => updateField("val_10A", v)} numeric />
+            </section>
+          </div>
+        </details>
         <div className="sa-foot">
           <span>ⓘ {t("WHT 先对比发票 WHT；若发票无 WHT，再核对费率、手动金额、证书和期初余额。", "WHT first compares to invoice WHT; if invoices have no WHT, check rate, manual amount, certificate and opening balance.")}</span>
-          <button className="btn-add" onClick={() => document.getElementById("sec-wht")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-            {t("查看 WHT", "Review WHT")}
+          <button
+            className="btn-add"
+            onClick={() => {
+              const el = document.getElementById("sa-values") as HTMLDetailsElement | null;
+              if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+            }}
+          >
+            {t("调整金额", "Adjust amounts")}
           </button>
         </div>
       </div>
@@ -7074,16 +7082,6 @@ function App() {
                 ["sec-info", t("文件", "Document")],
                 ["sec-audit", t("审计", "Audit")],
                 ["sec-settlement", t("结算审计", "Settlement")],
-                ["sec-supplier", t("供应商", "Supplier")],
-                ["sec-advance", t("预付款", "Advance")],
-                ["sec-payable", t("应付", "Payable")],
-                ["sec-retention", t("保留金", "Retention")],
-                ["sec-temp", t("临时工", "Temp Labour")],
-                ["sec-wht", t("预提税", "WHT")],
-                ["sec-others", t("其他", "Others")],
-                ["sec-paid", t("已付", "Paid")],
-                ["sec-net", t("净应付", "Net")],
-                ["sec-paidtotals", t("实付合计", "Paid Totals")],
                 ["sec-invoices", t("发票", "Invoices")],
                 ["sec-queue", t("队列", "Queue")],
                 ["sec-checklist", t("清单", "Checklist")],
@@ -7097,24 +7095,6 @@ function App() {
             <div id="sec-info" className="bank-anchor">{AuditInfoCard()}</div>
             <div id="sec-audit" className="bank-anchor"><BankAuditCenterCard /></div>
             <div id="sec-settlement" className="bank-anchor"><BankSettlementAuditCard /></div>
-            <CollapsibleSection id="sec-supplier" title={t("1. 供应商结算", "1. Supplier Settlement")} summary={`${t("含税结算", "Settlement incl. VAT")} ${fmt(computed.c_1G)}`}>{Card1()}</CollapsibleSection>
-            <div className="card-row">
-              <CollapsibleSection id="sec-advance" title={t("2. 预付款", "2. Advance Payment")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_2E)}`}>{Card2()}</CollapsibleSection>
-              <CollapsibleSection id="sec-payable" title={t("3. 应付金额", "3. Amount Payable")} summary={fmt(computed.c_3A)}>{Card3()}</CollapsibleSection>
-            </div>
-            <div className="card-row">
-              <CollapsibleSection id="sec-retention" title={t("4. 保留金", "4. Retention")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_4D)}`}>{Card4()}</CollapsibleSection>
-              <CollapsibleSection id="sec-temp" title={t("5. 临时工社保", "5. Temp. Labour Insurance")} summary={`${t("期末余额", "Ending")} ${fmt(computed.c_5D)}`}>{Card5()}</CollapsibleSection>
-            </div>
-            <div className="card-row">
-              <CollapsibleSection id="sec-wht" title={t("6. 预提税", "6. WHT")} summary={`${t("期末累计", "Ending")} ${fmt(computed.c_6C)}`}>{Card6()}</CollapsibleSection>
-              <CollapsibleSection id="sec-others" title={t("8 & 12. 其他扣款与社保", "8 & 12. Others & Social")} summary={`${fmt(computed.c_8C)} · ${fmt(computed.c_12C)}`}>{Card78()}</CollapsibleSection>
-            </div>
-            <div className="card-row">
-              <CollapsibleSection id="sec-paid" title={t("7. 已付款", "7. Amount Paid")} summary={fmt(computed.c_7B)}>{Card9()}</CollapsibleSection>
-              <CollapsibleSection id="sec-net" title={t("9. 净应付", "9. Net Payable")} summary={fmt(computed.c_9A)}>{Card10()}</CollapsibleSection>
-            </div>
-            <CollapsibleSection id="sec-paidtotals" title={t("10 & 11. 实付合计", "10 & 11. Paid Totals")} summary={fmt(computed.c_11B)}>{Card11()}</CollapsibleSection>
             {!isImport && <CollapsibleSection id="sec-invoices" title={t("发票", "Invoices")} summary={`${(data.invoices ?? []).length}`}>{InvoicesCard()}</CollapsibleSection>}
             {!isImport && (data.invoices ?? []).length > 0 && (
               <CollapsibleSection id="sec-queue" title={t("发票审核队列", "Invoice Review Queue")} summary={`${(data.invoices ?? []).length}`}>

@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vouchify — Settlement Audit Table Concepts</title>
+<style>
+  :root {
+    --bg: #eef2f7;
+    --bg-deep: #dde5ef;
+    --card: rgba(255,255,255,.78);
+    --card-solid: #fff;
+    --border: rgba(148,163,184,.32);
+    --border-strong: rgba(100,116,139,.38);
+    --text: #172033;
+    --text-2: #526078;
+    --muted: #7b879d;
+    --blue: #2563eb;
+    --blue-soft: #e8efff;
+    --green: #0f9f6e;
+    --green-soft: #e6f8f1;
+    --orange: #d97706;
+    --orange-soft: #fff5e5;
+    --red: #dc2626;
+    --red-soft: #fef0f0;
+    --violet: #6d5dfc;
+    --violet-soft: #f0edff;
+    --shadow: 0 18px 50px rgba(31,45,70,.10), 0 2px 8px rgba(31,45,70,.05);
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1100px 600px at 8% -10%, rgba(96,165,250,.18), transparent 60%),
+      radial-gradient(900px 500px at 95% 4%, rgba(167,139,250,.14), transparent 55%),
+      linear-gradient(180deg, var(--bg), var(--bg-deep));
+    padding: 26px;
+  }
+  button { font: inherit; }
+  .shell { max-width: 1560px; margin: 0 auto; }
+  .topbar {
+    display: flex; align-items: center; gap: 16px; justify-content: space-between;
+    padding: 14px 18px; margin-bottom: 18px;
+    border: 1px solid rgba(255,255,255,.75);
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(255,255,255,.86), rgba(255,255,255,.62));
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(26px) saturate(150%);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; min-width: 210px; }
+  .brand-mark {
+    width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+    background: linear-gradient(145deg, #1d4ed8, #3b82f6);
+    color: #fff; font-weight: 800; letter-spacing: -.06em; font-size: 15px;
+    box-shadow: 0 8px 18px rgba(37,99,235,.24);
+  }
+  .brand-name { font-weight: 800; letter-spacing: -.02em; }
+  .brand-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .top-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .ghost, .primary, .tab {
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px;
+    background: rgba(255,255,255,.64); color: var(--text-2); cursor: pointer;
+    transition: .18s ease; font-size: 12px; font-weight: 600;
+  }
+  .ghost:hover, .tab:hover { background: #fff; color: var(--text); transform: translateY(-1px); }
+  .primary { background: #172033; border-color: #172033; color: #fff; box-shadow: 0 8px 18px rgba(23,32,51,.18); }
+  .primary:hover { background: #0f172a; }
+  .tabs {
+    display: flex; gap: 6px; padding: 5px; border-radius: 14px;
+    border: 1px solid var(--border); background: rgba(255,255,255,.5);
+    box-shadow: 0 4px 14px rgba(31,45,70,.05);
+  }
+  .tab { border: 0; background: transparent; border-radius: 10px; padding: 9px 14px; }
+  .tab.on { background: #fff; color: #13203a; box-shadow: 0 3px 10px rgba(31,45,70,.12); }
+  .tab .letter { color: var(--blue); font-weight: 800; margin-right: 4px; }
+  .hero { display: flex; justify-content: space-between; gap: 20px; align-items: flex-end; margin: 20px 2px 16px; }
+  .hero h1 { font-size: 25px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -.035em; }
+  .hero p { margin: 0; color: var(--text-2); font-size: 13px; max-width: 760px; line-height: 1.55; }
+  .hero-chip {
+    flex: none; display: inline-flex; gap: 7px; align-items: center;
+    border: 1px solid rgba(15,159,110,.22); background: var(--green-soft);
+    color: #08734f; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 7px 11px;
+  }
+  .view { display: none; }
+  .view.on { display: block; animation: rise .24s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  .card {
+    border: 1px solid rgba(255,255,255,.82);
+    border-radius: 20px;
+    background: linear-gradient(145deg, rgba(255,255,255,.9), rgba(255,255,255,.68));
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(22px) saturate(145%);
+    overflow: hidden;
+  }
+  .card-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    padding: 17px 19px 13px; border-bottom: 1px solid var(--border);
+  }
+  .card-title { font-size: 15px; font-weight: 800; letter-spacing: -.015em; }
+  .card-sub { color: var(--muted); font-size: 11.5px; margin-top: 4px; line-height: 1.45; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px; border-radius: 999px;
+    padding: 5px 9px; font-size: 10.5px; font-weight: 700; border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .badge.green { color: #08734f; background: var(--green-soft); border-color: rgba(15,159,110,.18); }
+  .badge.blue { color: #1e4fc2; background: var(--blue-soft); border-color: rgba(37,99,235,.14); }
+  .badge.orange { color: #a35400; background: var(--orange-soft); border-color: rgba(217,119,6,.18); }
+  .badge.violet { color: #4f3ed6; background: var(--violet-soft); border-color: rgba(109,93,252,.18); }
+  .badge.gray { color: var(--text-2); background: rgba(241,245,249,.9); border-color: var(--border); }
+  .note-strip {
+    display: flex; gap: 10px; align-items: flex-start; padding: 11px 14px;
+    border: 1px solid rgba(37,99,235,.12); background: rgba(232,239,255,.55);
+    color: #29488b; font-size: 11.5px; line-height: 1.5; border-radius: 12px;
+    margin: 13px 16px 0;
+  }
+  .note-strip b { font-weight: 800; }
+  .kpis {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+    padding: 15px 16px 4px;
+  }
+  .kpi {
+    border: 1px solid var(--border); border-radius: 14px; padding: 11px 12px;
+    background: rgba(255,255,255,.56);
+  }
+  .kpi .k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-weight: 700; }
+  .kpi .v { font-family: var(--mono); font-size: 15px; font-weight: 700; margin-top: 6px; letter-spacing: -.02em; }
+  .kpi .s { font-size: 10px; color: var(--muted); margin-top: 4px; }
+  .kpi.green { background: linear-gradient(145deg, #f3fdf8, rgba(255,255,255,.65)); border-color: rgba(15,159,110,.18); }
+  .kpi.blue { background: linear-gradient(145deg, #f5f8ff, rgba(255,255,255,.65)); border-color: rgba(37,99,235,.14); }
+  .kpi.violet { background: linear-gradient(145deg, #f8f6ff, rgba(255,255,255,.65)); border-color: rgba(109,93,252,.14); }
+  .table-wrap { overflow: auto; padding: 8px 16px 16px; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1240px; }
+  th, td { border-bottom: 1px solid rgba(148,163,184,.20); padding: 10px 9px; text-align: right; vertical-align: top; font-size: 11.5px; }
+  th { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; font-weight: 800; background: rgba(248,250,252,.72); position: sticky; top: 0; z-index: 2; }
+  th.group { background: rgba(238,242,247,.94); color: #40506a; text-align: center; font-size: 9.5px; letter-spacing: .09em; border-bottom-color: rgba(148,163,184,.32); }
+  th:first-child, td:first-child { text-align: left; }
+  th.left, td.left { text-align: left; }
+  td { color: #26324a; }
+  td.num { font-family: var(--mono); white-space: nowrap; letter-spacing: -.02em; }
+  tbody tr:hover td { background: rgba(248,250,255,.7); }
+  tbody tr.total td { background: rgba(241,245,249,.72); font-weight: 800; border-top: 1px solid var(--border-strong); }
+  .desc b { display: block; font-weight: 700; }
+  .desc span { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
+  .cumulative { background: rgba(232,248,241,.55); }
+  th.cumulative { background: #e8f8f1; color: #08734f; }
+  .current { background: rgba(232,239,255,.5); }
+  th.current { background: #e8efff; color: #1e4fc2; }
+  .balance { color: var(--text-2); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 7px;
+    font-size: 9.5px; font-weight: 800; white-space: nowrap;
+  }
+  .pill.pass { background: var(--green-soft); color: #08734f; }
+  .pill.warn { background: var(--orange-soft); color: #a35400; }
+  .pill.na { background: #f1f5f9; color: var(--muted); }
+  .sticky-col { position: sticky; left: 0; background: #fff; z-index: 1; }
+  th.sticky-col { z-index: 4; background: #f8fafc; }
+  .sticky-col.second { left: 64px; }
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; padding: 0 16px 15px; }
+  .small-btn {
+    border: 1px solid var(--border); background: rgba(255,255,255,.7); color: var(--text-2);
+    border-radius: 8px; padding: 6px 9px; font-size: 10.5px; font-weight: 700; cursor: pointer;
+  }
+  .small-btn:hover { background: #fff; color: var(--text); }
+  .small-btn.primary { background: #172033; border-color: #172033; color: #fff; }
+  .split { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 0; }
+  .rail { padding: 16px; border-right: 1px solid var(--border); background: rgba(248,250,252,.44); }
+  .rail-title { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 800; margin: 0 0 10px; }
+  .step {
+    display: flex; gap: 9px; padding: 9px 8px; border-radius: 10px; align-items: flex-start;
+    color: var(--text-2); font-size: 11.5px; margin-bottom: 3px;
+  }
+  .step.on { background: #fff; box-shadow: 0 4px 12px rgba(31,45,70,.08); color: var(--text); }
+  .step .n {
+    width: 21px; height: 21px; border-radius: 7px; flex: none; display: grid; place-items: center;
+    font-size: 9.5px; font-weight: 800; background: #e8edf5; color: var(--muted);
+  }
+  .step.done .n { background: var(--green-soft); color: #08734f; }
+  .step.on .n { background: var(--blue); color: #fff; }
+  .step b { display: block; font-weight: 800; font-size: 11px; }
+  .step span { display: block; color: var(--muted); font-size: 9.5px; margin-top: 2px; }
+  .review-main { padding: 16px; }
+  .review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 13px; }
+  .review-head h3 { margin: 0; font-size: 15px; letter-spacing: -.015em; }
+  .review-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+  .progress { min-width: 220px; }
+  .progress .bar { height: 7px; border-radius: 99px; background: #e6ecf4; overflow: hidden; }
+  .progress .bar i { display: block; height: 100%; width: 60%; border-radius: 99px; background: linear-gradient(90deg, #2563eb, #6d5dfc); }
+  .progress .lbl { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 5px; }
+  .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+  .pane { border: 1px solid var(--border); border-radius: 13px; background: rgba(255,255,255,.62); padding: 12px; }
+  .pane-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 800; margin-bottom: 7px; }
+  .calc-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px dashed rgba(148,163,184,.22); font-size: 11.5px; }
+  .calc-row:last-child { border-bottom: 0; }
+  .calc-row .v { font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+  .calc-row.total { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border-strong); color: var(--text); font-weight: 800; }
+  .calc-row.total .v { color: var(--blue); }
+  .mini-table { width: 100%; min-width: 0; border-spacing: 0; }
+  .mini-table th, .mini-table td { padding: 7px 6px; font-size: 10.5px; }
+  .mini-table th { background: rgba(241,245,249,.55); }
+  .checklist { display: grid; gap: 7px; }
+  .check-item { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: var(--text-2); line-height: 1.45; }
+  .check-item .tick { width: 17px; height: 17px; flex: none; border-radius: 99px; display: grid; place-items: center; font-size: 9px; font-weight: 800; background: var(--green-soft); color: #08734f; }
+  .check-item.warn .tick { background: var(--orange-soft); color: #a35400; }
+  .review-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .footer-note { color: var(--muted); font-size: 10.5px; margin: 12px 2px 0; line-height: 1.5; }
+  .legend { display: flex; gap: 13px; flex-wrap: wrap; align-items: center; font-size: 10px; color: var(--muted); padding: 0 16px 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 99px; display: inline-block; margin-right: 4px; }
+  .dot.cum { background: #10b981; } .dot.cur { background: #3b82f6; } .dot.warn { background: #f59e0b; }
+  @media (max-width: 1100px) {
+    .kpis { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .split { grid-template-columns: 1fr; }
+    .rail { border-right: 0; border-bottom: 1px solid var(--border); }
+    .review-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    body { padding: 12px; }
+    .topbar { flex-direction: column; align-items: stretch; }
+    .hero { flex-direction: column; align-items: flex-start; }
+    .tabs { width: 100%; overflow-x: auto; }
+    .tab { white-space: nowrap; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">V</div>
+      <div>
+        <div class="brand-name">Vouchify</div>
+        <div class="brand-sub">Settlement audit · table concepts</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="badge gray">Mockup only · no app changes</span>
+      <button class="ghost">Export concept</button>
+      <button class="primary">Approve direction</button>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <h1>Settlement audit, one table.</h1>
+      <p>
+        Replace the 12-step audit from Supplier Settlement to Paid Totals with a single
+        cumulative settlement table. Cumulative balances come before current-period amounts.
+      </p>
+    </div>
+    <span class="hero-chip">✓ Cumulative before current</span>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="Settlement audit concepts">
+    <button class="tab on" data-view="a" role="tab" aria-selected="true"><span class="letter">A</span> Certificate sheet</button>
+    <button class="tab" data-view="b" role="tab" aria-selected="false"><span class="letter">B</span> Audit ledger</button>
+    <button class="tab" data-view="c" role="tab" aria-selected="false"><span class="letter">C</span> Guided certificate</button>
+  </div>
+
+  <!-- ══════════════ A · CERTIFICATE SHEET ══════════════ -->
+  <section class="view on" id="view-a">
+    <div class="card" style="margin-top:14px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">A · Certificate sheet</div>
+          <div class="card-sub">
+            Closest to Appendix 1. One row per payment certificate; deductions stay visible
+            across the sheet, with cumulative payable before current payable.
+          </div>
+        </div>
+        <span class="badge blue">Wide table · horizontal scroll</span>
+      </div>
+
+      <div class="note-strip">
+        <span>ⓘ</span>
+        <div><b>Column order:</b> Work → VAT → Total → deductions → <b>cumulative net</b> → <b>current payable</b> → balance. The green and blue groups are deliberately in that order.</div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi blue"><div class="k">Work done / 已完成产值</div><div class="v">1,284,136.00</div><div class="s">This certificate</div></div>
+        <div class="kpi"><div class="k">Total incl. VAT / 含税合计</div><div class="v">1,463,915.04</div><div class="s">A + 14% VAT</div></div>
+        <div class="kpi green"><div class="k">Cumulative net / 累计净额</div><div class="v">2,424,673.11</div><div class="s">Previous + this certificate</div></div>
+        <div class="kpi violet"><div class="k">Current payable / 本次应付</div><div class="v">1,370,173.11</div><div class="s">After deductions</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <table aria-label="Certificate sheet concept">
+          <thead>
+            <tr>
+              <th class="group" colspan="2">Certificate</th>
+              <th class="group" colspan="3">Work &amp; tax</th>
+              <th class="group" colspan="6">Deductions</th>
+              <th class="group cumulative" colspan="1">Cumulative</th>
+              <th class="group current" colspan="1">Current</th>
+              <th class="group" colspan="2">Balance</th>
+              <th class="group" colspan="2">Check</th>
+            </tr>
+            <tr>
+              <th class="left sticky-col" style="min-width:64px">No.</th>
+              <th class="left sticky-col second" style="min-width:160px">Description</th>
+              <th style="min-width:110px">Work done</th>
+              <th style="min-width:90px">VAT</th>
+              <th style="min-width:105px">Total</th>
+              <th style="min-width:95px">Retention</th>
+              <th style="min-width:95px">Advance</th>
+              <th style="min-width:105px">Contract adj.</th>
+              <th style="min-width:95px">Labour comp.</th>
+              <th style="min-width:95px">Other</th>
+              <th style="min-width:90px">WHT</th>
+              <th class="cumulative" style="min-width:120px">Cumulative net</th>
+              <th class="current" style="min-width:120px">Current payable</th>
+              <th style="min-width:100px">Balance</th>
+              <th style="min-width:62px">Currency</th>
+              <th style="min-width:82px">Status</th>
+              <th style="min-width:80px">Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="left sticky-col">2026-10</td>
+              <td class="left desc sticky-col second"><b>Previous certificate</b><span>October 2026</span></td>
+              <td class="num">1,100,000.00</td>
+              <td class="num">154,000.00</td>
+              <td class="num">1,254,000.00</td>
+              <td class="num">55,000.00</td>
+              <td class="num">120,000.00</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">2,500.00</td>
+              <td class="num">22,000.00</td>
+              <td class="num cumulative">1,054,500.00</td>
+              <td class="num current">1,054,500.00</td>
+              <td class="num balance">0.00</td>
+              <td>EGP</td>
+              <td><span class="pill pass">✓ Posted</span></td>
+              <td class="left">—</td>
+            </tr>
+            <tr>
+              <td class="left sticky-col">2026-11</td>
+              <td class="left desc sticky-col second"><b>Current certificate</b><span>November 2026</span></td>
+              <td class="num">1,284,136.00</td>
+              <td class="num">179,779.04</td>
+              <td class="num">1,463,915.04</td>
+              <td class="num">64,206.80</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">3,852.41</td>
+              <td class="num">25,682.72</td>
+              <td class="num cumulative">2,424,673.11</td>
+              <td class="num current">1,370,173.11</td>
+              <td class="num balance">0.00</td>
+              <td>EGP</td>
+              <td><span class="pill warn">⚠ Review</span></td>
+              <td class="left">Other deduction needs reason</td>
+            </tr>
+            <tr class="total">
+              <td class="left sticky-col" colspan="2">Total / 合计</td>
+              <td class="num">2,384,136.00</td>
+              <td class="num">333,779.04</td>
+              <td class="num">2,717,915.04</td>
+              <td class="num">119,206.80</td>
+              <td class="num">120,000.00</td>
+              <td class="num">0.00</td>
+              <td class="num">0.00</td>
+              <td class="num">6,352.41</td>
+              <td class="num">47,682.72</td>
+              <td class="num cumulative">2,424,673.11</td>
+              <td class="num current">1,370,173.11</td>
+              <td class="num balance">0.00</td>
+              <td>EGP</td>
+              <td><span class="pill pass">✓ Balanced</span></td>
+              <td class="left">—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="legend">
+        <span><i class="dot cum"></i>Cumulative / opening</span>
+        <span><i class="dot cur"></i>Current certificate</span>
+        <span><i class="dot warn"></i>Needs review</span>
+        <span style="margin-left:auto">Editable cells would keep the same width and grouping.</span>
+      </div>
+      <div class="row-actions">
+        <button class="small-btn">Add adjustment row</button>
+        <button class="small-btn">Export sheet</button>
+        <button class="small-btn primary">Apply to audit</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ B · AUDIT LEDGER ══════════════ -->
+  <section class="view" id="view-b">
+    <div class="card" style="margin-top:14px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">B · Audit ledger</div>
+          <div class="card-sub">
+            The 12-step cards become one editable ledger. Each row is a settlement component;
+            cumulative/opening comes before current and ending.
+          </div>
+        </div>
+        <span class="badge green">Recommended for the app</span>
+      </div>
+
+      <div class="note-strip">
+        <span>ⓘ</span>
+        <div><b>Replaces:</b> 1 Supplier Settlement, 2 Advance, 3 Payable, 4 Retention, 5 Temp Labour, 6 WHT, 7 Paid, 8/12 Others &amp; Social, 9 Net Payable, 10/11 Paid Totals.</div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi blue"><div class="k">Work done / 已完成产值</div><div class="v">1,284,136.00</div><div class="s">Settlement base 1B</div></div>
+        <div class="kpi"><div class="k">VAT 14% / 增值税</div><div class="v">179,779.04</div><div class="s">Computed or multi-rate</div></div>
+        <div class="kpi green"><div class="k">Cumulative net / 累计净额</div><div class="v">2,424,673.11</div><div class="s">Before current row</div></div>
+        <div class="kpi violet"><div class="k">Current payable / 本次应付</div><div class="v">1,370,173.11</div><div class="s">After all deductions</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <table aria-label="Audit ledger concept" style="min-width:1040px">
+          <thead>
+            <tr>
+              <th class="group" colspan="3">Component</th>
+              <th class="group" colspan="3">Cumulative / opening</th>
+              <th class="group" colspan="2">Current period</th>
+              <th class="group" colspan="2">Balance</th>
+              <th class="group" colspan="1">Check</th>
+            </tr>
+            <tr>
+              <th class="left" style="min-width:170px">Deduction / 扣款</th>
+              <th style="min-width:130px">Basis</th>
+              <th style="min-width:72px">Rate</th>
+              <th class="cumulative" style="min-width:108px">Opening</th>
+              <th class="cumulative" style="min-width:108px">Cumulative</th>
+              <th style="min-width:100px">Source</th>
+              <th class="current" style="min-width:100px">Current</th>
+              <th style="min-width:95px">Return / adj.</th>
+              <th style="min-width:110px">Ending / balance</th>
+              <th style="min-width:90px">Currency</th>
+              <th style="min-width:84px">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="left desc"><b>Advance payment</b><span>预付款</span></td>
+              <td class="num">300,000.00</td>
+              <td>—</td>
+              <td class="num cumulative">120,000.00</td>
+              <td class="num cumulative">120,000.00</td>
+              <td class="left">Prior document</td>
+              <td class="num current">0.00</td>
+              <td class="num">0.00</td>
+              <td class="num">120,000.00</td>
+              <td>EGP</td>
+              <td><span class="pill pass">✓ Carry-forward</span></td>
+            </tr>
+            <tr>
+              <td class="left desc"><b>Retention</b><span>保留金</span></td>
+              <td class="num">1,284,136.00</td>
+              <td>5.00%</td>
+              <td class="num cumulative">55,000.00</td>
+              <td class="num cumulative">55,000.00</td>
+              <td class="left">Work done</td>
+              <td class="num current">64,206.80</td>
+              <td class="num">0.00</td>
+              <td class="num">119,206.80</td>
+              <td>EGP</td>
+              <td><span class="pill pass">✓ Rate &amp; balance</span></td>
+            </tr>
+            <tr>
+              <td class="left desc"><b>Temp. labour</b><span>临时工社保</span></td>
+              <td class="num">1,284,136.00</td>
+              <td>0.45%</td>
+              <td class="num cumulative">0.00</td>
+              <td class="num cumulative">0.00</td>
+              <td class="left">Work done</td>
+              <td class="num current">5,778.61</td>
+              <td class="num">0.00</td>
+              <td class="num">5,778.61</td>
+              <td>EGP</td>
+              <td><span class="pill pass">✓ Rate &amp; balance</span></td>
+            </tr>
+            <tr>
+              <td class="left desc"><b>Social insurance</b><span>社保</span></td>
+              <td class="num">1,284,136.00</td>
+              <td>3.30%</td>
+              <td class="num cumulative">0.00</td>
+              <td class="num cumulative">0.00</td>
+              <td class="left">Work done</td>
+              <td class="num current">42,376.49</td>
+              <td class="num">0.00</td>
+              <td class="num">42,376.49</td>
+              <td>EGP</td>
+              <td><span class="pill pass">✓ Rate &amp; balance</span></td>
+            </tr>
+            <tr>
+              <td class="left desc"><b>Other deductions</b><span>其他扣款</span></td>
+              <td class="num">1,284,136.00</td>
+              <td>0.30%</td>
+              <td class="num cumulative">2,500.00</td>
+              <td class="num cumulative">2,500.00</td>
+              <td class="left">Manual rate</td>
+              <td class="num current">3,852.41</td>
+              <td class="num">0.00</td>
+              <td class="num">6,352.41</td>
+              <td>EGP</td>
+              <td><span class="pill warn">⚠ No reason</span></td>
+            </tr>
+            <tr>
+              <td class="left desc"><b>WHT</b><span>预提税</span></td>
+              <td class="num">Invoices</td>
+              <td>2.0% eff.</td>
+              <td class="num cumulative">22,000.00</td>
+              <td class="num cumulative">22,000.00</td>
+              <td class="left">Invoices + manual</td>
+              <td class="num current">25,682.72</td>
+              <td class="num">0.00</td>
+              <td class="num">47,682.72</td>
+              <td>EGP</td>
+              <td><span class="pill warn">⚠ Confirm rate</span></td>
+            </tr>
+            <tr class="total">
+              <td class="left desc"><b>Net payable</b><span>净应付</span></td>
+              <td class="num">1,463,915.04</td>
+              <td>—</td>
+              <td class="num cumulative">1,054,500.00</td>
+              <td class="num cumulative">2,424,673.11</td>
+              <td class="left">Cumulative</td>
+              <td class="num current">1,370,173.11</td>
+              <td class="num">0.00</td>
+              <td class="num">0.00</td>
+              <td>EGP</td>
+              <td><span class="pill pass">✓ Balanced</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="legend">
+        <span><i class="dot cum"></i>Cumulative / opening</span>
+        <span><i class="dot cur"></i>Current period</span>
+        <span style="margin-left:auto">All amount cells editable; status recalculates as values change.</span>
+      </div>
+      <div class="row-actions">
+        <button class="small-btn">Add deduction</button>
+        <button class="small-btn">Re-run audit</button>
+        <button class="small-btn primary">Approve settlement</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ C · GUIDED CERTIFICATE ══════════════ -->
+  <section class="view" id="view-c">
+    <div class="card" style="margin-top:14px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">C · Guided certificate</div>
+          <div class="card-sub">
+            The guided review concept applied to the settlement table. This is the C option
+            that exists only in the old mockup today; it is not wired into the app.
+          </div>
+        </div>
+        <span class="badge violet">Guided review · concept</span>
+      </div>
+
+      <div class="split">
+        <aside class="rail">
+          <div class="rail-title">Audit steps</div>
+          <div class="step done"><span class="n">✓</span><div><b>Document header</b><span>Serial · buyer · currency</span></div></div>
+          <div class="step done"><span class="n">✓</span><div><b>Work done &amp; VAT</b><span>1,284,136.00 · 14%</span></div></div>
+          <div class="step done"><span class="n">✓</span><div><b>Deductions</b><span>Retention · advance · labour · WHT</span></div></div>
+          <div class="step on"><span class="n">4</span><div><b>Cumulative vs current</b><span>2,424,673.11 → 1,370,173.11</span></div></div>
+          <div class="step"><span class="n">5</span><div><b>Invoice match</b><span>3 invoices · 1 warning</span></div></div>
+          <div class="step"><span class="n">6</span><div><b>Approve</b><span>Reason required for warnings</span></div></div>
+        </aside>
+
+        <div class="review-main">
+          <div class="review-head">
+            <div>
+              <h3>Step 4 · Cumulative before current</h3>
+              <p>Verify the prior cumulative balance, then add this certificate’s net amount.</p>
+            </div>
+            <div class="progress">
+              <div class="bar"><i></i></div>
+              <div class="lbl"><span>4 of 6 checks</span><span>67%</span></div>
+            </div>
+          </div>
+
+          <div class="review-grid">
+            <div class="pane">
+              <div class="pane-label">Cumulative calculation</div>
+              <div class="calc-row"><span>Previous cumulative net</span><span class="v">1,054,500.00</span></div>
+              <div class="calc-row"><span>This certificate net</span><span class="v">1,370,173.11</span></div>
+              <div class="calc-row total"><span>Cumulative net payable</span><span class="v">2,424,673.11</span></div>
+              <div class="calc-row"><span>Current amount payable</span><span class="v" style="color:var(--violet)">1,370,173.11</span></div>
+              <div class="calc-row"><span>Balance / 余额</span><span class="v">0.00</span></div>
+            </div>
+
+            <div class="pane">
+              <div class="pane-label">Checklist</div>
+              <div class="checklist">
+                <div class="check-item"><span class="tick">✓</span><div>Previous cumulative matches the October certificate.</div></div>
+                <div class="check-item"><span class="tick">✓</span><div>Current payable equals total less retention, advance, other and WHT.</div></div>
+                <div class="check-item warn"><span class="tick">!</span><div>“Other deductions” has no reason yet. Confirm before approval.</div></div>
+                <div class="check-item warn"><span class="tick">!</span><div>WHT effective rate is 2.0%; confirm manual rate is intentional.</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pane" style="margin-top:11px">
+            <div class="pane-label">Compact certificate table</div>
+            <table class="mini-table">
+              <thead><tr><th class="left">Certificate</th><th class="cumulative">Cumulative</th><th class="current">Current</th><th>Balance</th><th>Check</th></tr></thead>
+              <tbody>
+                <tr><td class="left">October 2026</td><td class="num cumulative">1,054,500.00</td><td class="num current">1,054,500.00</td><td class="num">0.00</td><td><span class="pill pass">✓</span></td></tr>
+                <tr><td class="left">November 2026</td><td class="num cumulative">2,424,673.11</td><td class="num current">1,370,173.11</td><td class="num">0.00</td><td><span class="pill warn">⚠</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="review-actions">
+            <button class="small-btn">Back</button>
+            <button class="small-btn">Save draft</button>
+            <button class="small-btn primary">Save &amp; continue →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer-note">
+    Mockup notes: A matches the Appendix 1 certificate layout; B is the practical in-app
+    replacement for the 12-step cards; C shows the guided review overlay. No live app files
+    were changed.
+  </div>
+</div>
+
+<script>
+  const tabs = Array.from(document.querySelectorAll('.tab'));
+  const views = Array.from(document.querySelectorAll('.view'));
+  function show(name) {
+    tabs.forEach(t => {
+      const on = t.dataset.view === name;
+      t.classList.toggle('on', on);
+      t.setAttribute('aria-selected', String(on));
+    });
+    views.forEach(v => v.classList.toggle('on', v.id === 'view-' + name));
+  }
+  tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.view)));
+</script>
+</body>
+</html>

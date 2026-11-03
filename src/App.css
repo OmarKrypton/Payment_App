@@ -1453,6 +1453,123 @@ body {
   line-height: 1.4;
 }
 .settlement-audit .sa-foot .btn-add { flex: none; }
+.settlement-audit .sa-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.settlement-audit .sa-kpis > div {
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.settlement-audit .sa-kpis span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.settlement-audit .sa-kpis b {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settlement-audit .sa-rate-cell { min-width: 0; }
+.settlement-audit .sa-rate-select {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 3px 4px;
+  font-size: 10px;
+}
+.settlement-audit .sa-rate-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.settlement-audit .sa-rate-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.settlement-audit .sa-rate-panel {
+  flex: 1 1 280px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.settlement-audit .sa-rate-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+.settlement-audit .sa-rate-panel-head b { font-weight: 600; }
+.settlement-audit .sa-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+.settlement-audit .sa-check input { accent-color: var(--accent); }
+.settlement-audit .sa-rate-editor { margin-top: 6px; }
+.settlement-audit .sa-rate-hint {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.settlement-audit .sa-values {
+  margin-top: 10px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.settlement-audit .sa-values summary {
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settlement-audit .sa-values-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 0 9px 10px;
+}
+.settlement-audit .sa-values-grid section { min-width: 0; }
+.settlement-audit .sa-values h4 {
+  margin: 0 0 5px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
 
 /* ── Invoice review queue ── */
 .invoice-queue .iq-count { font-size: 11px; color: var(--text-muted); font-weight: 500; white-space: nowrap; }
@@ -1579,6 +1696,8 @@ body {
 
 @media (max-width: 900px) {
   .audit-center .ac-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settlement-audit .sa-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settlement-audit .sa-rate-panel { flex-basis: 100%; }
   .settlement-audit .sa-foot { align-items: flex-start; flex-direction: column; }
 }
 
