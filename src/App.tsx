@@ -2721,12 +2721,26 @@ function App() {
     };
 
     const invoiceTotals = invoiceDocTotals(data.invoices ?? []);
+    const invoiceHasWht = invoiceTotals.wht > 0.005;
     const totalInvoice = invoiceTotals.net + invoiceTotals.vat - invoiceTotals.wht;
+    // The invoice total belongs to settlement + VAT, less WHT only when the
+    // invoices themselves carry WHT. Other deductions (advance, retention, etc.)
+    // must not be included in this comparison.
+    const totalInvoiceTarget =
+      computed.c_1B + computed.c_1E - (invoiceHasWht ? computed.c_6B : 0);
     const totalComparisons = [
       { key: "net", label: t("净额合计", "Total net"), inv: invoiceTotals.net, doc: computed.c_1B, optional: false },
       { key: "vat", label: t("VAT 合计", "Total VAT"), inv: invoiceTotals.vat, doc: computed.c_1E, optional: false },
       { key: "wht", label: t("WHT 合计", "Total WHT"), inv: invoiceTotals.wht, doc: computed.c_6B, optional: true },
-      { key: "total", label: t("发票合计", "Total invoices"), inv: totalInvoice, doc: computed.c_9A, optional: false },
+      {
+        key: "total",
+        label: invoiceHasWht
+          ? t("发票合计 (净额+VAT−WHT)", "Total invoices (Net + VAT − WHT)")
+          : t("发票合计 (净额+VAT)", "Total invoices (Net + VAT)"),
+        inv: totalInvoice,
+        doc: totalInvoiceTarget,
+        optional: false,
+      },
     ].map(c => ({
       ...c,
       ok: Math.abs(c.inv - c.doc) <= 0.5,
@@ -6690,6 +6704,37 @@ function App() {
     setEtaResult(results);
     setResultSearch("");
     setShowEtaResult(true);
+    // Persist the ETA line descriptions onto the invoice rows so the queue can
+    // show them after the document is reopened (validation results are not
+    // stored with the snapshot). Never overwrite a description the user edited.
+    try {
+      const current = formRef.current;
+      let changed = false;
+      const invoices = (current.invoices ?? []).map((inv: any) => {
+        if (String(inv.description || "").trim()) return inv;
+        const match = results.find((r: any) => {
+          const sameNo = String(r?.invoice?.invoice_id || "") === String(inv.invoice_no || "");
+          const rSeller = String(r?.invoice?.seller_tax_id || "").trim();
+          const iSeller = String(inv.seller_tax_id || "").trim();
+          return sameNo && (!rSeller || !iSeller || rSeller === iSeller);
+        });
+        const desc = Array.from(new Set(
+          (match?.invoice?.lines || [])
+            .map((l: any) => String(l?.description || "").trim())
+            .filter(Boolean),
+        )).join("; ");
+        if (!desc) return inv;
+        changed = true;
+        return { ...inv, description: desc };
+      });
+      if (changed) {
+        formRef.current = { ...current, invoices };
+        recalc(formRef.current);
+        queueFlush();
+      }
+    } catch (e) {
+      console.error("capture invoice descriptions failed", e);
+    }
   };
 
   const exportValidationReport = async () => {
