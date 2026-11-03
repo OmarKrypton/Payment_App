@@ -2537,11 +2537,18 @@ function App() {
           <div><span>{t("本期应付", "Current payable")}</span><b>{fmt(computed.c_9A)}</b></div>
         </div>
         <div className="sa-table">
+          <div className="sa-row sa-group-head">
+            <div className="sa-group-blank" style={{ gridColumn: "1 / 4" }} />
+            <div className="sa-group sa-group-start">{t("累计", "Cumulative")}</div>
+            <div className="sa-group sa-group-start" style={{ gridColumn: "5 / 7" }}>{t("本期", "Current period")}</div>
+            <div className="sa-group sa-group-start">{t("期末", "Balance")}</div>
+            <div />
+          </div>
           <div className="sa-row sa-head">
             <div>{t("项目", "Component")}</div>
             <div>{t("基数", "Basis")}</div>
             <div>{t("费率", "Rate")}</div>
-            <div>{t("期初/累计", "Opening / cumulative")}</div>
+            <div>{t("期初", "Opening")}</div>
             <div>{t("本期", "Current")}</div>
             <div>{t("返还/调整", "Return / adj.")}</div>
             <div>{t("期末", "Ending")}</div>
@@ -2556,7 +2563,7 @@ function App() {
               <div className="sa-num">{fmtShort(r.current)}</div>
               <div className="sa-num">{typeof r.returned === "number" ? fmtShort(r.returned) : r.returned}</div>
               <div className="sa-num">{fmtShort(r.ending)}</div>
-              <div className="sa-status">{r.status === "pass" ? "✓" : r.status === "warn" ? "⚠" : "—"}</div>
+              <div className="sa-status"><span className={`sa-dot sa-dot-${r.status}`} title={r.status === "pass" ? t("通过", "Pass") : r.status === "warn" ? t("复核", "Review") : t("不适用", "N/A")} /></div>
             </div>
           ))}
         </div>

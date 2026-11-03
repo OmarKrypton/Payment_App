@@ -3984,3 +3984,40 @@ mark.de-hl {
 }
 @keyframes entries-spin { to { transform: rotate(360deg); } }
 
+
+/* ── Settlement audit · Variant A (airy ledger) ── */
+.settlement-audit .sa-table { border-color: rgba(148, 163, 184, 0.22); }
+.settlement-audit .sa-row {
+  grid-template-columns: minmax(190px, 1.6fr) 122px 140px 118px 112px 112px 118px 72px;
+  gap: 0;
+  min-width: 980px;
+  padding: 0;
+}
+.settlement-audit .sa-row > div { padding: 10px 12px; min-width: 0; }
+.settlement-audit .sa-row > div + div { border-left: 1px solid rgba(148, 163, 184, 0.14); }
+.settlement-audit .sa-group-head { background: transparent; border-top: 0; }
+.settlement-audit .sa-group-head > div { padding: 5px 12px; }
+.settlement-audit .sa-group {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: center;
+}
+.settlement-audit .sa-group-blank { min-height: 0; }
+.settlement-audit .sa-head > div { padding: 8px 12px; }
+.settlement-audit .sa-row:not(.sa-head):not(.sa-group-head) .sa-num {
+  background: rgba(148, 163, 184, 0.035);
+}
+.settlement-audit .sa-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.settlement-audit .sa-dot-pass { background: var(--green); box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12); }
+.settlement-audit .sa-dot-warn { background: var(--orange); box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.12); }
+.settlement-audit .sa-dot-na { background: var(--text-muted); opacity: 0.5; }
+.settlement-audit .sa-status { text-align: center; }
