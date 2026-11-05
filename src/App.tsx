@@ -621,7 +621,12 @@ function useSyncedValue<T extends HTMLInputElement | HTMLTextAreaElement>(
   ref: { current: T | null }, value: string
 ) {
   useEffect(() => {
-    if (ref.current && ref.current.value !== value) ref.current.value = value;
+    const el = ref.current;
+    if (!el) return;
+    // Do not overwrite the field while the user is typing; doing so moves the
+    // caret to the end on every parent update.
+    if (document.activeElement === el) return;
+    if (el.value !== value) el.value = value;
   }, [value]);
 }
 
@@ -1242,24 +1247,6 @@ function App() {
     for (const v of views) delete viewStamps.current[v];
   }, []);
 
-  // #6 VAT/WHT rate memory per seller tax ID (persisted locally so re-imports
-  // prefill with the last-used rates for that seller).
-  const [sellerRates, setSellerRates] = useState<Record<string, { vat: string; wht: string; rate: string }>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("seller_rates") || "{}");
-    } catch {
-      return {};
-    }
-  });
-  const rememberSellerRates = (taxId: string, rates: { vat: string; wht: string; rate: string }) => {
-    if (!taxId) return;
-    setSellerRates(prev => {
-      const next = { ...prev, [taxId]: rates };
-      try { localStorage.setItem("seller_rates", JSON.stringify(next)); } catch {}
-      return next;
-    });
-  };
-
   const showAlert = useCallback((msg: string) => setModalMsg(msg), []);
 
   const recalc = useCallback(async (data: FormData) => {
@@ -1843,24 +1830,6 @@ function App() {
         updateNested("import_entries", i, "seller_tax_id", candidate);
         entry.seller_tax_id = candidate;
       }
-      // When a service names an invoice from the pool, prefill VAT/WHT/rate from
-      // the memory of the matching seller (last used).
-      const taxId = entry.seller_tax_id || candidate;
-      if (taxId && sellerRates[taxId]) {
-        const mem = sellerRates[taxId];
-        updateNested("import_entries", i, "vat_rate", mem.vat || entry.vat_rate);
-        updateNested("import_entries", i, "wht_rate", mem.wht || entry.wht_rate);
-        if (mem.rate) updateNested("import_entries", i, "rate", mem.rate);
-        entry.vat_rate = mem.vat || entry.vat_rate;
-        entry.wht_rate = mem.wht || entry.wht_rate;
-      }
-      // Auto-exclude well-known non-service lines from the EGP/USD amounts is
-      // driven by the provider code (A–D included, E+ excluded — see importSplit).
-      updateNested("import_entries", i, "attached_invoice", "");
-    }
-    if (k === "vat_rate" || k === "wht_rate" || k === "rate") {
-      const taxId = entry.seller_tax_id || sellerTaxForService(entry.service_name);
-      if (taxId) rememberSellerRates(taxId, { vat: entry.vat_rate || "14%", wht: entry.wht_rate || "0%", rate: entry.rate || "" });
     }
   };
   const delImportEntry = (i: number) => {
@@ -2327,6 +2296,28 @@ function App() {
   const BankSettlementAuditCard = () => {
     const amountOf = (v: any) => parseFloat(String(v ?? "0").replace(/,/g, "")) || 0;
     const tol = 0.005;
+    const hasCumulative = [
+      computed.c_1A,
+      computed.c_2B,
+      computed.c_4A,
+      computed.c_5A,
+      computed.c_6A,
+      computed.c_7A,
+      computed.c_8A,
+      computed.c_12A,
+    ].some((v) => Math.abs(v) > tol);
+    // Current-period net payable without any opening/cumulative balances.
+    const currentOnlyNet =
+      computed.c_1B +
+      computed.c_1C -
+      computed.c_1D +
+      computed.c_1E -
+      computed.c_2C -
+      (computed.c_4B - amountOf(data.val_4C)) -
+      (computed.c_5B - amountOf(data.val_5C)) -
+      computed.c_6B -
+      computed.c_8B -
+      computed.c_12B;
     const vatRates = ["0%", "5%", "9%", "10%", "14%"];
     const whtRates = ["0%", "1%", "3%", "5%"];
     const retRates = ["0%", "0.5%", "3%", "5%", "10%", "15%"];
@@ -2521,6 +2512,21 @@ function App() {
       status: computed.c_9A < -tol ? "warn" : "pass",
     });
 
+    if (hasCumulative) {
+      rows.push({
+        key: "net-current",
+        label: t("净应付（本期）", "Net payable (current only)"),
+        basis: computed.c_1B,
+        rate: "—",
+        opening: "—",
+        current: currentOnlyNet,
+        returned: "—",
+        ending: currentOnlyNet,
+        status: currentOnlyNet < -tol ? "warn" : "pass",
+        note: t("不含期初/累计余额", "Excludes opening/cumulative balances"),
+      });
+    }
+
     rows.push({
       key: "paid",
       label: t("已付款", "Amount paid"),
@@ -2624,7 +2630,7 @@ function App() {
             )}
           </div>
         </div>
-        <details className="sa-values" id="sa-values">
+        <details className="sa-values" id="sa-values" open>
           <summary>{t("调整金额与期初余额", "Adjust amounts & opening balances")}</summary>
           <div className="sa-values-grid">
             <section>
