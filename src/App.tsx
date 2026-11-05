@@ -1613,13 +1613,12 @@ function App() {
     const invWhtRate = totals.net > 0 ? (totals.wht / totals.net) * 100 : 0;
     const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
     const docWhtRate = parseFloat((data.wht_rate || "0").replace('%', '')) || 0;
-    const dedReducesVat = data.val_1D_reduces_vat !== false;
-    const invoiceNetTarget = computed.c_1B - (dedReducesVat ? computed.c_1D : 0);
+    const invoiceNetTarget = computed.c_1B - computed.c_1D;
     const matcher = (label: string, inv: number, doc: number, fmtV: (n: number) => string, active = true, warn = false) => ({
       label, active, inv, doc, ok: Math.abs(inv - doc) <= 0.5, warn, fmtV,
     });
     const comparisons = [
-      matcher(dedReducesVat ? t("净额 vs 结算−折扣", "Net vs Settlement−Discount") : t("净额 vs 结算", "Net vs Settlement"), totals.net, invoiceNetTarget, fmtShort),
+      matcher(t("净额 vs 结算−折扣", "Net vs Settlement−Discount"), totals.net, invoiceNetTarget, fmtShort),
       matcher(t("VAT vs 本期VAT", "VAT vs Current VAT Amount"), totals.vat, computed.c_1E, fmtShort),
       matcher(t("VAT率 vs 设定税率", "VAT Rate vs Set VAT Rate"), invVatRate, docVatRate, n => `${n.toFixed(1)}%`, docVatRate > 0),
       // A supplier may invoice without WHT while we still withhold on the
@@ -1953,7 +1952,7 @@ function App() {
       const invVatRate = invNet > 0 ? (invVat / invNet) * 100 : 0;
       const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
       const tol = 0.5;
-      const invoiceNetTarget = computed.c_1B - (data.val_1D_reduces_vat !== false ? computed.c_1D : 0);
+      const invoiceNetTarget = computed.c_1B - computed.c_1D;
       const okNet = Math.abs(invNet - invoiceNetTarget) <= tol;
       // A remainder document carries no VAT of its own (it lives on the parent).
       const okVat = isRemainder || Math.abs(invVat - computed.c_1E) <= tol;
@@ -2350,9 +2349,7 @@ function App() {
     )).sort((a, b) => a - b);
     const rateList = (rates: number[]) => rates.map((r) => `${r}%`).join(", ");
 
-    const vatBase = data.val_1D_reduces_vat !== false
-      ? computed.c_1B - amountOf(data.val_1D)
-      : computed.c_1B;
+    const vatBase = computed.c_1B - amountOf(data.val_1D);
     const vatRateControl = isRemainder
       ? "—"
       : data.vat_manual
@@ -2639,14 +2636,6 @@ function App() {
               <Input label={t("本期结算", "Current settlement")} value={data.val_1B} onChange={(v) => updateField("val_1B", v)} numeric />
               <Input label={t("其他增加", "Other additions")} value={data.val_1C} onChange={(v) => updateField("val_1C", v)} numeric />
               <Input label={t("本期扣减", "Current deductions")} value={data.val_1D} onChange={(v) => updateField("val_1D", v)} numeric />
-              <label className="sa-check">
-                <input
-                  type="checkbox"
-                  checked={data.val_1D_reduces_vat !== false}
-                  onChange={() => updateField("val_1D_reduces_vat", data.val_1D_reduces_vat === false)}
-                />
-                {t("该扣减减少增值税", "This deduction reduces VAT")}
-              </label>
             </section>
             <section>
               <h4>{t("预付款与保留金", "Advance & retention")}</h4>
@@ -7303,8 +7292,8 @@ function App() {
             </div>
 
             <div id="sec-info" className="bank-anchor">{AuditInfoCard()}</div>
-            <div id="sec-audit" className="bank-anchor"><BankAuditCenterCard /></div>
-            <div id="sec-settlement" className="bank-anchor"><BankSettlementAuditCard /></div>
+            <div id="sec-audit" className="bank-anchor">{BankAuditCenterCard()}</div>
+            <div id="sec-settlement" className="bank-anchor">{BankSettlementAuditCard()}</div>
             {!isImport && (data.invoices ?? []).length > 0 && (
               <CollapsibleSection id="sec-queue" title={t("发票审核队列", "Invoice Review Queue")} summary={`${(data.invoices ?? []).length}`}>
                 {BankInvoiceQueueCard()}

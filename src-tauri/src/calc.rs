@@ -57,11 +57,7 @@ pub fn recalculate(data: &FormData) -> CalcResult {
     let c_1C = gv("val_1C");
     let c_1D = gv("val_1D");
 
-    let vat_base = if data.val_1D_reduces_vat {
-        c_1B - c_1D
-    } else {
-        c_1B
-    };
+    let vat_base = c_1B - c_1D;
     let c_1E = if data.vat_manual {
         compute_rate_total(&data.vat_rows)
     } else {
