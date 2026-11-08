@@ -4130,3 +4130,9 @@ mark.de-hl {
   grid-template-columns: minmax(190px, 1.6fr) 122px 140px 118px 112px 112px 118px 72px;
   min-width: 980px;
 }
+
+/* Settlement audit: restore the Remaining column, current-only value. */
+.settlement-audit .sa-row {
+  grid-template-columns: minmax(190px, 1.6fr) 122px 140px 118px 112px 112px 118px 110px 72px;
+  min-width: 1090px;
+}

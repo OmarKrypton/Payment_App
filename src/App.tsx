@@ -2534,6 +2534,7 @@ function App() {
         current: currentOnlyNet,
         returned: "—",
         ending: currentOnlyNet,
+        remaining: currentOnlyNet - computed.c_10A,
         status: currentOnlyNet < -tol ? "warn" : "pass",
         note: t("不含期初/累计余额", "Excludes opening/cumulative balances"),
       });
@@ -2578,6 +2579,7 @@ function App() {
             <div className="sa-group sa-group-start">{t("累计", "Cumulative")}</div>
             <div className="sa-group sa-group-start" style={{ gridColumn: "5 / 7" }}>{t("本期", "Current period")}</div>
             <div className="sa-group sa-group-start">{t("期末", "Balance")}</div>
+            <div className="sa-group sa-group-start">{t("剩余", "Remaining")}</div>
             <div />
           </div>
           <div className="sa-row sa-head">
@@ -2588,6 +2590,7 @@ function App() {
             <div>{t("本期", "Current")}</div>
             <div>{t("返还/调整", "Return / adj.")}</div>
             <div>{t("期末", "Ending")}</div>
+          <div>{t("剩余", "Remaining")}</div>
           <div>{t("状态", "Status")}</div>
           </div>
           {rows.map(r => (
@@ -2599,6 +2602,7 @@ function App() {
               <div className="sa-num sa-current-cell" style={{ background: tintFor(String(r.key)) }}>{fmtShort(r.current)}</div>
               <div className="sa-num">{typeof r.returned === "number" ? fmtShort(r.returned) : r.returned}</div>
               <div className="sa-num">{fmtShort(r.ending)}</div>
+              <div className="sa-num sa-remaining-cell">{typeof r.remaining === "number" ? fmtShort(r.remaining) : "—"}</div>
               <div className="sa-status"><span className={`sa-dot sa-dot-${r.status}`} title={r.status === "pass" ? t("通过", "Pass") : r.status === "warn" ? t("复核", "Review") : t("不适用", "N/A")} /></div>
             </div>
           ))}
