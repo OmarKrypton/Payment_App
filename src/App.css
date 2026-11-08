@@ -4120,3 +4120,7 @@ mark.de-hl {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+
+/* Settlement audit: keep the Current column flat and the adjustment heading aligned with its content. */
+.settlement-audit .sa-current-cell { border-radius: 0; box-shadow: none; }
+.settlement-audit .sa-values-title { margin: 0; padding: 7px 9px 8px; }

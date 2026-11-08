@@ -2366,7 +2366,7 @@ function App() {
     const tintFor = (key: string) => {
       let h = 0;
       for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-      return `hsla(${h % 360}, 70%, 92%, 0.72)`;
+      return `hsla(${h % 360}, 30%, 94%, 0.62)`;
     };
     const rows: any[] = [];
 
