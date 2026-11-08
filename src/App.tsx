@@ -7294,7 +7294,7 @@ function App() {
             <div id="sec-info" className="bank-anchor">{AuditInfoCard()}</div>
             <div id="sec-audit" className="bank-anchor">{BankAuditCenterCard()}</div>
             <div id="sec-settlement" className="bank-anchor">{BankSettlementAuditCard()}</div>
-            {!isImport && (data.invoices ?? []).length > 0 && (
+            {!isImport && (
               <CollapsibleSection id="sec-queue" title={t("发票审核队列", "Invoice Review Queue")} summary={`${(data.invoices ?? []).length}`}>
                 {BankInvoiceQueueCard()}
               </CollapsibleSection>
