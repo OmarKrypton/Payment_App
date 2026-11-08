@@ -92,25 +92,23 @@ export async function loadSnapshotRemote(id: number): Promise<string> {
 }
 
 export async function deleteSnapshotRemote(id: number): Promise<void> {
-  const { data, error } = await supabase
+  const { count, error } = await supabase
     .from("snapshots")
-    .delete()
-    .eq("id", id)
-    .select("id");
+    .delete({ count: "exact" })
+    .eq("id", id);
   if (error) throw error;
-  if (!data || data.length === 0) throw new Error("Delete had no effect — row may not exist or RLS blocked it");
+  if (count === 0) throw new Error("Delete had no effect — row may not exist or RLS blocked it");
 }
 
 export async function updateSnapshotRemote(id: number, label: string, notes: string, dataJson: string): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
-  const { data, error } = await supabase
+  const { count, error } = await supabase
     .from("snapshots")
-    .update({ label, notes, data_json: dataJson })
-    .eq("id", id)
-    .select("id");
+    .update({ label, notes, data_json: dataJson }, { count: "exact" })
+    .eq("id", id);
   if (error) throw error;
-  if (!data || data.length === 0) throw new Error("Update had no effect — row may not exist or RLS blocked it");
+  if (count === 0) throw new Error("Update had no effect — row may not exist or RLS blocked it");
 }
 
 export async function changePassword(newPassword: string): Promise<void> {

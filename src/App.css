@@ -4124,3 +4124,9 @@ mark.de-hl {
 /* Settlement audit: keep the Current column flat and the adjustment heading aligned with its content. */
 .settlement-audit .sa-current-cell { border-radius: 0; box-shadow: none; }
 .settlement-audit .sa-values-title { margin: 0; padding: 7px 9px 8px; }
+
+/* Remaining column removed; restore the 8-column settlement ledger. */
+.settlement-audit .sa-row {
+  grid-template-columns: minmax(190px, 1.6fr) 122px 140px 118px 112px 112px 118px 72px;
+  min-width: 980px;
+}
