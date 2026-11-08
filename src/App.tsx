@@ -2363,6 +2363,11 @@ function App() {
           ? <span className="sa-rate-tag">{t("多税率", "Multi-rate")}</span>
           : rateSelect("wht_rate", data.wht_rate, whtRates, isRemainder);
 
+    const tintFor = (key: string) => {
+      let h = 0;
+      for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+      return `hsla(${h % 360}, 70%, 92%, 0.72)`;
+    };
     const rows: any[] = [];
 
     rows.push({
@@ -2506,6 +2511,7 @@ function App() {
       current: computed.c_9A,
       returned: "—",
       ending: computed.c_9A,
+      remaining: computed.c_9A - computed.c_11A,
       status: computed.c_9A < -tol ? "warn" : "pass",
     });
 
@@ -2519,6 +2525,7 @@ function App() {
         current: currentOnlyNet,
         returned: "—",
         ending: currentOnlyNet,
+        remaining: currentOnlyNet - computed.c_10A,
         status: currentOnlyNet < -tol ? "warn" : "pass",
         note: t("不含期初/累计余额", "Excludes opening/cumulative balances"),
       });
@@ -2563,6 +2570,7 @@ function App() {
             <div className="sa-group sa-group-start">{t("累计", "Cumulative")}</div>
             <div className="sa-group sa-group-start" style={{ gridColumn: "5 / 7" }}>{t("本期", "Current period")}</div>
             <div className="sa-group sa-group-start">{t("期末", "Balance")}</div>
+          <div className="sa-group sa-group-start">{t("剩余", "Remaining")}</div>
             <div />
           </div>
           <div className="sa-row sa-head">
@@ -2573,7 +2581,8 @@ function App() {
             <div>{t("本期", "Current")}</div>
             <div>{t("返还/调整", "Return / adj.")}</div>
             <div>{t("期末", "Ending")}</div>
-            <div>{t("状态", "Status")}</div>
+            <div>{t("剩余", "Remaining")}</div>
+          <div>{t("状态", "Status")}</div>
           </div>
           {rows.map(r => (
             <div key={r.key} className={`sa-row sa-${r.status}`}>
@@ -2581,9 +2590,10 @@ function App() {
               <div className="sa-num">{fmtShort(r.basis)}</div>
               <div className="sa-rate-cell">{r.rate}</div>
               <div className="sa-num">{fmtShort(r.opening)}</div>
-              <div className="sa-num">{fmtShort(r.current)}</div>
+              <div className="sa-num sa-current-cell" style={{ background: tintFor(String(r.key)) }}>{fmtShort(r.current)}</div>
               <div className="sa-num">{typeof r.returned === "number" ? fmtShort(r.returned) : r.returned}</div>
               <div className="sa-num">{fmtShort(r.ending)}</div>
+              <div className="sa-num sa-remaining-cell">{typeof r.remaining === "number" ? fmtShort(r.remaining) : "—"}</div>
               <div className="sa-status"><span className={`sa-dot sa-dot-${r.status}`} title={r.status === "pass" ? t("通过", "Pass") : r.status === "warn" ? t("复核", "Review") : t("不适用", "N/A")} /></div>
             </div>
           ))}
@@ -2627,8 +2637,8 @@ function App() {
             )}
           </div>
         </div>
-        <details className="sa-values" id="sa-values" open>
-          <summary>{t("调整金额与期初余额", "Adjust amounts & opening balances")}</summary>
+        <div className="sa-values" id="sa-values">
+          <div className="sa-values-title">{t("调整金额与期初余额", "Adjust amounts & opening balances")}</div>
           <div className="sa-values-grid">
             <section>
               <h4>{t("供应商结算", "Supplier settlement")}</h4>
@@ -2659,18 +2669,10 @@ function App() {
               <Input label={t("本期实付", "Current paid")} value={data.val_10A} onChange={(v) => updateField("val_10A", v)} numeric />
             </section>
           </div>
-        </details>
+        </div>
         <div className="sa-foot">
           <span>ⓘ {t("WHT 先对比发票 WHT；若发票无 WHT，再核对费率、手动金额、证书和期初余额。", "WHT first compares to invoice WHT; if invoices have no WHT, check rate, manual amount, certificate and opening balance.")}</span>
-          <button
-            className="btn-add"
-            onClick={() => {
-              const el = document.getElementById("sa-values") as HTMLDetailsElement | null;
-              if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); }
-            }}
-          >
-            {t("调整金额", "Adjust amounts")}
-          </button>
+          
         </div>
       </div>
     );
