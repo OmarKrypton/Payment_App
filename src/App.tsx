@@ -2234,7 +2234,8 @@ function App() {
     const warnings = signals.filter(s => s.sev === "warning").length;
     const infos = signals.filter(s => s.sev === "info").length;
     const totalChecks = items.length;
-    const passed = passedCount;
+    const naCount = items.filter((it: any) => shownOf(it) === "na").length;
+    const passed = passedCount + naCount;
     const pct = totalChecks > 0 ? Math.round((passed / totalChecks) * 100) : 0;
     const allClear = blockers === 0 && warnings === 0 && failedItems.length === 0;
     return (
