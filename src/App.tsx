@@ -331,6 +331,7 @@ interface SupplierInfo {
   docs: SupplierDocRef[];
   vat: SupplierVatRow[];       // VAT rates with their item kinds, count desc
   whtCert: boolean;            // free-WHT certificate on file
+  whtApplied: boolean;                   // WHT actively withheld in documents
   whtRate: string | null;      // rate actually withheld in documents when no cert
   whtDocs: number;             // documents where WHT was actively withheld
 }
@@ -580,6 +581,7 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       docs: a.docs,
       vat,
       whtCert: a.whtCert,
+    whtApplied: a.whtApplied,
       whtRate,
       whtDocs: a.whtDocs,
     });
@@ -1991,7 +1993,7 @@ function App() {
       if (!tx) return false;
       if (hasValidCert(tx)) return true;
       const s = supplierData.find((x: any) => x.taxId === tx);
-      return !!s?.whtCert;
+      return !!s?.whtCert || (!!s && s.docCount > 0 && !s.whtApplied);
     };
     const docSellerTaxIds = new Set<string>();
     (data.seller_tax_ids || []).forEach((x: string) => { if (x && x.trim()) docSellerTaxIds.add(x.trim()); });
@@ -3511,13 +3513,13 @@ function App() {
                       <div className="supplier-wht free">
                         <span className="supplier-wht-dot" />
                         <div>
-                          <strong>{t("已获 WHT 免税证明", "WHT-free certificate")}</strong>
+                          <strong>{whtCerts[s.taxId] || s.whtCert ? t("已获 WHT 免税证明", "WHT-free certificate") : t("WHT 免税（未提供证明）", "WHT-free — no certificate")}</strong>
                           <span className="supplier-wht-sub">
                             {whtCerts[s.taxId]?.valid_until
                               ? `${t("证明有效期至", "certificate valid until")} ${whtCerts[s.taxId].valid_until}`
                               : s.whtCert
                                 ? t("证书来自已保存文档，请在下方登记有效期", "certificate recorded in a saved document — record its validity date below")
-                                : t("本供应商按 0% 预扣处理", "treated as withheld at 0%")}
+                                : t("已保存文档未扣缴 WHT，请登记免税证明", "No WHT applied on saved documents; register a certificate.")}
                           </span>
                         </div>
                       </div>
@@ -3538,7 +3540,7 @@ function App() {
                         </div>
                       </div>
                     )}
-                    {(s.whtCert || whtCerts[s.taxId]) && (() => {
+                    {(supplierIsWhtFree(s) || s.whtCert || whtCerts[s.taxId]) && (() => {
                       const st = certStatus(s.taxId);
                       const label = st.level === "valid" ? t("有效", "Valid")
                         : st.level === "soon" ? t("即将到期", "Expiring soon")
@@ -5639,6 +5641,7 @@ function App() {
             whtCert: false,
             whtRate: null,
             whtDocs: 0,
+            whtApplied: false,
           });
         }
       }
@@ -5764,9 +5767,10 @@ function App() {
   // authoritative: if it is on file (and not expired) the supplier is WHT-free —
   // even if WHT was withheld in past documents. Only when there is no registry
   // entry do we fall back to the document-derived flag.
-  const supplierIsWhtFree = (s: { taxId: string; whtCert: boolean }): boolean => {
-    if (whtCerts[s.taxId]) return certStatus(s.taxId).level !== "expired";
-    return s.whtCert;
+  const supplierIsWhtFree = (s: { taxId: string; whtCert: boolean; docCount: number; whtApplied: boolean }): boolean => {
+    const cert = whtCerts[s.taxId];
+    if (cert && certStatus(s.taxId).level !== "expired") return true;
+    return s.whtCert || (s.docCount > 0 && !s.whtApplied);
   };
 
   const openCertEditor = (taxId: string, name: string) => {
