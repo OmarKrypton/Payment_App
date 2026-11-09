@@ -1973,19 +1973,25 @@ function App() {
       check_invoices_auto = (okNet && okVat && okTotal && okRate) ? "pass" : "fail";
     }
 
-    // "WHT-Free Company Provided WHT Certificate" (auto): driven by the
-    // Suppliers tab WHT-free status — the shared certificate registry, or a
-    // saved document that recorded the supplier as WHT-free.
-    const isWhtFreeTaxId = (taxId: string): boolean => {
+    // "WHT-Free Company Provided WHT Certificate" (auto): use the Suppliers
+    // tab status (including its certificate registry), not saved-document
+    // inference. Free + valid cert => pass; free without cert => fail;
+    // not free => n/a.
+    const hasValidCert = (taxId: string): boolean => {
       const tx = (taxId || "").trim();
       if (!tx) return false;
       const c = whtCerts[tx];
-      if (c) {
-        if (!c.valid_until) return true;
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        return new Date(`${c.valid_until}T23:59:59`).getTime() >= today.getTime();
-      }
-      return (savedDocsIndex || []).some((d: any) => d.whtFree && (d.taxIds || []).includes(tx));
+      if (!c) return false;
+      if (!c.valid_until) return true;
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      return new Date(`${c.valid_until}T23:59:59`).getTime() >= today.getTime();
+    };
+    const isWhtFreeTaxId = (taxId: string): boolean => {
+      const tx = (taxId || "").trim();
+      if (!tx) return false;
+      if (hasValidCert(tx)) return true;
+      const s = supplierData.find((x: any) => x.taxId === tx);
+      return !!s?.whtCert;
     };
     const docSellerTaxIds = new Set<string>();
     (data.seller_tax_ids || []).forEach((x: string) => { if (x && x.trim()) docSellerTaxIds.add(x.trim()); });
@@ -2005,6 +2011,7 @@ function App() {
     const docWhtRate = parseFloat((data.wht_rate || "0").replace('%', '')) || 0;
     const docWhtApplied = (computed.c_6B || 0) > 0.005 || docWhtRate > 0;
     const whtFreeSellers = [...docSellerTaxIds].filter(isWhtFreeTaxId);
+    const freeWithoutCert = whtFreeSellers.filter((id) => !hasValidCert(id));
     const hasWhtFreeSeller = whtFreeSellers.length > 0;
     const whtFreeWithWht = whtFreeSellers.filter(s => (whtBySeller.get(s) || 0) > 0.005);
     // If the document withholds WHT but the invoices do not allocate it, we
@@ -2014,11 +2021,10 @@ function App() {
     const whtConflictSellers = unattributedWht ? whtFreeSellers : whtFreeWithWht;
     const hasWhtConflict = hasWhtFreeSeller && whtConflictSellers.length > 0;
     let check_wht_cert_auto: "pass" | "fail" | "na" | "" = "";
-    if (docSellerTaxIds.size > 0) {
-      if (hasWhtConflict) check_wht_cert_auto = "fail";
-      else if (hasWhtFreeSeller) check_wht_cert_auto = "pass";
-      else check_wht_cert_auto = "pass";
-    }
+    if (docSellerTaxIds.size === 0) check_wht_cert_auto = "na";
+    else if (hasWhtConflict || freeWithoutCert.length) check_wht_cert_auto = "fail";
+    else if (whtFreeSellers.length) check_wht_cert_auto = "pass";
+    else check_wht_cert_auto = "na";
     const whtFreeConflict = !isImport && hasWhtConflict;
 
     // Derived checklist rows. These stay separate from check_invoices so each
