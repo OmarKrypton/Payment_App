@@ -1615,12 +1615,12 @@ function App() {
     const invWhtRate = totals.net > 0 ? (totals.wht / totals.net) * 100 : 0;
     const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
     const docWhtRate = parseFloat((data.wht_rate || "0").replace('%', '')) || 0;
-    const invoiceNetTarget = computed.c_1B - computed.c_1D;
+    const invoiceNetTarget = computed.c_1B;
     const matcher = (label: string, inv: number, doc: number, fmtV: (n: number) => string, active = true, warn = false) => ({
       label, active, inv, doc, ok: Math.abs(inv - doc) <= 0.5, warn, fmtV,
     });
     const comparisons = [
-      matcher(t("净额 vs 结算−折扣", "Net vs Settlement−Discount"), totals.net, invoiceNetTarget, fmtShort),
+      matcher(t("净额 vs 结算", "Net vs Settlement"), totals.net, invoiceNetTarget, fmtShort),
       matcher(t("VAT vs 本期VAT", "VAT vs Current VAT Amount"), totals.vat, computed.c_1E, fmtShort),
       matcher(t("VAT率 vs 设定税率", "VAT Rate vs Set VAT Rate"), invVatRate, docVatRate, n => `${n.toFixed(1)}%`, docVatRate > 0),
       // A supplier may invoice without WHT while we still withhold on the
@@ -1960,19 +1960,20 @@ function App() {
       const bankTotals = invoiceDocTotals(invs);
       const invNet = bankTotals.net;
       const invVat = bankTotals.vat;
-      const invTotal = invNet + invVat;
-      const invVatRate = invNet > 0 ? (invVat / invNet) * 100 : 0;
+            const invVatRate = invNet > 0 ? (invVat / invNet) * 100 : 0;
       const docVatRate = parseFloat((data.vat_rate || "0").replace('%', '')) || 0;
       const tol = 0.5;
-      const invoiceNetTarget = computed.c_1B - computed.c_1D;
+      const invoiceNetTarget = computed.c_1B;
       const okNet = Math.abs(invNet - invoiceNetTarget) <= tol;
       // A remainder document carries no VAT of its own (it lives on the parent).
-      const okVat = isRemainder || Math.abs(invVat - computed.c_1E) <= tol;
-      const okTotal = isRemainder || Math.abs(invTotal - computed.c_1G) <= tol;
-      const okRate = isRemainder || data.vat_manual || invNet <= 0 || Math.abs(invVatRate - docVatRate) <= tol;
+      const vatOnDeduction = !data.vat_manual ? computed.c_1D * docVatRate / 100 : 0;
+      const okVat = isRemainder
+        || Math.abs(invVat - computed.c_1E) <= tol
+        || Math.abs(invVat - (computed.c_1E + vatOnDeduction)) <= tol;
+            const okRate = isRemainder || data.vat_manual || invNet <= 0 || Math.abs(invVatRate - docVatRate) <= tol;
       // Currency conversion is a separate checklist item; this check only
       // covers the invoice amounts that could be converted.
-      check_invoices_auto = (okNet && okVat && okTotal && okRate) ? "pass" : "fail";
+      check_invoices_auto = (okNet && okVat && okRate) ? "pass" : "fail";
     }
 
     // "WHT-Free Company Provided WHT Certificate" (auto): use the Suppliers
@@ -3773,7 +3774,7 @@ function App() {
                 <span className="hc-bar" />
                 <div className="entries-row1" onClick={() => setDeExpanded(prev => ({ ...prev, [e.entry_key]: !prev[e.entry_key] }))}>
                   <span className={`entries-caret${open ? " open" : ""}`}><IconChevronRight size={15} /></span>
-                  <span className="entries-doc">{t("凭证", "Doc")} <span>{t("号", "No.")}</span> {hl(e.doc_no)}{e.serial && e.serial !== "1" ? <>/{hl(e.serial)}</> : ""}</span>
+                  <span className="entries-doc">{t("凭证", "Doc")} <span>{t("号", "No.")}</span> {hl(e.doc_no)}{e.serial ? <>/{hl(e.serial)}</> : ""}</span>
                   {e.journal && <span className="entries-jrn">{(e.journal_no ? `${e.journal_no} · ` : "") + e.journal}</span>}
                   <span className="entries-date">{e.doc_date}</span>
                 </div>
