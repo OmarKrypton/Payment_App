@@ -2531,6 +2531,7 @@ function App() {
       current: computed.c_9A,
       returned: "—",
       ending: computed.c_9A,
+      remaining: computed.c_9A - computed.c_10A,
       status: computed.c_9A < -tol ? "warn" : "pass",
     });
 
