@@ -1655,7 +1655,7 @@ function App() {
       {data.invoices.map((inv, i) => {
         const c = curOf(inv);
         const showCur = c !== docCur;
-        const isDuplicate = doublePayWarnings.some(w => w.invoice === inv.invoice_no);
+        const isDuplicate = !!duplicateWarningForInvoice(inv);
         let etaPill: { label: string; cls: string; title: string } | null = null;
         if (inv.attached_invoice || inv.attached_uuid) {
           if (!etaResult || etaResult.length === 0) {
@@ -1921,33 +1921,48 @@ function App() {
       (currentSavedId != null && d?.id != null &&
         Number(d.id) === Number(currentSavedId) &&
         (d.remote === true) === currentSavedRemote);
-    const currentInvs: { no: string; seller: string; uuid: string }[] = [];
+    const currentInvs: { no: string; seller: string; uuid: string; amount: number }[] = [];
     if (isImportDocument(formRef.current)) {
       (formRef.current.import_entries || []).forEach((e: any) => {
-        if (e.attached_invoice) currentInvs.push({ no: String(e.attached_invoice), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim() });
+        if (e.attached_invoice) currentInvs.push({ no: String(e.attached_invoice), seller: String(e.seller_tax_id || "").trim(), uuid: String(e.attached_uuid || "").trim(), amount: Number(String(e.amount ?? "").replace(/,/g, "")) || 0 });
       });
     } else {
       (formRef.current.invoices || []).forEach((inv: any) => {
-        if (inv.invoice_no) currentInvs.push({ no: String(inv.invoice_no), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim() });
+        if (inv.invoice_no) currentInvs.push({ no: String(inv.invoice_no), seller: String(inv.seller_tax_id || "").trim(), uuid: String(inv.attached_uuid || "").trim(), amount: Number(String(inv.amount ?? "").replace(/,/g, "")) || 0 });
       });
     }
-    const sameInvoiceRef = (a: { no: string; seller: string; uuid: string }, b: any): boolean => {
+    const sameInvoiceRef = (a: { no: string; seller: string; uuid: string; amount: number }, b: any): boolean => {
       const bu = String(b?.uuid || "").trim();
       const bs = String(b?.seller || "").trim();
       if (a.uuid && bu) return a.uuid === bu;
       if (a.no !== String(b?.no || "")) return false;
+      const ba = Number(String(b?.amount ?? "").replace(/,/g, "")) || 0;
+      if (a.amount > 0 && ba > 0 && Math.abs(a.amount - ba) > 0.01) return false;
       if (a.seller && bs) return a.seller === bs;
       // Only treat as the same when neither side identifies a seller; if one does,
       // a matching id alone is too weak to flag (different suppliers reuse ids).
       return !a.seller && !bs;
     };
-    const doublePayWarnings: { invoice: string; serials: string[] }[] = [];
+    const doublePayWarnings: { invoice: string; serials: string[]; uuid: string; seller: string; amount: number }[] = [];
     if (!formRef.current.remainder_of) {
       for (const cur of currentInvs) {
         const others = savedDocsIndex.filter((d: any) => !isCurrentSavedSnapshot(d) && d.invoices.some((i: any) => sameInvoiceRef(cur, i)));
-        if (others.length > 0) doublePayWarnings.push({ invoice: cur.no, serials: others.map(o => o.label) });
+        if (others.length > 0) doublePayWarnings.push({ invoice: cur.no, serials: others.map(o => o.label), uuid: cur.uuid, seller: cur.seller, amount: cur.amount });
       }
     }
+
+    const duplicateWarningForInvoice = (inv: any) => {
+      const iu = String(inv?.attached_uuid || "").trim();
+      const no = String(inv?.invoice_no || "");
+      const seller = String(inv?.seller_tax_id || "").trim();
+      const amt = Number(String(inv?.amount ?? "").replace(/,/g, "")) || 0;
+      return doublePayWarnings.find((w: any) => {
+        if (w.uuid && iu) return w.uuid === iu;
+        if (w.invoice !== no) return false;
+        if (w.seller && seller && w.seller !== seller) return false;
+        return !(w.amount > 0 && amt > 0 && Math.abs(w.amount - amt) > 0.01);
+      });
+    };
 
     // "Invoices Match Amount" (auto): the invoice totals must line up with the
     // values entered on the settlement document:
@@ -2713,7 +2728,7 @@ function App() {
       const issues = er?.issues || [];
       const errors = issues.filter((x: any) => x.severity === "error").length;
       const warnings = issues.filter((x: any) => x.severity === "warning").length;
-      const duplicate = doublePayWarnings.find(w => w.invoice === inv.invoice_no);
+      const duplicate = duplicateWarningForInvoice(inv);
       const unconvertedRow = unconverted.includes(String(inv.attached_invoice || inv.invoice_no || "—"));
       const credit = isCreditNote(poolForInvoice(inv));
       const cancelled = isCancelledByCredit(poolForInvoice(inv));
