@@ -1564,7 +1564,7 @@ function App() {
           {rows.length > 1 && <button className="btn-danger" onClick={() => delRow(parent, i)}>✕</button>}
         </div>
       ))}
-      <button className="btn-add" onClick={() => addRow(parent)}>+ Add Row</button>
+      <button className="hc-btn" onClick={() => addRow(parent)}>+ Add Row</button>
     </div>
   );
 
@@ -1760,9 +1760,9 @@ function App() {
         </div>
       )}
       <div style={{display:'flex',gap:8,marginTop:8}}>
-        <button className="btn-add" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
-        <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
-        <button className="btn-validation" onClick={openValidationResults} disabled={!(data.invoices ?? []).some(inv => inv.attached_invoice) && !(etaResult && etaResult.length > 0)}>
+        <button className="hc-btn" onClick={addInvoice}>+ {t("手动发票", "Manual Invoice")}</button>
+        <button className="hc-btn pri" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+        <button className="hc-btn" onClick={openValidationResults} disabled={!(data.invoices ?? []).some(inv => inv.attached_invoice) && !(etaResult && etaResult.length > 0)}>
           {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
         </button>
       </div>
@@ -2154,7 +2154,7 @@ function App() {
                 <button className="btn-danger" onClick={() => updateField("remainder_of", "")}>✕</button>
               </div>
             ) : (
-              <button className="btn-add" onClick={() => { loadSavedDocsIndex(); setRemainderSearch(""); setShowRemainderPicker(true); }}>
+              <button className="hc-btn" onClick={() => { loadSavedDocsIndex(); setRemainderSearch(""); setShowRemainderPicker(true); }}>
                 ⤷ {t("标记为剩余部分…", "Link as remainder of…")}
               </button>
             )}
@@ -2179,7 +2179,7 @@ function App() {
             <button className="btn-danger" onClick={() => delSellerTaxId(i)}>✕</button>
           </div>
         ))}
-        <button className="btn-add" onClick={addSellerTaxId}>+ {t("添加卖方税号", "Add Seller TAX ID")}</button>
+        <button className="hc-btn" onClick={addSellerTaxId}>+ {t("添加卖方税号", "Add Seller TAX ID")}</button>
     </div>
   );
 
@@ -2334,6 +2334,7 @@ function App() {
   const BankSettlementAuditCard = () => {
     const amountOf = (v: any) => parseFloat(String(v ?? "0").replace(/,/g, "")) || 0;
     const tol = 0.005;
+    const fmtDoc = (v: number) => docCurrency === "USD" ? fmtUsd(v) : fmt(v);
     const hasCumulative = [
       computed.c_1A,
       computed.c_2B,
@@ -2598,10 +2599,10 @@ function App() {
           {t("累计在前、本期在后。费率可直接在表格中选择；多税率在下方配置。", "Cumulative comes before current. Pick single rates in the table; configure multi-rates below.")}
         </div>
         <div className="sa-kpis">
-          <div><span>{t("本期结算", "Current settlement")}</span><b>{fmt(computed.c_1B)}</b></div>
-          <div><span>VAT</span><b>{fmt(computed.c_1E)}</b></div>
-          <div><span>WHT</span><b>{fmt(computed.c_6C)}</b></div>
-          <div><span>{t("本期应付", "Current payable")}</span><b>{fmt(computed.c_9A)}</b></div>
+          <div><span>{t("本期结算", "Current settlement")}</span><b>{fmtDoc(computed.c_1B)}</b></div>
+          <div><span>VAT</span><b>{fmtDoc(computed.c_1E)}</b></div>
+          <div><span>WHT</span><b>{fmtDoc(computed.c_6C)}</b></div>
+          <div><span>{t("本期应付", "Current payable")}</span><b>{fmtDoc(computed.c_9A)}</b></div>
         </div>
         <div className="sa-table">
           <div className="sa-row sa-group-head">
@@ -3019,17 +3020,17 @@ function App() {
                         {r.canUseXml && (
                           <div className="iq-actions">
                             {Math.abs(formNet - xmlNet) > 0.5 && (
-                              <button className="btn-add" onClick={() => updInv(r.index, "amount", xmlNet.toFixed(2))}>
+                              <button className="hc-btn" onClick={() => updInv(r.index, "amount", xmlNet.toFixed(2))}>
                                 {t("采用 XML 净额", "Use XML net")}
                               </button>
                             )}
                             {Math.abs(formVat - xmlVat) > 0.5 && (
-                              <button className="btn-add" onClick={() => updInv(r.index, "vat", xmlVat.toFixed(2))}>
+                              <button className="hc-btn" onClick={() => updInv(r.index, "vat", xmlVat.toFixed(2))}>
                                 {t("采用 XML VAT", "Use XML VAT")}
                               </button>
                             )}
                             {Math.abs(formWht - xmlWht) > 0.5 && (
-                              <button className="btn-add" onClick={() => updInv(r.index, "wht", xmlWht.toFixed(2))}>
+                              <button className="hc-btn" onClick={() => updInv(r.index, "wht", xmlWht.toFixed(2))}>
                                 {t("采用 XML WHT", "Use XML WHT")}
                               </button>
                             )}
@@ -3072,14 +3073,14 @@ function App() {
         <div className="iq-foot">
           <span>ⓘ {t("ETA 校验只覆盖已附加 XML 的发票。", "ETA validation only covers invoices with attached XML.")}</span>
           <div className="iq-foot-actions">
-            <button className="btn-add" onClick={openPoolForSelect}>
+            <button className="hc-btn pri" onClick={openPoolForSelect}>
               + {t("从发票池添加", "Add from Pool")}
             </button>
-            <button className="btn-add" onClick={addInvoice}>
+            <button className="hc-btn" onClick={addInvoice}>
               + {t("手动发票", "Manual Invoice")}
             </button>
             <button
-              className="btn-validation"
+              className="hc-btn"
               onClick={openValidationResults}
               disabled={!rows.some(r => !r.isManual)}
             >
@@ -3284,7 +3285,7 @@ function App() {
           <div style={{borderTop:'1px solid var(--border)',paddingTop:14,marginTop:4}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
               <h4 style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.06em',margin:0}}>{t("成本拆分", "Cost Breakdown")}</h4>
-              <button className="btn-add" style={{marginTop:0,padding:'4px 10px',fontSize:11}} onClick={addCostRow}>+ {t("添加费用", "Add Cost")}</button>
+              <button className="hc-btn" style={{marginTop:0,padding:'4px 10px',fontSize:11}} onClick={addCostRow}>+ {t("添加费用", "Add Cost")}</button>
             </div>
             {(data.import_costs ?? [{name:"",amount:"0.00"}]).map((c: any, i: number) => (
               <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 130px 30px',gap:8,alignItems:'center',marginBottom:6}}>
@@ -3366,9 +3367,9 @@ function App() {
               })}
             </div>
             <div style={{display:'flex',gap:8,marginTop:10}}>
-              <button className="btn-add" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
-              <button className="btn-add-pool" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
-              <button className="btn-validation" onClick={openValidationResults} disabled={!(data.import_entries ?? []).some(e => e.attached_invoice) && !(etaResult && etaResult.length > 0)}>
+              <button className="hc-btn" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
+              <button className="hc-btn pri" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
+              <button className="hc-btn" onClick={openValidationResults} disabled={!(data.import_entries ?? []).some(e => e.attached_invoice) && !(etaResult && etaResult.length > 0)}>
                 {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
               </button>
             </div>
