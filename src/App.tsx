@@ -1193,6 +1193,21 @@ function App() {
   const savedJsonRef = useRef<string>("");
   const [docStatus, setDocStatus] = useState<"draft" | "saved">("draft");
   const [pendingAction, setPendingAction] = useState<{ run: () => void } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; remote: boolean; label: string; approve: boolean; request: boolean } | null>(null);
+  const requestSnapshotDelete = (h: any) => setDeleteConfirm({
+    id: h.id,
+    remote: !!h.remote,
+    label: String(h.label || ""),
+    approve: false,
+    request: !!h.remote && !!authUser && !isAdminUser,
+  });
+  const requestSnapshotApprove = (h: any) => setDeleteConfirm({
+    id: h.id,
+    remote: !!h.remote,
+    label: String(h.label || ""),
+    approve: true,
+    request: false,
+  });
   const isDocDirty = savedJsonRef.current !== "" && JSON.stringify(formRef.current) !== savedJsonRef.current;
   const docPill = isDocDirty
     ? { cls: "dirty", label: t("未保存", "Unsaved") }
@@ -4562,10 +4577,6 @@ function App() {
   };
 
   const deleteSnapshot = async (id: number, remote = false) => {
-    const deleteConfirm = remote && authUser && !isAdminUser
-      ? t("Submit a deletion request for this snapshot?", "Submit a deletion request for this snapshot?")
-      : t("Delete this snapshot? This cannot be undone.", "Delete this snapshot? This cannot be undone.");
-    if (!(remote && !authUser) && !window.confirm(deleteConfirm)) return;
     if (remote) {
       if (!authUser) {
         showAlert(t("会话已失效，无法删除云端快照", "Your session has expired; the cloud snapshot could not be deleted"));
@@ -4601,7 +4612,6 @@ function App() {
   };
 
   const approveDelete = async (id: number) => {
-    if (!window.confirm(t("Approve and delete this snapshot? This cannot be undone.", "Approve and delete this snapshot? This cannot be undone."))) return;
     try {
       await approveDeleteSnapshot(id);
       showAlert(t("快照已删除", "Snapshot deleted"));
@@ -7612,17 +7622,17 @@ function App() {
                     <button className="hc-btn pri" onClick={() => loadSnapshot(h.id, !!h.remote, h.label)}>Load</button>
                     {isAdminUser && pendingDelete && (
                       <>
-                        <button className="hc-btn hc-ok" onClick={() => approveDelete(h.id)}>{t("批准", "Approve")}</button>
+                        <button className="hc-btn hc-ok" onClick={() => requestSnapshotApprove(h)}>{t("批准", "Approve")}</button>
                         <button className="hc-btn" onClick={() => rejectDelete(h.id)}>{t("拒绝", "Reject")}</button>
                       </>
                     )}
                     {isAdminUser && !pendingDelete && (
-                      <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id, !!h.remote)}>Delete</button>
+                      <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>Delete</button>
                     )}
                     {!isAdminUser && authUser && !pendingDelete && (
-                      <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id, !!h.remote)}>{t("请求删除", "Request delete")}</button>
+                      <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>{t("请求删除", "Request delete")}</button>
                     )}
-                    {!authUser && <button className="hc-btn hc-danger" onClick={() => deleteSnapshot(h.id, !!h.remote)}>Delete</button>}
+                    {!authUser && <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>Delete</button>}
                   </div>
                 </div>
                 );
@@ -8211,6 +8221,52 @@ function App() {
         );
       })()}
 
+      {deleteConfirm && (
+        <div
+          className="modal-overlay history-overlay"
+          style={{ position: "fixed", inset: 0, zIndex: 400 }}
+          onClick={() => setDeleteConfirm(null)}
+        >
+          <div className="modal history-modal unsaved-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>
+                {deleteConfirm.approve
+                  ? t("批准删除快照？", "Approve snapshot deletion?")
+                  : deleteConfirm.request
+                    ? t("提交删除请求？", "Submit deletion request?")
+                    : t("删除快照？", "Delete snapshot?")}
+              </h3>
+              <button className="modal-close" onClick={() => setDeleteConfirm(null)}>✕</button>
+            </div>
+            <div className="uc-body">
+              <p><b>{deleteConfirm.label || `#${deleteConfirm.id}`}</b></p>
+              <p>
+                {deleteConfirm.request
+                  ? t("该操作会提交删除请求，待管理员批准后快照将被永久删除。", "This submits a deletion request; the snapshot will be permanently deleted after admin approval.")
+                  : t("该操作会永久删除该快照，无法恢复。", "This permanently deletes the snapshot and cannot be undone.")}
+              </p>
+            </div>
+            <div className="uc-actions">
+              <button className="hc-btn" onClick={() => setDeleteConfirm(null)}>{t("取消", "Cancel")}</button>
+              <button
+                className="hc-btn hc-danger"
+                onClick={() => {
+                  const d = deleteConfirm;
+                  setDeleteConfirm(null);
+                  if (d.approve) void approveDelete(d.id);
+                  else void deleteSnapshot(d.id, d.remote);
+                }}
+              >
+                {deleteConfirm.approve
+                  ? t("批准并删除", "Approve & delete")
+                  : deleteConfirm.request
+                    ? t("提交请求", "Submit request")
+                    : t("删除快照", "Delete snapshot")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingAction && (
         <div className="modal-overlay history-overlay" style={{ position: 'fixed', zIndex: 400 }} onClick={() => setPendingAction(null)}>
           <div className="modal history-modal unsaved-modal" onClick={e => e.stopPropagation()}>
