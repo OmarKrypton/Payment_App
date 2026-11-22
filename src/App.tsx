@@ -2599,9 +2599,9 @@ function App() {
           {t("累计在前、本期在后。费率可直接在表格中选择；多税率在下方配置。", "Cumulative comes before current. Pick single rates in the table; configure multi-rates below.")}
         </div>
         <div className="sa-kpis">
-          <div><span>{t("本期结算", "Current settlement")}</span><b>{fmtDoc(computed.c_1B)}</b></div>
+          <div><span>{t("本期结算", "Current settlement")}</span><b>{fmtDoc(computed.c_1B)}</b><small>{t("含税结算", "Settlement incl. VAT")}: {fmtDoc(computed.c_1G)}</small></div>
           <div><span>VAT</span><b>{fmtDoc(computed.c_1E)}</b></div>
-          <div><span>WHT</span><b>{fmtDoc(computed.c_6C)}</b></div>
+          <div><span>WHT</span><b>{fmtDoc(computed.c_6C)}</b><small>{t("结算 − WHT", "Settlement − WHT")}: {fmtDoc(computed.c_1B - computed.c_6C)}</small></div>
           <div><span>{t("本期应付", "Current payable")}</span><b>{fmtDoc(computed.c_9A)}</b></div>
         </div>
         <div className="sa-table">
@@ -4374,7 +4374,8 @@ function App() {
       // Refresh the label too: a serial edit must not be reverted by a later
       // metadata-only update (e.g. the Paid/Unpaid toggle).
       setOverwriteTarget({ ...target, label: newLabel });
-      loadHistoryList(historySearch);
+      await loadHistoryList(historySearch);
+      await loadSavedDocsIndex();
       savedJsonRef.current = JSON.stringify(formRef.current);
       setDocStatus("saved");
       return true;
@@ -4579,6 +4580,10 @@ function App() {
   };
 
   const deleteSnapshot = async (id: number, remote = false) => {
+    const deleteConfirm = remote && authUser && !isAdminUser
+      ? t("Submit a deletion request for this snapshot?", "Submit a deletion request for this snapshot?")
+      : t("Delete this snapshot? This cannot be undone.", "Delete this snapshot? This cannot be undone.");
+    if (!(remote && !authUser) && !window.confirm(deleteConfirm)) return;
     if (remote) {
       if (!authUser) {
         showAlert(t("会话已失效，无法删除云端快照", "Your session has expired; the cloud snapshot could not be deleted"));
@@ -4614,6 +4619,7 @@ function App() {
   };
 
   const approveDelete = async (id: number) => {
+    if (!window.confirm(t("Approve and delete this snapshot? This cannot be undone.", "Approve and delete this snapshot? This cannot be undone."))) return;
     try {
       await approveDeleteSnapshot(id);
       showAlert(t("快照已删除", "Snapshot deleted"));
