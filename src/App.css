@@ -4233,3 +4233,25 @@ mark.de-hl {
 .sidebar.collapsed .sidebar-seg button {
   border-radius: 8px;
 }
+
+/* Supplier WHT actions + readable document rate chips */
+.supplier-wht-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.supplier-wht-actions .hc-btn {
+  padding: 4px 10px;
+  font-size: 10px;
+}
+.supplier-doc-rates .supplier-doc-rate.vat {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.28);
+  color: #1d4ed8;
+}
+.supplier-doc-rates .supplier-doc-rate.wht {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.32);
+  color: #b45309;
+}

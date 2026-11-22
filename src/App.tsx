@@ -3555,7 +3555,19 @@ function App() {
                         </div>
                       </div>
                     )}
-                    {!isFreeZoneTaxId(s.taxId) && (supplierIsWhtFree(s) || s.whtCert || whtCerts[s.taxId]) && (() => {
+                    <div className="supplier-wht-actions">
+                    {!isFreeZoneTaxId(s.taxId) && (
+                      <button className="hc-btn" onClick={() => void markSupplierFreeZone(s.taxId, s.name || s.poolName)}>
+                        {t("自由区", "Free zone")}
+                      </button>
+                    )}
+                    {!supplierIsWhtFree(s) && !s.whtCert && !whtCerts[s.taxId] && (
+                      <button className="hc-btn" onClick={() => openCertEditor(s.taxId, s.name || s.poolName)}>
+                        {t("WHT 证明", "WHT certificate")}
+                      </button>
+                    )}
+                  </div>
+                  {!isFreeZoneTaxId(s.taxId) && (supplierIsWhtFree(s) || s.whtCert || whtCerts[s.taxId]) && (() => {
                       const st = certStatus(s.taxId);
                       const label = st.level === "valid" ? t("有效", "Valid")
                         : st.level === "soon" ? t("即将到期", "Expiring soon")
@@ -3576,19 +3588,6 @@ function App() {
                     })()}
                   </div>
                 </div>
-
-                <div className="supplier-actions">
-                {!isFreeZoneTaxId(s.taxId) && (
-                  <button className="hc-btn" onClick={() => void markSupplierFreeZone(s.taxId, s.name || s.poolName)}>
-                    {t("自由区", "Free zone")}
-                  </button>
-                )}
-                {!s.whtCert && !whtCerts[s.taxId] && (
-                  <button className="hc-btn" onClick={() => openCertEditor(s.taxId, s.name || s.poolName)}>
-                    {t("WHT 证明", "WHT certificate")}
-                  </button>
-                )}
-              </div>
               {s.docs.length > 0 && (
                   <details className="supplier-docs">
                     <summary>{t("已保存文档", "Saved documents")} ({s.docs.length})</summary>
@@ -3598,7 +3597,7 @@ function App() {
                           <span className="decision-dot" style={{ background: deco(d.final_decision) || 'var(--border)', flexShrink: 0 }} title={d.final_decision} />
                           <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
                           <span className="supplier-doc-label" title={d.matchedVia ? `${t("匹配来源", "Matched via")}: ${d.matchedVia}` : d.label}>{d.label}</span>
-        <span className="supplier-doc-rates"><span>VAT {d.vatRate || "—"}</span><span>WHT {d.whtRate || "—"}</span></span>
+        <span className="supplier-doc-rates"><span className="supplier-doc-rate vat">VAT {d.vatRate || "—"}</span><span className="supplier-doc-rate wht">WHT {d.whtRate || "—"}</span></span>
                           <span className="supplier-doc-date">{d.created_at}</span>
                           <button className="hc-btn" onClick={() => openDocumentBySerial(d.label)}>{t("加载", "Load")}</button>
                         </div>
