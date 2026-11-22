@@ -3359,7 +3359,7 @@ function App() {
               })}
             </div>
             <div style={{display:'flex',gap:8,marginTop:10}}>
-              <button className="hc-btn" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
+              <button className="hc-btn hc-green" onClick={addImportEntry}>+ {t("添加服务商", "Add Provider")}</button>
               <button className="hc-btn pri" onClick={openPoolForSelect}>{t("从发票池添加", "Add from Pool")}</button>
               <button className="hc-btn" onClick={openValidationResults} disabled={!(data.import_entries ?? []).some(e => e.attached_invoice) && !(etaResult && etaResult.length > 0)}>
                 {t("验证结果", "Validation Results")}{etaResult && etaResult.length > 0 ? ` (${etaResult.length})` : ""}
