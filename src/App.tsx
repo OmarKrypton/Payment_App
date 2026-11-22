@@ -2071,8 +2071,9 @@ function App() {
     if (isRemainder) {
       const parent = (savedDocsIndex || []).find((d: any) => d.label === data.remainder_of);
       const parentTotal = invoiceDocTotals(parent?.invoices || []).net;
-      const curTotal = invoiceDocTotals(invs).net;
-      remHint = `${t("父文档合计", "Parent total")} ${fmt(parentTotal)} · ${t("本单据合计", "This doc total")} ${fmt(curTotal)}`;
+      const curNetPayable = computed.c_9A;
+      const remainingAmount = parentTotal - curNetPayable;
+      remHint = `${t("父文档合计", "Parent total")} ${fmt(parentTotal)} · ${t("本期净应付", "This doc net payable")} ${fmt(curNetPayable)} · ${t("剩余", "Remaining")} ${fmt(remainingAmount)}`;
     }
 
     const ITEM_ZH: Record<string, string> = {
@@ -2390,18 +2391,14 @@ function App() {
     const rateList = (rates: number[]) => rates.map((r) => `${r}%`).join(", ");
 
     const vatBase = computed.c_1B - amountOf(data.val_1D);
-    const vatRateControl = isRemainder
-      ? "—"
-      : data.vat_manual
+    const vatRateControl = data.vat_manual
         ? <span className="sa-rate-tag">{t("多税率", "Multi-rate")}</span>
-        : rateSelect("vat_rate", data.vat_rate, vatRates, isRemainder);
-    const whtRateControl = isRemainder
-      ? "—"
-      : data.wht_manual_amount
+        : rateSelect("vat_rate", data.vat_rate, vatRates);
+    const whtRateControl = data.wht_manual_amount
         ? <span className="sa-rate-tag">{t("手动金额", "Manual amount")}</span>
         : data.wht_manual
           ? <span className="sa-rate-tag">{t("多税率", "Multi-rate")}</span>
-          : rateSelect("wht_rate", data.wht_rate, whtRates, isRemainder);
+          : rateSelect("wht_rate", data.wht_rate, whtRates);
 
     const tintFor = (key: string) => {
       let h = 0;
@@ -2468,13 +2465,13 @@ function App() {
       key: "temp",
       label: t("临时工社保", "Temp. labour"),
       basis: computed.c_1B,
-      rate: isRemainder ? "—" : rateSelect("temp_rate", data.temp_rate, tempRates, isRemainder),
+      rate: rateSelect("temp_rate", data.temp_rate, tempRates),
       opening: computed.c_5A,
       current: computed.c_5B,
       returned: amountOf(data.val_5C),
       ending: computed.c_5D,
-      status: isRemainder ? "na" : computed.c_5D < -tol ? "warn" : "pass",
-      note: isRemainder ? t("在父文档上计算", "Applied on the parent document") : undefined,
+      status: computed.c_5D < -tol ? "warn" : "pass",
+      note: undefined,
     });
 
     rows.push({
@@ -2494,25 +2491,20 @@ function App() {
       key: "other",
       label: t("其他扣款", "Other deductions"),
       basis: computed.c_1B,
-      rate: isRemainder ? "—" : rateSelect("oth_rate", data.oth_rate, othRates, isRemainder),
+      rate: rateSelect("oth_rate", data.oth_rate, othRates),
       opening: computed.c_8A,
       current: computed.c_8B,
       returned: "—",
       ending: computed.c_8C,
-      status: isRemainder ? "na" : data.oth_manual || computed.c_8C < -tol ? "warn" : "pass",
-      note: isRemainder
-        ? t("在父文档上计算", "Applied on the parent document")
-        : data.oth_manual
+      status: data.oth_manual || computed.c_8C < -tol ? "warn" : "pass",
+      note: data.oth_manual
           ? t("手动行需要原因/审批", "Manual rows need a reason/approval")
           : undefined,
     });
 
     let whtStatus: "pass" | "warn" | "na" = "pass";
     let whtNote = "";
-    if (isRemainder) {
-      whtStatus = "na";
-      whtNote = t("在父文档上计算", "Applied on the parent document");
-    } else if (whtFreeConflict) {
+    if (whtFreeConflict) {
       whtStatus = "warn";
       whtNote = `${t("免税供应商", "WHT-free seller")}: ${whtConflictSellers.join(", ") || "—"}`;
     } else if (data.wht_manual_amount && computed.c_1B > 0 && computed.c_6B > 0) {
@@ -2522,7 +2514,7 @@ function App() {
         whtNote = `${effWht.toFixed(2)}% ${t("不在 1% / 3% / 5% 范围内", "outside 1% / 3% / 5%")}`;
       }
     }
-    if (whtStatus !== "na" && computed.c_6C < -tol) {
+    if (computed.c_6C < -tol) {
       whtStatus = "warn";
       whtNote = t("期末为负，请检查期初或本期 WHT", "Ending is negative; check opening/current WHT");
     }
@@ -2551,7 +2543,7 @@ function App() {
       current: computed.c_9A,
       returned: "—",
       ending: computed.c_9A,
-      remaining: computed.c_9A - computed.c_10A,
+      remaining: computed.c_10A > 0.005 ? computed.c_9A - computed.c_10A : undefined,
       status: computed.c_9A < -tol ? "warn" : "pass",
     });
 
@@ -2565,7 +2557,7 @@ function App() {
         current: currentOnlyNet,
         returned: "—",
         ending: currentOnlyNet,
-        remaining: currentOnlyNet - computed.c_10A,
+        remaining: computed.c_10A > 0.005 ? currentOnlyNet - computed.c_10A : undefined,
         status: currentOnlyNet < -tol ? "warn" : "pass",
         note: t("不含期初/累计余额", "Excludes opening/cumulative balances"),
       });
@@ -3348,10 +3340,10 @@ function App() {
                     <div style={{textAlign:'center'}}>
                       <input type="checkbox" className="prov-chk" checked={e.free_wht} onChange={() => updImportEntry(i, "free_wht", !e.free_wht)} />
                     </div>
-                    <select className="prov-sel" value={e.vat_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
+                    <select className="prov-sel" value={e.vat_rate} onChange={ev => updImportEntry(i, "vat_rate", ev.target.value)}>
                       {["0%","5%","9%","10%","14%"].map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
-                    <select className="prov-sel" value={e.wht_rate} disabled={isRemainder} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
+                    <select className="prov-sel" value={e.wht_rate} onChange={ev => updImportEntry(i, "wht_rate", ev.target.value)}>
                       {["0%","1%","3%","5%","10%"].map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                     <div style={{textAlign:'center'}}>
@@ -4421,26 +4413,9 @@ function App() {
     // Enforce settlement rules for remainder docs: the parent document carries
     // all VAT/WHT/temp-labour/other deductions for the whole settlement, so
     // this one must not apply them a second time.
-    if (saveData.remainder_of) {
-      if (saveData.remainder_of === label) {
-        showAlert(t("不能将文档链接为自身的剩余部分", "Cannot link a document as a remainder of itself"));
-        saveData.remainder_of = "";
-      } else {
-        saveData.vat_rate = "0%";
-        saveData.wht_rate = "0%";
-        saveData.temp_rate = "0%";
-        saveData.oth_rate = "0%";
-        if (saveData.wht_manual_amount) saveData.val_6B = "0.00";
-        saveData.wht_manual = false;
-        saveData.wht_manual_amount = false;
-        saveData.vat_manual = false;
-        saveData.oth_manual = false;
-        if (Array.isArray(saveData.import_entries)) {
-          saveData.import_entries = saveData.import_entries.map((e: any) => ({
-            ...e, vat_rate: "0%", wht_rate: "0%"
-          }));
-        }
-      }
+    if (saveData.remainder_of === label) {
+      showAlert(t("不能将文档链接为自身的剩余部分", "Cannot link a document as a remainder of itself"));
+      saveData.remainder_of = "";
     }
     const dataJson = JSON.stringify(saveData);
     let saved = false;
@@ -5930,15 +5905,6 @@ function App() {
   // for the whole settlement, so this one must not add them again.
   const linkRemainderOf = (parentSerial: string) => {
     updateField("remainder_of", parentSerial);
-    updateField("vat_rate", "0%");
-    updateField("wht_rate", "0%");
-    updateField("temp_rate", "0%");
-    updateField("oth_rate", "0%");
-    updateField("val_6B", "0.00");
-    updateField("wht_manual", false);
-    updateField("wht_manual_amount", false);
-    updateField("vat_manual", false);
-    updateField("oth_manual", false);
     setShowRemainderPicker(false);
   };
 
