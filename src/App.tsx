@@ -3558,7 +3558,7 @@ function App() {
                     <div className="supplier-wht-actions">
                     {!isFreeZoneTaxId(s.taxId) && (
                       <button className="hc-btn" onClick={() => void markSupplierFreeZone(s.taxId, s.name || s.poolName)}>
-                        {t("自由区", "Free zone")}
+                        {t("标记自由区", "Mark free zone")}
                       </button>
                     )}
                     {!supplierIsWhtFree(s) && !s.whtCert && !whtCerts[s.taxId] && (
@@ -5789,6 +5789,11 @@ function App() {
   const markSupplierFreeZone = async (taxId: string, name: string) => {
     const tx = (taxId || "").trim();
     if (!tx) return;
+    const confirmed = window.confirm(t(
+      `将供应商 ${name || tx}（税号 ${tx}）标记为自由区供应商？\n\n这会永久免除该供应商的 WHT，并影响审计结果。请仅在供应商确实位于自由区时确认。`,
+      `Mark ${name || tx} (tax ID ${tx}) as a free-zone supplier?\n\nThis permanently exempts the supplier from WHT and affects audit results. Only confirm if the supplier is actually located in a free zone.`,
+    ));
+    if (!confirmed) return;
     const next = { ...whtCerts, [tx]: { valid_until: FREE_ZONE_DATE, supplier_name: name || "" } };
     setWhtCerts(next);
     try { localStorage.setItem("wht_certs", JSON.stringify(next)); } catch {}
