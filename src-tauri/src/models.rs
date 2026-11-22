@@ -344,6 +344,11 @@ pub struct HistoryEntry {
     pub created_at: String,
     #[serde(default)]
     pub data_json: String,
+    /// Set when the snapshot is in Trash. Normal history omits these rows.
+    #[serde(default)]
+    pub deleted_at: Option<String>,
+    #[serde(default)]
+    pub deleted_by: Option<String>,
 }
 
 

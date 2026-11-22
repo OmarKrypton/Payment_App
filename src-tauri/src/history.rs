@@ -25,11 +25,30 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             label TEXT NOT NULL,
             notes TEXT DEFAULT '',
             created_at TEXT NOT NULL,
-            data TEXT NOT NULL
+            data TEXT NOT NULL,
+            deleted_at TEXT DEFAULT NULL,
+            deleted_by TEXT DEFAULT ''
         )",
         [],
     )
     .map_err(|e| e.to_string())?;
+    // Migration: snapshots written before Trash existed have no soft-delete
+    // columns. Normal history only shows rows whose deleted_at is null.
+    let snapshot_cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(snapshots)")
+        .map_err(|e| e.to_string())?
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    if !snapshot_cols.iter().any(|c| c == "deleted_at") {
+        conn.execute("ALTER TABLE snapshots ADD COLUMN deleted_at TEXT DEFAULT NULL", [])
+            .map_err(|e| e.to_string())?;
+    }
+    if !snapshot_cols.iter().any(|c| c == "deleted_by") {
+        conn.execute("ALTER TABLE snapshots ADD COLUMN deleted_by TEXT DEFAULT ''", [])
+            .map_err(|e| e.to_string())?;
+    }
     conn.execute(
         "CREATE TABLE IF NOT EXISTS eta_invoices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,48 +218,47 @@ pub fn update_snapshot_data(conn: &Connection, id: i64, data_json: &str) -> Resu
     Ok(())
 }
 
+/// Rows in normal History (everything that is not in Trash).
 pub fn list_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntry>, String> {
+    list_snapshots_query(conn, search, false)
+}
+
+/// Rows in Trash / Recently deleted, newest deletion first.
+pub fn list_trash_snapshots(conn: &Connection, search: &str) -> Result<Vec<HistoryEntry>, String> {
+    list_snapshots_query(conn, search, true)
+}
+
+fn list_snapshots_query(conn: &Connection, search: &str, trashed: bool) -> Result<Vec<HistoryEntry>, String> {
     let mut result = Vec::new();
-
-    if search.is_empty() {
-        let mut stmt = conn
-            .prepare("SELECT id, label, notes, created_at, data FROM snapshots ORDER BY created_at DESC")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(HistoryEntry {
-                    id: row.get(0)?,
-                    label: row.get(1)?,
-                    notes: row.get(2)?,
-                    created_at: row.get(3)?,
-                    data_json: row.get(4)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            result.push(row.map_err(|e| e.to_string())?);
-        }
+    let filter = if trashed { "deleted_at IS NOT NULL" } else { "deleted_at IS NULL" };
+    let order = if trashed { "deleted_at DESC, created_at DESC" } else { "created_at DESC" };
+    let search_clause = if search.is_empty() { "" } else { " AND (label LIKE ?1 OR notes LIKE ?1)" };
+    let sql = format!(
+        "SELECT id, label, notes, created_at, data, deleted_at, deleted_by FROM snapshots WHERE {}{} ORDER BY {}",
+        filter, search_clause, order
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_vec: Vec<String> = if search.is_empty() {
+        Vec::new()
     } else {
-        let pattern = format!("%{}%", search);
-        let mut stmt = conn
-            .prepare("SELECT id, label, notes, created_at, data FROM snapshots WHERE label LIKE ?1 OR notes LIKE ?1 ORDER BY created_at DESC")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![pattern], |row| {
-                Ok(HistoryEntry {
-                    id: row.get(0)?,
-                    label: row.get(1)?,
-                    notes: row.get(2)?,
-                    created_at: row.get(3)?,
-                    data_json: row.get(4)?,
-                })
+        vec![format!("%{}%", search)]
+    };
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params_vec), |row| {
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                label: row.get(1)?,
+                notes: row.get(2)?,
+                created_at: row.get(3)?,
+                data_json: row.get(4)?,
+                deleted_at: row.get(5)?,
+                deleted_by: row.get(6)?,
             })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            result.push(row.map_err(|e| e.to_string())?);
-        }
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
     }
-
     Ok(result)
 }
 
@@ -253,11 +271,44 @@ pub fn load_snapshot(conn: &Connection, id: i64) -> Result<String, String> {
     .map_err(|e| e.to_string())
 }
 
-pub fn delete_snapshot(conn: &Connection, id: i64) -> Result<(), String> {
-    let n = conn.execute("DELETE FROM snapshots WHERE id = ?1", params![id])
+/// Move a snapshot to Trash. The payload is preserved, so it can be restored.
+pub fn trash_snapshot(conn: &Connection, id: i64, deleted_by: &str) -> Result<(), String> {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let n = conn
+        .execute(
+            "UPDATE snapshots SET deleted_at = ?1, deleted_by = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+            params![now, deleted_by, id],
+        )
         .map_err(|e| e.to_string())?;
     if n == 0 {
-        return Err(format!("Snapshot {} not found", id));
+        return Err(format!("Snapshot {} not found or already in Trash", id));
+    }
+    Ok(())
+}
+
+pub fn restore_snapshot(conn: &Connection, id: i64) -> Result<(), String> {
+    let n = conn
+        .execute(
+            "UPDATE snapshots SET deleted_at = NULL, deleted_by = '' WHERE id = ?1 AND deleted_at IS NOT NULL",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err(format!("Snapshot {} is not in Trash", id));
+    }
+    Ok(())
+}
+
+/// Permanent deletion is only allowed for a snapshot already in Trash.
+pub fn purge_snapshot(conn: &Connection, id: i64) -> Result<(), String> {
+    let n = conn
+        .execute(
+            "DELETE FROM snapshots WHERE id = ?1 AND deleted_at IS NOT NULL",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err(format!("Snapshot {} is not in Trash", id));
     }
     Ok(())
 }
@@ -265,7 +316,7 @@ pub fn delete_snapshot(conn: &Connection, id: i64) -> Result<(), String> {
 pub fn check_serial_exists(conn: &Connection, serial: &str) -> Result<bool, String> {
     let count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM snapshots WHERE label = ?1",
+            "SELECT COUNT(*) FROM snapshots WHERE label = ?1 AND deleted_at IS NULL",
             params![serial],
             |row| row.get(0),
         )
@@ -1707,5 +1758,83 @@ mod pool_supersede_tests {
             .unwrap();
         assert!(!uuid.is_empty());
         assert_eq!(status, "used", "claim must survive the merge");
+    }
+}
+
+#[cfg(test)]
+mod snapshot_trash_tests {
+    use super::*;
+
+    fn insert(conn: &Connection, label: &str, data: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO snapshots (label, notes, created_at, data) VALUES (?1, '', '2026-01-02 03:04:05', ?2)",
+            params![label, data],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn trash_hides_restores_and_purges() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let a = insert(&conn, "DOC-A", "{\"v\":1}");
+        let b = insert(&conn, "DOC-B", "{\"v\":2}");
+
+        trash_snapshot(&conn, a, "omar").unwrap();
+        let history = list_snapshots(&conn, "").unwrap();
+        assert_eq!(history.len(), 1, "trashed snapshots leave normal history");
+        assert_eq!(history[0].label, "DOC-B");
+        let trash = list_trash_snapshots(&conn, "").unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].label, "DOC-A");
+        assert!(trash[0].deleted_at.is_some());
+        assert_eq!(trash[0].deleted_by.as_deref(), Some("omar"));
+        assert_eq!(trash[0].data_json, "{\"v\":1}", "payload must be preserved");
+        assert!(!check_serial_exists(&conn, "DOC-A").unwrap(), "trashed serials are reusable");
+        assert!(check_serial_exists(&conn, "DOC-B").unwrap());
+
+        // A snapshot that is not in Trash cannot be purged.
+        assert!(purge_snapshot(&conn, b).is_err());
+
+        restore_snapshot(&conn, a).unwrap();
+        assert_eq!(list_snapshots(&conn, "").unwrap().len(), 2);
+        assert!(list_trash_snapshots(&conn, "").unwrap().is_empty());
+        assert!(check_serial_exists(&conn, "DOC-A").unwrap());
+
+        trash_snapshot(&conn, a, "local").unwrap();
+        purge_snapshot(&conn, a).unwrap();
+        assert_eq!(list_snapshots(&conn, "").unwrap().len(), 1);
+        assert!(list_trash_snapshots(&conn, "").unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_adds_trash_columns_to_old_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Pre-Trash schema.
+        conn.execute(
+            "CREATE TABLE snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                notes TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                data TEXT NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+        let id = insert(&conn, "OLD-DOC", "{\"v\":1}");
+        init_schema(&conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(snapshots)")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(cols.iter().any(|c| c == "deleted_at"));
+        assert!(cols.iter().any(|c| c == "deleted_by"));
+        trash_snapshot(&conn, id, "local").unwrap();
+        assert!(list_snapshots(&conn, "").unwrap().is_empty());
     }
 }

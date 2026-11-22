@@ -16,6 +16,14 @@ export interface SnapshotRow {
   delete_requested_by: string | null;
 }
 
+/**
+ * Marker stored in `delete_requested_by` for a snapshot moved to Trash. It is
+ * distinct from a *pending* deletion request, whose `delete_requested_by` is
+ * the requesting user's id. Normal history/index/duplicate queries hide rows
+ * carrying this marker; the Trash view passes `includeTrash = true`.
+ */
+export const SNAPSHOT_TRASH_MARKER = "__vouchify_trash__";
+
 export async function signUp(email: string, password: string): Promise<User | null> {
   const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) throw error;
@@ -61,7 +69,12 @@ async function fetchAllPooled<T>(build: (from: number, to: number) => PromiseLik
   return all;
 }
 
-export async function listSnapshotsRemote(search?: string): Promise<SnapshotRow[]> {
+/**
+ * Snapshot rows for the app. Trashed rows are excluded by default so normal
+ * history, the saved-documents index and duplicate-serial checks never see
+ * them; the Trash view opts in with `includeTrash`.
+ */
+export async function listSnapshotsRemote(search?: string, includeTrash = false): Promise<SnapshotRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
   const build = (from: number, to: number) => {
@@ -70,6 +83,11 @@ export async function listSnapshotsRemote(search?: string): Promise<SnapshotRow[
       .select("id, label, notes, data_json, created_at, user_id, delete_requested_at, delete_requested_by")
       .order("created_at", { ascending: false })
       .range(from, to);
+    if (!includeTrash) {
+      // Only exclude the Trash marker: a pending deletion request (a real user
+      // id) must stay visible in normal history until an admin acts on it.
+      query = query.or(`delete_requested_by.is.null,delete_requested_by.neq.${SNAPSHOT_TRASH_MARKER}`);
+    }
     if (search) {
       query = query.ilike("label", `%${search}%`);
     }
@@ -98,6 +116,36 @@ export async function deleteSnapshotRemote(id: number): Promise<void> {
     .eq("id", id);
   if (error) throw error;
   if (count === 0) throw new Error("Delete had no effect — row may not exist or RLS blocked it");
+}
+
+/**
+ * Move a remote snapshot to Trash (non-destructive). The full payload stays in
+ * the row; `restoreSnapshotRemote` can bring it back.
+ */
+export async function trashSnapshotRemote(id: number): Promise<void> {
+  const { count, error } = await supabase
+    .from("snapshots")
+    .update(
+      { delete_requested_at: new Date().toISOString(), delete_requested_by: SNAPSHOT_TRASH_MARKER },
+      { count: "exact" },
+    )
+    .eq("id", id);
+  if (error) throw error;
+  if (count === 0) throw new Error("Move to Trash had no effect — row may not exist or RLS blocked it");
+}
+
+export async function restoreSnapshotRemote(id: number): Promise<void> {
+  const { count, error } = await supabase
+    .from("snapshots")
+    .update({ delete_requested_at: null, delete_requested_by: null }, { count: "exact" })
+    .eq("id", id);
+  if (error) throw error;
+  if (count === 0) throw new Error("Restore had no effect — row may not exist or RLS blocked it");
+}
+
+/** Permanent delete. Only called from the Trash view after confirmation. */
+export async function purgeSnapshotRemote(id: number): Promise<void> {
+  await deleteSnapshotRemote(id);
 }
 
 export async function updateSnapshotRemote(id: number, label: string, notes: string, dataJson: string): Promise<void> {
@@ -136,7 +184,9 @@ export async function requestDeleteSnapshot(id: number): Promise<void> {
 }
 
 export async function approveDeleteSnapshot(id: number): Promise<void> {
-  await deleteSnapshotRemote(id);
+  // Approval is non-destructive now: the row moves to Trash where it can still
+  // be restored or permanently purged later.
+  await trashSnapshotRemote(id);
 }
 
 export async function rejectDeleteSnapshot(id: number): Promise<void> {

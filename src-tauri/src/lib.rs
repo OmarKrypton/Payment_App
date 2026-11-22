@@ -137,11 +137,32 @@ fn check_serial_exists(state: tauri::State<'_, DbState>, serial: String) -> Resu
     history::check_serial_exists(conn, &serial)
 }
 
-#[tauri::command]
-fn delete_history(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
+#[tauri::command(async)]
+fn list_trash_history(state: tauri::State<'_, DbState>, search: String) -> Result<Vec<HistoryEntry>, String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
-    history::delete_snapshot(conn, id)
+    history::list_trash_snapshots(conn, &search)
+}
+
+#[tauri::command]
+fn trash_history(state: tauri::State<'_, DbState>, id: i64, deleted_by: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::trash_snapshot(conn, id, &deleted_by)
+}
+
+#[tauri::command]
+fn restore_history(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::restore_snapshot(conn, id)
+}
+
+#[tauri::command]
+fn purge_history(state: tauri::State<'_, DbState>, id: i64) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::purge_snapshot(conn, id)
 }
 
 #[tauri::command]
@@ -708,7 +729,10 @@ pub fn run() {
             update_history,
             update_history_data,
             load_history,
-            delete_history,
+            list_trash_history,
+            trash_history,
+            restore_history,
+            purge_history,
             check_serial_exists,
             export_excel,
             export_invoice_summary,

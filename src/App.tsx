@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, deleteSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, trashSnapshotRemote, restoreSnapshotRemote, purgeSnapshotRemote, SNAPSHOT_TRASH_MARKER, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -949,6 +949,8 @@ function CollapsibleSection({ id, title, summary, summaryClass, defaultOpen = tr
 interface HistoryEntry {
   id: number; label: string; notes: string; created_at: string; owner?: string;
   delete_requested_at?: string | null; delete_requested_by?: string | null;
+  /** Local soft-delete stamp + actor (Trash only). */
+  deleted_at?: string | null; deleted_by?: string | null;
   data_json?: string; final_decision?: string; doc_type?: string; auditor?: string;
   paid?: boolean; paid_at?: string; paid_by?: string;
   /** True when the row came from Supabase (id is the remote id). */
@@ -4138,6 +4140,18 @@ function App() {
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState("");
   const [historyLoading, setHistoryLoading] = useState(false);
+  // "history" is normal history; "trash" is Recently deleted (soft-deleted
+  // snapshots). Trashed rows are excluded from every normal query.
+  const [historyTab, setHistoryTab] = useState<"history" | "trash">("history");
+  const [trashList, setTrashList] = useState<HistoryEntry[]>([]);
+  // Undo toast shown after moving a snapshot to Trash.
+  const [trashToast, setTrashToast] = useState<{ id: number; remote: boolean; label: string } | null>(null);
+  const [purgeConfirm, setPurgeConfirm] = useState<{ id: number; remote: boolean; label: string } | null>(null);
+  useEffect(() => {
+    if (!trashToast) return;
+    const timer = setTimeout(() => setTrashToast(null), 10000);
+    return () => clearTimeout(timer);
+  }, [trashToast]);
   const [isSerialDuplicate, setIsSerialDuplicate] = useState(false);
   const historyOverlayRef = useRef<HTMLDivElement>(null);
 
@@ -4146,6 +4160,10 @@ function App() {
       historyOverlayRef.current.style.visibility = 'visible';
       historyOverlayRef.current.style.opacity = '1';
       historyOverlayRef.current.style.pointerEvents = 'auto';
+    }
+    if (historyTab === "trash") {
+      void loadTrashList(historySearch);
+      return;
     }
     // Show the list immediately; sync local snapshots to the cloud in the
     // background and refresh only if anything was uploaded. Reopening the modal
@@ -4279,6 +4297,57 @@ function App() {
     }
     setHistoryLoading(false);
     markViewLoaded("history", cacheKey);
+  };
+
+  // Trash / Recently deleted. Remote trashed rows are marked by
+  // SNAPSHOT_TRASH_MARKER in delete_requested_by; a pending deletion request
+  // carries the requesting user's id and stays in normal history.
+  const loadTrashList = async (search = "") => {
+    setHistoryLoading(true);
+    const mapRow = (h: any, remote: boolean): HistoryEntry => ({
+      id: h.id,
+      label: h.label || "",
+      notes: h.notes || "",
+      data_json: h.data_json || "{}",
+      created_at: remote ? new Date(h.created_at).toLocaleString() : h.created_at,
+      ts: remote ? new Date(h.created_at).getTime() : snapshotTs(h.created_at),
+      owner: h.owner ?? h.user_id,
+      delete_requested_at: h.delete_requested_at ?? null,
+      delete_requested_by: h.delete_requested_by ?? null,
+      deleted_at: h.deleted_at ?? null,
+      deleted_by: h.deleted_by ?? null,
+      remote,
+    });
+    // Local Trash is always consulted: a snapshot trashed while offline (or one
+    // that never reached the cloud) must still be restorable from this device.
+    let localTrash: HistoryEntry[] = [];
+    try {
+      localTrash = (await invoke<HistoryEntry[]>("list_trash_history", { search })).map(h => mapRow(h, false));
+    } catch (e) {
+      console.error("list_trash_history failed", e);
+    }
+    if (authUser) {
+      try {
+        const rows = await listSnapshotsRemote(search, true);
+        const remoteTrash = rows
+          .filter(r => r.delete_requested_by === SNAPSHOT_TRASH_MARKER)
+          .map(r => mapRow(r, true));
+        const remoteLabels = new Set(remoteTrash.map(r => r.label));
+        setTrashList([...remoteTrash, ...localTrash.filter(h => !remoteLabels.has(h.label))]);
+        setHistoryLoading(false);
+        return;
+      } catch (e) {
+        console.error("listSnapshotsRemote(trash) failed", e);
+      }
+    }
+    setTrashList(localTrash);
+    setHistoryLoading(false);
+  };
+
+  const switchHistoryTab = (tab: "history" | "trash") => {
+    setHistoryTab(tab);
+    if (tab === "trash") void loadTrashList(historySearch);
+    else void loadHistoryList(historySearch);
   };
 
   // Debounced duplicate serial check
@@ -4573,52 +4642,114 @@ function App() {
   const onHistorySearch = (v: string) => {
     setHistorySearch(v);
     if (historySearchTimer.current) clearTimeout(historySearchTimer.current);
-    historySearchTimer.current = setTimeout(() => loadHistoryList(v), 300);
+    historySearchTimer.current = setTimeout(() => {
+      if (historyTab === "trash") void loadTrashList(v);
+      else void loadHistoryList(v);
+    }, 300);
   };
 
-  const deleteSnapshot = async (id: number, remote = false) => {
+  const requestSnapshotDeletion = async (id: number) => {
+    try {
+      await requestDeleteSnapshot(id);
+      showAlert(t("删除请求已提交，等待管理员确认", "Delete request submitted, awaiting admin approval"));
+    } catch (e: any) {
+      showAlert(`${t("请求失败", "Request failed")}: ${e.message || e}`);
+    }
+    loadHistoryList(historySearch);
+  };
+
+  // Non-destructive delete: the snapshot keeps its full payload in Trash.
+  const moveSnapshotToTrash = async (id: number, remote: boolean, label: string) => {
     if (remote) {
       if (!authUser) {
-        showAlert(t("会话已失效，无法删除云端快照", "Your session has expired; the cloud snapshot could not be deleted"));
+        showAlert(t("会话已失效，无法移动云端快照", "Your session has expired; the cloud snapshot could not be moved to Trash"));
         return;
       }
-      // Admin: delete freely
-      if (isAdminUser) {
-        try {
-          await deleteSnapshotRemote(id);
-          showAlert(t("快照已删除", "Snapshot deleted"));
-        } catch (e: any) {
-          console.error("deleteSnapshotRemote failed", e);
-          showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
-        }
-      } else {
-        // Normal user: request deletion
-        try {
-          await requestDeleteSnapshot(id);
-          showAlert(t("删除请求已提交，等待管理员确认", "Delete request submitted, awaiting admin approval"));
-        } catch (e: any) {
-          showAlert(`${t("请求失败", "Request failed")}: ${e.message || e}`);
-        }
+      try {
+        await trashSnapshotRemote(id);
+      } catch (e: any) {
+        console.error("trashSnapshotRemote failed", e);
+        showAlert(`${t("移入回收站失败", "Move to Trash failed")}: ${e.message || e}`);
+        return;
       }
     } else {
       try {
-        await invoke("delete_history", { id });
-        showAlert(t("快照已删除", "Snapshot deleted"));
+        await invoke("trash_history", { id, deletedBy: authUser || "local" });
       } catch (e: any) {
-        showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
+        showAlert(`${t("移入回收站失败", "Move to Trash failed")}: ${e.message || e}`);
+        return;
       }
+    }
+    setTrashToast({ id, remote, label });
+    loadHistoryList(historySearch);
+    if (historyTab === "trash") void loadTrashList(historySearch);
+  };
+
+  const approveDelete = async (id: number, label: string) => {
+    try {
+      await approveDeleteSnapshot(id);
+      setTrashToast({ id, remote: true, label });
+    } catch (e: any) {
+      showAlert(`${t("批准失败", "Approval failed")}: ${e.message || e}`);
     }
     loadHistoryList(historySearch);
   };
 
-  const approveDelete = async (id: number) => {
-    try {
-      await approveDeleteSnapshot(id);
-      showAlert(t("快照已删除", "Snapshot deleted"));
-    } catch (e: any) {
-      showAlert(`${t("删除失败", "Delete failed")}: ${e.message || e}`);
+  const restoreSnapshotEntry = async (id: number, remote: boolean, label: string) => {
+    if (remote) {
+      if (!authUser) {
+        showAlert(t("会话已失效，无法恢复云端快照", "Your session has expired; the cloud snapshot could not be restored"));
+        return;
+      }
+      try {
+        await restoreSnapshotRemote(id);
+      } catch (e: any) {
+        showAlert(`${t("恢复失败", "Restore failed")}: ${e.message || e}`);
+        return;
+      }
+    } else {
+      try {
+        await invoke("restore_history", { id });
+      } catch (e: any) {
+        showAlert(`${t("恢复失败", "Restore failed")}: ${e.message || e}`);
+        return;
+      }
     }
+    showAlert(`${t("快照已恢复", "Snapshot restored")} (${label || `#${id}`})`);
     loadHistoryList(historySearch);
+    void loadTrashList(historySearch);
+  };
+
+  const purgeSnapshotEntry = async (id: number, remote: boolean) => {
+    if (remote) {
+      if (!authUser) {
+        showAlert(t("会话已失效，无法永久删除云端快照", "Your session has expired; the cloud snapshot could not be permanently deleted"));
+        return;
+      }
+      try {
+        await purgeSnapshotRemote(id);
+      } catch (e: any) {
+        showAlert(`${t("永久删除失败", "Permanent delete failed")}: ${e.message || e}`);
+        return;
+      }
+    } else {
+      try {
+        await invoke("purge_history", { id });
+      } catch (e: any) {
+        showAlert(`${t("永久删除失败", "Permanent delete failed")}: ${e.message || e}`);
+        return;
+      }
+    }
+    showAlert(t("快照已永久删除", "Snapshot permanently deleted"));
+    void loadTrashList(historySearch);
+    loadHistoryList(historySearch);
+  };
+
+  const undoTrashMove = () => {
+    const toast = trashToast;
+    if (!toast) return;
+    setTrashToast(null);
+    void restoreSnapshotEntry(toast.id, toast.remote, toast.label);
   };
 
   // Non-destructive: keep the form consistent with the pool by showing a pill on
@@ -7469,12 +7600,17 @@ function App() {
       <div ref={historyOverlayRef} className="modal-overlay history-overlay" style={{ visibility: 'hidden', opacity: 0, pointerEvents: 'none' }} onClick={hideHistoryModal}>
         <div className="modal history-modal" onClick={e => e.stopPropagation()}>
           <div className="modal-header">
-            <h3>{t("历史记录", "History Browser")} <span className="history-count">{historyList.length} {t("份", "docs")}</span></h3>
+            <h3>{t("历史记录", "History Browser")} <span className="history-count">{historyTab === "trash" ? trashList.length : historyList.length} {t("份", "docs")}</span></h3>
             <button className="modal-close" onClick={hideHistoryModal}>✕</button>
           </div>
           <div className="modal-search">
             <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
           </div>
+          <div className="history-filters history-view-tabs">
+            <button className={historyTab === "history" ? "active" : ""} onClick={() => switchHistoryTab("history")}>{t("历史记录", "History")}</button>
+            <button className={historyTab === "trash" ? "active" : ""} onClick={() => switchHistoryTab("trash")}>{t("回收站", "Recently deleted")}</button>
+          </div>
+          {historyTab === "history" && (<>
           <div className="history-filters history-type-filters">
             <button className={historyFilter === "all" ? "active" : ""} onClick={() => setHistoryFilter("all")}>{t("全部", "All")} <b>{historyList.length}</b></button>
             <button className={historyFilter === "bank" ? "active" : ""} onClick={() => setHistoryFilter("bank")}>{t("银行", "Bank")} <b>{historyList.filter(h => h.doc_type !== "import").length}</b></button>
@@ -7505,10 +7641,39 @@ function App() {
               ]}
             />
           </div>
+          </>)}
           <div className="history-list" style={historyLoading ? { opacity: 0.5 } : {}}>
             {historyLoading ? (
               <div className="history-empty">{t("加载中...", "Loading...")}</div>
-            ) : (() => {
+            ) : historyTab === "trash" ? (() => {
+              if (trashList.length === 0) return <div className="history-empty">{t("回收站为空", "Trash is empty")}</div>;
+              return trashList.map(h => {
+                const deletedAt = h.deleted_at || h.delete_requested_at || "";
+                const deletedBy = h.deleted_by || (h.delete_requested_by && h.delete_requested_by !== SNAPSHOT_TRASH_MARKER ? h.delete_requested_by : "");
+                const deletedLabel = deletedAt
+                  ? (h.remote ? new Date(deletedAt).toLocaleString() : deletedAt)
+                  : "—";
+                return (
+                  <div key={`${h.remote ? "r" : "l"}-${h.id}`} className="hc-item trash">
+                    <span className="hc-bar" />
+                    <div className="hc-row1">
+                      <strong className="hc-serial">{h.label || `#${h.id}`}</strong>
+                      <span className="hc-pill hc-del">{t("已删除", "Deleted")}</span>
+                      <span className="hc-date">{h.created_at}</span>
+                    </div>
+                    <div className="hc-meta">
+                      {t("删除于", "Deleted")} {deletedLabel}
+                      {deletedBy ? ` · ${t("操作人", "by")} ${deletedBy}` : ""}
+                      {h.notes ? ` · ${h.notes}` : ""}
+                    </div>
+                    <div className="hc-actions">
+                      <button className="hc-btn hc-ok" onClick={() => restoreSnapshotEntry(h.id, !!h.remote, h.label)}>{t("恢复", "Restore")}</button>
+                      <button className="hc-btn hc-danger" onClick={() => setPurgeConfirm({ id: h.id, remote: !!h.remote, label: h.label })}>{t("永久删除", "Delete permanently")}</button>
+                    </div>
+                  </div>
+                );
+              });
+            })() : (() => {
               const typeFiltered = historyFilter === "all" ? historyList : historyList.filter(h => historyFilter === "import" ? h.doc_type === "import" : h.doc_type !== "import");
               const statusFiltered = typeFiltered.filter(h => historyStatusFilter === "all" ? true : historyStatusFilter === "pending" ? h.delete_requested_at != null : (h.final_decision || "") === historyStatusFilter);
               const paidFiltered = statusFiltered.filter(h => {
@@ -7627,12 +7792,12 @@ function App() {
                       </>
                     )}
                     {isAdminUser && !pendingDelete && (
-                      <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>Delete</button>
+                      <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>{t("移入回收站", "Move to Trash")}</button>
                     )}
                     {!isAdminUser && authUser && !pendingDelete && (
                       <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>{t("请求删除", "Request delete")}</button>
                     )}
-                    {!authUser && <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>Delete</button>}
+                    {!authUser && <button className="hc-btn hc-danger" onClick={() => requestSnapshotDelete(h)}>{t("移入回收站", "Move to Trash")}</button>}
                   </div>
                 </div>
                 );
@@ -8231,10 +8396,10 @@ function App() {
             <div className="modal-header">
               <h3>
                 {deleteConfirm.approve
-                  ? t("批准删除快照？", "Approve snapshot deletion?")
+                  ? t("批准并移入回收站？", "Approve move to Trash?")
                   : deleteConfirm.request
                     ? t("提交删除请求？", "Submit deletion request?")
-                    : t("删除快照？", "Delete snapshot?")}
+                    : t("移入回收站？", "Move snapshot to Trash?")}
               </h3>
               <button className="modal-close" onClick={() => setDeleteConfirm(null)}>✕</button>
             </div>
@@ -8242,8 +8407,8 @@ function App() {
               <p><b>{deleteConfirm.label || `#${deleteConfirm.id}`}</b></p>
               <p>
                 {deleteConfirm.request
-                  ? t("该操作会提交删除请求，待管理员批准后快照将被永久删除。", "This submits a deletion request; the snapshot will be permanently deleted after admin approval.")
-                  : t("该操作会永久删除该快照，无法恢复。", "This permanently deletes the snapshot and cannot be undone.")}
+                  ? t("该操作会提交删除请求；管理员批准后快照将移入回收站，仍可恢复。", "This submits a deletion request; once an admin approves it, the snapshot moves to Trash and can still be restored.")
+                  : t("该快照将移入回收站，数据会完整保留。您可以随时在“回收站”中恢复它。", "The snapshot will be moved to Trash with its full data preserved. You can restore it any time from Recently deleted.")}
               </p>
             </div>
             <div className="uc-actions">
@@ -8253,18 +8418,62 @@ function App() {
                 onClick={() => {
                   const d = deleteConfirm;
                   setDeleteConfirm(null);
-                  if (d.approve) void approveDelete(d.id);
-                  else void deleteSnapshot(d.id, d.remote);
+                  if (d.approve) void approveDelete(d.id, d.label);
+                  else if (d.request) void requestSnapshotDeletion(d.id);
+                  else void moveSnapshotToTrash(d.id, d.remote, d.label);
                 }}
               >
                 {deleteConfirm.approve
-                  ? t("批准并删除", "Approve & delete")
+                  ? t("批准并移入回收站", "Approve & move to Trash")
                   : deleteConfirm.request
                     ? t("提交请求", "Submit request")
-                    : t("删除快照", "Delete snapshot")}
+                    : t("移入回收站", "Move to Trash")}
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {purgeConfirm && (
+        <div
+          className="modal-overlay history-overlay"
+          style={{ position: "fixed", inset: 0, zIndex: 410 }}
+          onClick={() => setPurgeConfirm(null)}
+        >
+          <div className="modal history-modal unsaved-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t("永久删除快照？", "Permanently delete snapshot?")}</h3>
+              <button className="modal-close" onClick={() => setPurgeConfirm(null)}>✕</button>
+            </div>
+            <div className="uc-body">
+              <p><b>{purgeConfirm.label || `#${purgeConfirm.id}`}</b></p>
+              <p>
+                <span className="uc-ico">⚠</span>{" "}
+                {t("这会从回收站中永久删除该快照，无法恢复。此操作不同于“移入回收站”。", "This permanently deletes the snapshot from Trash and cannot be undone. It is different from moving it to Trash.")}
+              </p>
+            </div>
+            <div className="uc-actions">
+              <button className="hc-btn" onClick={() => setPurgeConfirm(null)}>{t("取消", "Cancel")}</button>
+              <button
+                className="hc-btn hc-danger"
+                onClick={() => {
+                  const d = purgeConfirm;
+                  setPurgeConfirm(null);
+                  void purgeSnapshotEntry(d.id, d.remote);
+                }}
+              >
+                {t("永久删除", "Delete permanently")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {trashToast && (
+        <div className="undo-toast" role="status" aria-live="polite">
+          <span className="undo-toast-msg">
+            {t("已移入回收站", "Moved to Trash")}: <b>{trashToast.label || `#${trashToast.id}`}</b>
+          </span>
+          <button className="undo-toast-btn" onClick={undoTrashMove}>{t("撤销", "Undo")}</button>
+          <button className="undo-toast-close" aria-label={t("关闭", "Close")} onClick={() => setTrashToast(null)}>✕</button>
         </div>
       )}
       {pendingAction && (
