@@ -322,6 +322,8 @@ interface SupplierDocRef {
   created_at: string;
   final_decision: string;
   matchedVia?: string;
+  vatRate?: string;
+  whtRate?: string;
 }
 interface SupplierInfo {
   taxId: string;
@@ -470,6 +472,8 @@ const buildSuppliers = (history: any[], pool: any[]): SupplierInfo[] => {
       doc_type: isImport ? "import" : "bank",
       created_at: h.created_at || "",
       final_decision: p.final_decision || "",
+      vatRate: p.vat_manual ? "Multi" : (p.vat_rate || "—"),
+      whtRate: p.wht_manual ? "Multi" : p.wht_manual_amount ? "Manual" : (p.wht_rate || "—"),
     };
     if (isImport) {
       (p.import_entries || []).forEach((e: any) => {
@@ -3531,9 +3535,9 @@ function App() {
                       <div className="supplier-wht free">
                         <span className="supplier-wht-dot" />
                         <div>
-                          <strong>{whtCerts[s.taxId] || s.whtCert ? t("已获 WHT 免税证明", "WHT-free certificate") : t("WHT 免税（未提供证明）", "WHT-free — no certificate")}</strong>
+                          <strong>{isFreeZoneTaxId(s.taxId) ? t("自由区 — 永久免 WHT", "Free zone — permanent WHT exemption") : whtCerts[s.taxId] || s.whtCert ? t("已获 WHT 免税证明", "WHT-free certificate") : t("WHT 免税（未提供证明）", "WHT-free — no certificate")}</strong>
                           <span className="supplier-wht-sub">
-                            {whtCerts[s.taxId]?.valid_until
+                            {isFreeZoneTaxId(s.taxId) ? t("无需提供 WHT 证书", "No WHT certificate required.") : whtCerts[s.taxId]?.valid_until
                               ? `${t("证明有效期至", "certificate valid until")} ${whtCerts[s.taxId].valid_until}`
                               : s.whtCert
                                 ? t("证书来自已保存文档，请在下方登记有效期", "certificate recorded in a saved document — record its validity date below")
@@ -3558,7 +3562,7 @@ function App() {
                         </div>
                       </div>
                     )}
-                    {(supplierIsWhtFree(s) || s.whtCert || whtCerts[s.taxId]) && (() => {
+                    {!isFreeZoneTaxId(s.taxId) && (supplierIsWhtFree(s) || s.whtCert || whtCerts[s.taxId]) && (() => {
                       const st = certStatus(s.taxId);
                       const label = st.level === "valid" ? t("有效", "Valid")
                         : st.level === "soon" ? t("即将到期", "Expiring soon")
@@ -3580,7 +3584,19 @@ function App() {
                   </div>
                 </div>
 
-                {s.docs.length > 0 && (
+                <div className="supplier-actions">
+                {!isFreeZoneTaxId(s.taxId) && (
+                  <button className="hc-btn" onClick={() => void markSupplierFreeZone(s.taxId, s.name || s.poolName)}>
+                    {t("自由区", "Free zone")}
+                  </button>
+                )}
+                {!s.whtCert && !whtCerts[s.taxId] && (
+                  <button className="hc-btn" onClick={() => openCertEditor(s.taxId, s.name || s.poolName)}>
+                    {t("WHT 证明", "WHT certificate")}
+                  </button>
+                )}
+              </div>
+              {s.docs.length > 0 && (
                   <details className="supplier-docs">
                     <summary>{t("已保存文档", "Saved documents")} ({s.docs.length})</summary>
                     <div className="supplier-docs-list">
@@ -3589,6 +3605,7 @@ function App() {
                           <span className="decision-dot" style={{ background: deco(d.final_decision) || 'var(--border)', flexShrink: 0 }} title={d.final_decision} />
                           <span className="doc-type-chip">{d.doc_type === "import" ? t("进口", "Import") : t("银行", "Bank")}</span>
                           <span className="supplier-doc-label" title={d.matchedVia ? `${t("匹配来源", "Matched via")}: ${d.matchedVia}` : d.label}>{d.label}</span>
+        <span className="supplier-doc-rates"><span>VAT {d.vatRate || "—"}</span><span>WHT {d.whtRate || "—"}</span></span>
                           <span className="supplier-doc-date">{d.created_at}</span>
                           <button className="hc-btn" onClick={() => openDocumentBySerial(d.label)}>{t("加载", "Load")}</button>
                         </div>
@@ -5785,6 +5802,23 @@ function App() {
   // authoritative: if it is on file (and not expired) the supplier is WHT-free —
   // even if WHT was withheld in past documents. Only when there is no registry
   // entry do we fall back to the document-derived flag.
+  const FREE_ZONE_DATE = "9999-12-31";
+  const isFreeZoneTaxId = (taxId: string): boolean =>
+    String(whtCerts[(taxId || "").trim()]?.valid_until || "") === FREE_ZONE_DATE;
+  const markSupplierFreeZone = async (taxId: string, name: string) => {
+    const tx = (taxId || "").trim();
+    if (!tx) return;
+    const next = { ...whtCerts, [tx]: { valid_until: FREE_ZONE_DATE, supplier_name: name || "" } };
+    setWhtCerts(next);
+    try { localStorage.setItem("wht_certs", JSON.stringify(next)); } catch {}
+    if (authUser) {
+      try {
+        await upsertWhtCertRemote({ tax_id: tx, supplier_name: name || "", valid_until: FREE_ZONE_DATE });
+      } catch (e: any) {
+        showAlert(`${t("保存自由区状态失败", "Failed to save free-zone status")}: ${e.message || e}`);
+      }
+    }
+  };
   const supplierIsWhtFree = (s: { taxId: string; whtCert: boolean; docCount: number; whtApplied: boolean }): boolean => {
     const cert = whtCerts[s.taxId];
     if (cert && certStatus(s.taxId).level !== "expired") return true;

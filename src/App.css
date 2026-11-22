@@ -4136,3 +4136,44 @@ mark.de-hl {
   grid-template-columns: minmax(190px, 1.6fr) 122px 140px 118px 112px 112px 118px 110px 72px;
   min-width: 1090px;
 }
+
+/* Suppliers overview improvements */
+.suppliers-stats { width: 100%; }
+.suppliers-header .supplier-stat {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.supplier-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 16px 0;
+}
+.supplier-doc-rates { display: flex; gap: 4px; flex: none; }
+.supplier-doc-rates span {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  border-radius: 4px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.supplier-docs summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.supplier-docs summary::-webkit-details-marker { display: none; }
+.supplier-docs summary::after {
+  content: "▸";
+  margin-left: auto;
+  color: var(--accent);
+  transition: transform 0.18s ease;
+}
+.supplier-docs[open] summary::after { transform: rotate(90deg); }
