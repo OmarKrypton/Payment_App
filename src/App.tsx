@@ -1205,6 +1205,7 @@ function App() {
     setPendingAction({ run });
   };
   const [supplierSearch, setSupplierSearch] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState<"all" | "wht-free" | "withholding" | "renew" | "free-zone">("all");
   const [supplierData, setSupplierData] = useState<SupplierInfo[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(false);
   // Manually-added suppliers (TAX ID -> name) that have no documents or pool
@@ -3386,6 +3387,11 @@ function App() {
 
   const SuppliersTab = () => {
     const q = supplierSearch.trim().toLowerCase();
+    const needsCertRenew = (s: SupplierInfo): boolean => {
+      if (!s.whtCert && !whtCerts[s.taxId]) return false;
+      const lvl = certStatus(s.taxId).level;
+      return lvl === "expired" || lvl === "missing";
+    };
     const certLevelPriority = (s: SupplierInfo): number => {
       if (!s.name && !s.poolName) return 3; // unnamed suppliers need attention first
       if (!s.whtCert && !whtCerts[s.taxId]) return 0;
@@ -3394,6 +3400,10 @@ function App() {
     };
     const filtered = supplierData
       .filter((s) => {
+        if (supplierFilter === "wht-free" && !supplierIsWhtFree(s)) return false;
+        if (supplierFilter === "withholding" && (supplierIsWhtFree(s) || !s.whtRate)) return false;
+        if (supplierFilter === "renew" && !needsCertRenew(s)) return false;
+        if (supplierFilter === "free-zone" && !isFreeZoneTaxId(s.taxId)) return false;
         if (!q) return true;
         if (s.taxId.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.poolName.toLowerCase().includes(q)) return true;
         // Also match by VAT item type (raw kind or its localized label).
@@ -3415,11 +3425,8 @@ function App() {
     const totalDocs = supplierData.reduce((n, s) => n + s.docCount, 0);
     const whtFreeCount = supplierData.filter((s) => supplierIsWhtFree(s)).length;
     const withholdingCount = supplierData.filter((s) => !supplierIsWhtFree(s) && s.whtRate).length;
-    const certsToRenew = supplierData.filter((s) => {
-      if (!s.whtCert && !whtCerts[s.taxId]) return false;
-      const lvl = certStatus(s.taxId).level;
-      return lvl === "expired" || lvl === "missing";
-    }).length;
+    const certsToRenew = supplierData.filter(needsCertRenew).length;
+    const freeZoneCount = supplierData.filter((s) => isFreeZoneTaxId(s.taxId)).length;
     const unknownCount = supplierData.filter(s => !s.name && !s.poolName).length;
 
     return (
@@ -3433,11 +3440,12 @@ function App() {
             </div>
           </div>
           <div className="suppliers-stats">
-            <span className="supplier-stat">{supplierData.length} {t("供应商", "Suppliers")}</span>
-            <span className="supplier-stat">{totalDocs} {t("文档", "docs")}</span>
-            {whtFreeCount > 0 && <span className="supplier-stat ok">{whtFreeCount} {t("WHT 免税", "WHT-free")}</span>}
-            {withholdingCount > 0 && <span className="supplier-stat warn">{withholdingCount} {t("正在预扣", "withholding")}</span>}
-            {certsToRenew > 0 && <span className="supplier-stat bad">{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</span>}
+            <button type="button" className={`supplier-stat${supplierFilter === "all" ? " active" : ""}`} onClick={() => setSupplierFilter("all")}>{supplierData.length} {t("供应商", "Suppliers")}</button>
+            <button type="button" className="supplier-stat" onClick={showHistoryModal}>{totalDocs} {t("文档", "docs")}</button>
+            {whtFreeCount > 0 && <button type="button" className={`supplier-stat ok${supplierFilter === "wht-free" ? " active" : ""}`} onClick={() => setSupplierFilter("wht-free")}>{whtFreeCount} {t("WHT 免税", "WHT-free")}</button>}
+            {withholdingCount > 0 && <button type="button" className={`supplier-stat warn${supplierFilter === "withholding" ? " active" : ""}`} onClick={() => setSupplierFilter("withholding")}>{withholdingCount} {t("正在预扣", "withholding")}</button>}
+            {certsToRenew > 0 && <button type="button" className={`supplier-stat bad${supplierFilter === "renew" ? " active" : ""}`} onClick={() => setSupplierFilter("renew")}>{certsToRenew} {t("免税证明待更新", "cert(s) to renew")}</button>}
+            {freeZoneCount > 0 && <button type="button" className={`supplier-stat free${supplierFilter === "free-zone" ? " active" : ""}`} onClick={() => setSupplierFilter("free-zone")}>{freeZoneCount} {t("自由区", "Free zone")}</button>}
             {unknownCount > 0 && <span className="supplier-stat warn">{unknownCount} {t("未命名", "unnamed")}</span>}
           </div>
         </div>

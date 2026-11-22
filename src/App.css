@@ -4267,3 +4267,23 @@ mark.de-hl {
   filter: brightness(1.05);
   box-shadow: 0 8px 22px rgba(22, 163, 74, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
+
+/* Supplier overview stat filters */
+.suppliers-header button.supplier-stat {
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  text-align: center;
+}
+.suppliers-header button.supplier-stat:hover { transform: translateY(-1px); }
+.suppliers-header button.supplier-stat.active {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--accent);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.16);
+}
+.suppliers-header .supplier-stat.free {
+  color: #0f766e;
+  border-color: rgba(13, 148, 136, 0.3);
+  background: rgba(13, 148, 136, 0.09);
+}
