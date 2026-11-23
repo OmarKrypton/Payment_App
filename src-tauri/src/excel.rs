@@ -3,15 +3,11 @@ use rust_xlsxwriter::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InvoiceSummaryRow {
-    pub serial: String,
-    pub invoice_no: String,
-    pub seller_tax_id: String,
-    pub amount: f64,
-    pub currency: String,
-    pub amount_egp: f64,
-    pub doc_type: String,
+/// Document currency of a bank voucher. Older snapshots may not carry the
+/// field at all, so treat a blank value as EGP.
+fn doc_currency(data: &FormData) -> String {
+    let currency = data.doc_currency.trim().to_uppercase();
+    if currency.is_empty() { "EGP".into() } else { currency }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +19,8 @@ pub struct HistoryExportRow {
     pub invoices: String,
     pub net_payable: f64,
     pub current_paid: f64,
+    pub final_decision: String,
+    pub paid: bool,
 }
 
 pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Result<(), String> {
@@ -94,7 +92,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
 
         sheet1.merge_range(0, 0, 0, 2, "Vouchify - Payment Voucher Settlement", &title_fmt)
             .map_err(|e| e.to_string())?;
-        sheet1.write_with_format(1, 1, format!("Doc: {}  |  Buyer TAX ID: {}  |  Seller TAX IDs: {}", data.doc_serial, data.buyer_tax_id, data.seller_tax_ids.join(", ")), &info_fmt)
+        sheet1.write_with_format(1, 1, format!("Doc: {}  |  Currency: {}  |  Buyer TAX ID: {}  |  Seller TAX IDs: {}", data.doc_serial, doc_currency(data), data.buyer_tax_id, data.seller_tax_ids.join(", ")), &info_fmt)
             .map_err(|e| e.to_string())?;
 
         let sections: Vec<(String, String, &str)> = vec![
@@ -226,6 +224,7 @@ pub fn export_excel(data: &FormData, computed: &CalcResult, path: &str) -> Resul
         ("Document Serial Number", data.doc_serial.clone()),
         ("Date", today_str),
         ("Doc Type", if is_import { "Import".into() } else { "Bank".into() }),
+        ("Document Currency", doc_currency(data)),
         ("Buyer TAX ID", data.buyer_tax_id.clone()),
     ];
     for (label, val) in &doc_items {
@@ -775,154 +774,6 @@ fn import_split_included(e: &ImportEntry) -> bool {
     import_entry_has_tax_id(e)
 }
 
-pub fn export_invoice_summary(
-    invoices: &[InvoiceSummaryRow],
-    date_from: &str,
-    date_to: &str,
-    path: &str,
-) -> Result<(), String> {
-    let mut workbook = Workbook::new();
-
-    let title_fmt = Format::new()
-        .set_font_color(Color::White)
-        .set_background_color(Color::RGB(0x00529B))
-        .set_bold()
-        .set_font_size(14);
-    let section_fmt = Format::new()
-        .set_bold()
-        .set_font_size(11)
-        .set_font_color(Color::White)
-        .set_background_color(Color::RGB(0x00529B))
-        .set_border(FormatBorder::Thin);
-    let bold_fmt = Format::new()
-        .set_bold()
-        .set_font_size(10)
-        .set_border(FormatBorder::Thin);
-    let normal_fmt = Format::new()
-        .set_font_size(10)
-        .set_border(FormatBorder::Thin);
-    let calc_fmt = Format::new()
-        .set_font_size(10)
-        .set_num_format("#,##0.00")
-        .set_background_color(Color::RGB(0xE2EFDA))
-        .set_bold()
-        .set_border(FormatBorder::Thin);
-
-    let sheet = workbook.add_worksheet();
-    sheet.set_name("Invoice Summary").map_err(|e| e.to_string())?;
-    sheet.set_column_width(0, 35).map_err(|e| e.to_string())?;
-    sheet.set_column_width(1, 30).map_err(|e| e.to_string())?;
-    sheet.set_column_width(2, 20).map_err(|e| e.to_string())?;
-    sheet.set_column_width(3, 10).map_err(|e| e.to_string())?;
-    sheet.set_column_width(4, 16).map_err(|e| e.to_string())?;
-    sheet.set_column_width(5, 16).map_err(|e| e.to_string())?;
-    sheet.set_column_width(6, 10).map_err(|e| e.to_string())?;
-
-    // Title
-    sheet.merge_range(0, 0, 0, 6, "Vouchify - Invoice Registry", &title_fmt)
-        .map_err(|e| e.to_string())?;
-
-    // Period info
-    let info_fmt = Format::new().set_font_size(10).set_italic();
-    sheet.write_with_format(1, 0, format!("Period: {} to {}", date_from, date_to), &info_fmt)
-        .map_err(|e| e.to_string())?;
-
-    // Header row
-    let mut r = 3u32;
-    let headers = ["Serial No", "Invoice No / Service", "Seller TAX ID", "Currency", "Amount", "Amount (EGP)", "Type"];
-    for (ci, h) in headers.iter().enumerate() {
-        sheet.write_with_format(r, ci as u16, *h, &section_fmt)
-            .map_err(|e| e.to_string())?;
-    }
-    r += 1;
-
-    // Sort invoices by serial number
-    let mut sorted_invoices = invoices.to_vec();
-    sorted_invoices.sort_by(|a, b| a.serial.cmp(&b.serial));
-
-    // Wrap text format for invoice/service column
-    let wrap_fmt = Format::new()
-        .set_font_size(10)
-        .set_border(FormatBorder::Thin)
-        .set_text_wrap();
-    let wrap_val_fmt = Format::new()
-        .set_font_size(10)
-        .set_num_format("#,##0.00")
-        .set_border(FormatBorder::Thin)
-        .set_text_wrap();
-
-    // Data rows — merge serial number cells for repeated serials
-    let mut total_bank = 0.0;
-    let mut total_import = 0.0;
-    let mut i = 0;
-    while i < sorted_invoices.len() {
-        let serial = &sorted_invoices[i].serial;
-        let start_row = r;
-        // Find how many rows share this serial
-        let mut count = 1;
-        while i + count < sorted_invoices.len() && sorted_invoices[i + count].serial == *serial {
-            count += 1;
-        }
-
-        // Write each invoice row
-        for j in 0..count {
-            let inv = &sorted_invoices[i + j];
-            // Only write serial on first row (merged range will cover the rest)
-            if j == 0 {
-                if count == 1 {
-                    sheet.write_with_format(r, 0, serial, &normal_fmt)
-                        .map_err(|e| e.to_string())?;
-                } else {
-                    sheet.merge_range(start_row, 0, start_row + count as u32 - 1, 0, serial, &normal_fmt)
-                        .map_err(|e| e.to_string())?;
-                }
-            }
-            sheet.write_with_format(r, 1, &inv.invoice_no, &wrap_fmt)
-                .map_err(|e| e.to_string())?;
-            sheet.write_with_format(r, 2, &inv.seller_tax_id, &normal_fmt)
-                .map_err(|e| e.to_string())?;
-            sheet.write_with_format(r, 3, &inv.currency, &normal_fmt)
-                .map_err(|e| e.to_string())?;
-            sheet.write_with_format(r, 4, inv.amount, &wrap_val_fmt)
-                .map_err(|e| e.to_string())?;
-            sheet.write_with_format(r, 5, inv.amount_egp, &wrap_val_fmt)
-                .map_err(|e| e.to_string())?;
-            // Only write doc_type on first row of group
-            if j == 0 {
-                sheet.write_with_format(r, 6, &inv.doc_type, &normal_fmt)
-                    .map_err(|e| e.to_string())?;
-            }
-            if inv.doc_type == "import" {
-                total_import += inv.amount_egp;
-            } else {
-                total_bank += inv.amount_egp;
-            }
-            r += 1;
-        }
-        i += count;
-    }
-    r += 1;
-
-    // Totals
-    sheet.write_with_format(r, 0, "Total (Bank, EGP)", &bold_fmt)
-        .map_err(|e| e.to_string())?;
-    sheet.write_with_format(r, 5, total_bank, &calc_fmt)
-        .map_err(|e| e.to_string())?;
-    r += 1;
-    sheet.write_with_format(r, 0, "Total (Import, EGP)", &bold_fmt)
-        .map_err(|e| e.to_string())?;
-    sheet.write_with_format(r, 5, total_import, &calc_fmt)
-        .map_err(|e| e.to_string())?;
-    r += 1;
-    sheet.write_with_format(r, 0, "Grand Total (EGP)", &bold_fmt)
-        .map_err(|e| e.to_string())?;
-    sheet.write_with_format(r, 5, total_bank + total_import, &calc_fmt)
-        .map_err(|e| e.to_string())?;
-
-    workbook.save(path).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 pub fn export_validation_report(
     results: &[crate::eta_xml::ValidationResult],
     path: &str,
@@ -1048,62 +899,120 @@ pub fn export_validation_report(
     Ok(())
 }
 
-pub fn export_history_registry(rows: &[HistoryExportRow], path: &str) -> Result<(), String> {
+pub fn export_history_registry(
+    rows: &[HistoryExportRow],
+    path: &str,
+    only_paid_layout: bool,
+) -> Result<(), String> {
     let mut workbook = Workbook::new();
-
-    let title_fmt = Format::new()
-        .set_font_color(Color::White)
-        .set_background_color(Color::RGB(0x00529B))
-        .set_bold()
-        .set_font_size(14);
-    let section_fmt = Format::new()
-        .set_bold()
-        .set_font_size(11)
-        .set_font_color(Color::White)
-        .set_background_color(Color::RGB(0x00529B))
-        .set_border(FormatBorder::Thin);
-    let normal_fmt = Format::new()
-        .set_font_size(10)
-        .set_border(FormatBorder::Thin)
-        .set_text_wrap();
-    let money_fmt = Format::new()
-        .set_font_size(10)
-        .set_num_format("#,##0.00")
-        .set_border(FormatBorder::Thin);
-
-    let sheet = workbook.add_worksheet();
-    sheet.set_name("History").map_err(|e| e.to_string())?;
-    sheet.set_column_width(0, 30).map_err(|e| e.to_string())?;
-    sheet.set_column_width(1, 10).map_err(|e| e.to_string())?;
-    sheet.set_column_width(2, 22).map_err(|e| e.to_string())?;
-    sheet.set_column_width(3, 30).map_err(|e| e.to_string())?;
-    sheet.set_column_width(4, 40).map_err(|e| e.to_string())?;
-    sheet.set_column_width(5, 18).map_err(|e| e.to_string())?;
-    sheet.set_column_width(6, 18).map_err(|e| e.to_string())?;
-
-    sheet.merge_range(0, 0, 0, 6, "Vouchify - History Registry", &title_fmt)
-        .map_err(|e| e.to_string())?;
-
-    let mut r = 2u32;
-    let headers = ["Serial No", "Type", "Seller TAX ID", "Company", "Invoices", "Net Payable", "Current Paid"];
-    for (ci, h) in headers.iter().enumerate() {
-        sheet.write_with_format(r, ci as u16, *h, &section_fmt)
-            .map_err(|e| e.to_string())?;
-    }
-    r += 1;
-
     let mut sorted = rows.to_vec();
     sorted.sort_by(|a, b| a.serial.cmp(&b.serial));
 
-    for row in &sorted {
-        sheet.write_with_format(r, 0, &row.serial, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 1, if row.doc_type == "import" { "Import" } else { "Bank" }, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 2, &row.seller_tax_id, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 3, &row.company, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 4, &row.invoices, &normal_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 5, row.net_payable, &money_fmt).map_err(|e| e.to_string())?;
-        sheet.write_with_format(r, 6, row.current_paid, &money_fmt).map_err(|e| e.to_string())?;
+    if only_paid_layout {
+        // Compact register for paid documents. The layout is fixed:
+        //   B2 = "Date",  C2:E2 merged = export date in DD/MM/YYYY
+        //   B3 = "N", C3 = "S.N.", D3 = "Type", E3 = "Bank ref."
+        // Row 4 onward carries the numbered documents. "Bank ref." is left
+        // blank until bank-sheet references are implemented in the app.
+        let sheet = workbook.add_worksheet();
+        sheet.set_name("Paid Documents").map_err(|e| e.to_string())?;
+        sheet.set_column_width(0, 3).map_err(|e| e.to_string())?;
+        sheet.set_column_width(1, 9).map_err(|e| e.to_string())?;
+        sheet.set_column_width(2, 28).map_err(|e| e.to_string())?;
+        sheet.set_column_width(3, 12).map_err(|e| e.to_string())?;
+        sheet.set_column_width(4, 22).map_err(|e| e.to_string())?;
+
+        let label_fmt = Format::new()
+            .set_bold()
+            .set_font_size(10)
+            .set_border(FormatBorder::Thin)
+            .set_align(FormatAlign::Center);
+        let header_fmt = Format::new()
+            .set_bold()
+            .set_font_size(10)
+            .set_border(FormatBorder::Thin)
+            .set_background_color(Color::RGB(0xD9E2F3))
+            .set_align(FormatAlign::Center);
+        let date_fmt = Format::new()
+            .set_font_size(10)
+            .set_border(FormatBorder::Thin)
+            .set_align(FormatAlign::Center);
+        let center_fmt = Format::new()
+            .set_font_size(10)
+            .set_border(FormatBorder::Thin)
+            .set_align(FormatAlign::Center);
+        let text_fmt = Format::new()
+            .set_font_size(10)
+            .set_border(FormatBorder::Thin);
+
+        let export_date = chrono::Local::now().format("%d/%m/%Y").to_string();
+        sheet.write_with_format(1, 1, "Date", &label_fmt).map_err(|e| e.to_string())?;
+        sheet.merge_range(1, 2, 1, 4, export_date.as_str(), &date_fmt)
+            .map_err(|e| e.to_string())?;
+        sheet.write_with_format(2, 1, "N", &header_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(2, 2, "S.N.", &header_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(2, 3, "Type", &header_fmt).map_err(|e| e.to_string())?;
+        sheet.write_with_format(2, 4, "Bank ref.", &header_fmt).map_err(|e| e.to_string())?;
+
+        for (i, row) in sorted.iter().enumerate() {
+            let r = 3 + i as u32;
+            sheet.write_with_format(r, 1, (i + 1) as u32, &center_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 2, row.serial.as_str(), &text_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 3, if row.doc_type == "import" { "Import" } else { "Bank" }, &center_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 4, "", &center_fmt).map_err(|e| e.to_string())?;
+        }
+    } else {
+        let title_fmt = Format::new()
+            .set_font_color(Color::White)
+            .set_background_color(Color::RGB(0x00529B))
+            .set_bold()
+            .set_font_size(14);
+        let section_fmt = Format::new()
+            .set_bold()
+            .set_font_size(11)
+            .set_font_color(Color::White)
+            .set_background_color(Color::RGB(0x00529B))
+            .set_border(FormatBorder::Thin);
+        let normal_fmt = Format::new()
+            .set_font_size(10)
+            .set_border(FormatBorder::Thin)
+            .set_text_wrap();
+        let money_fmt = Format::new()
+            .set_font_size(10)
+            .set_num_format("#,##0.00")
+            .set_border(FormatBorder::Thin);
+
+        let sheet = workbook.add_worksheet();
+        sheet.set_name("History").map_err(|e| e.to_string())?;
+        sheet.set_column_width(0, 30).map_err(|e| e.to_string())?;
+        sheet.set_column_width(1, 10).map_err(|e| e.to_string())?;
+        sheet.set_column_width(2, 22).map_err(|e| e.to_string())?;
+        sheet.set_column_width(3, 30).map_err(|e| e.to_string())?;
+        sheet.set_column_width(4, 40).map_err(|e| e.to_string())?;
+        sheet.set_column_width(5, 18).map_err(|e| e.to_string())?;
+        sheet.set_column_width(6, 18).map_err(|e| e.to_string())?;
+
+        sheet.merge_range(0, 0, 0, 6, "Vouchify - History Registry", &title_fmt)
+            .map_err(|e| e.to_string())?;
+
+        let mut r = 2u32;
+        let headers = ["Serial No", "Type", "Seller TAX ID", "Company", "Invoices", "Net Payable", "Current Paid"];
+        for (ci, h) in headers.iter().enumerate() {
+            sheet.write_with_format(r, ci as u16, *h, &section_fmt)
+                .map_err(|e| e.to_string())?;
+        }
         r += 1;
+
+        for row in &sorted {
+            sheet.write_with_format(r, 0, &row.serial, &normal_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 1, if row.doc_type == "import" { "Import" } else { "Bank" }, &normal_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 2, &row.seller_tax_id, &normal_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 3, &row.company, &normal_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 4, &row.invoices, &normal_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 5, row.net_payable, &money_fmt).map_err(|e| e.to_string())?;
+            sheet.write_with_format(r, 6, row.current_paid, &money_fmt).map_err(|e| e.to_string())?;
+            r += 1;
+        }
     }
 
     workbook.save(path).map_err(|e| e.to_string())?;

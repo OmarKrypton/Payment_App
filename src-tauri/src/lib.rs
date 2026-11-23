@@ -9,7 +9,6 @@ mod models;
 mod native_update;
 
 use models::{CalcResult, FormData, HistoryEntry};
-use excel::InvoiceSummaryRow;
 use excel::HistoryExportRow;
 use rusqlite::Connection;
 use std::io::Write;
@@ -171,18 +170,13 @@ fn export_excel(data: FormData, computed: CalcResult, file_path: String) -> Resu
 }
 
 #[tauri::command]
-fn export_invoice_summary(invoices: Vec<InvoiceSummaryRow>, date_from: String, date_to: String, file_path: String) -> Result<(), String> {
-    excel::export_invoice_summary(&invoices, &date_from, &date_to, &file_path)
-}
-
-#[tauri::command]
 fn export_validation_report(results: Vec<eta_xml::ValidationResult>, file_path: String) -> Result<(), String> {
     excel::export_validation_report(&results, &file_path)
 }
 
 #[tauri::command]
-fn export_history_registry(rows: Vec<HistoryExportRow>, file_path: String) -> Result<(), String> {
-    excel::export_history_registry(&rows, &file_path)
+fn export_history_registry(rows: Vec<HistoryExportRow>, file_path: String, only_paid_layout: bool) -> Result<(), String> {
+    excel::export_history_registry(&rows, &file_path, only_paid_layout)
 }
 
 #[tauri::command]
@@ -735,7 +729,6 @@ pub fn run() {
             purge_history,
             check_serial_exists,
             export_excel,
-            export_invoice_summary,
             export_validation_report,
             export_history_registry,
             validate_eta_xml,
@@ -802,36 +795,8 @@ mod export_tests {
     }
 
     #[test]
-    fn exports_invoice_and_history_registries() {
+    fn exports_history_registry_layouts() {
         let _ = std::fs::create_dir_all("/tmp/opencode");
-        let invoices = vec![
-            excel::InvoiceSummaryRow {
-                serial: "DOC-1".into(),
-                invoice_no: "INV-1".into(),
-                seller_tax_id: "123456789".into(),
-                amount: 100.0,
-                currency: "USD".into(),
-                amount_egp: 5_000.0,
-                doc_type: "bank".into(),
-            },
-            excel::InvoiceSummaryRow {
-                serial: "DOC-2".into(),
-                invoice_no: "A1 Transport".into(),
-                seller_tax_id: "987654321".into(),
-                amount: 50.0,
-                currency: "EGP".into(),
-                amount_egp: 50.0,
-                doc_type: "import".into(),
-            },
-        ];
-        excel::export_invoice_summary(
-            &invoices,
-            "2026-01-01",
-            "2026-12-31",
-            "/tmp/opencode/invoice_summary_test.xlsx",
-        )
-        .expect("invoice registry export");
-
         let history = vec![
             excel::HistoryExportRow {
                 serial: "DOC-1".into(),
@@ -841,6 +806,8 @@ mod export_tests {
                 invoices: "INV-1".into(),
                 net_payable: 1_000.0,
                 current_paid: 0.0,
+                final_decision: "approve".into(),
+                paid: true,
             },
             excel::HistoryExportRow {
                 serial: "DOC-2".into(),
@@ -850,10 +817,14 @@ mod export_tests {
                 invoices: "A1 Transport".into(),
                 net_payable: 50.0,
                 current_paid: 0.0,
+                final_decision: "conditional".into(),
+                paid: false,
             },
         ];
-        excel::export_history_registry(&history, "/tmp/opencode/history_registry_test.xlsx")
+        excel::export_history_registry(&history, "/tmp/opencode/history_registry_test.xlsx", false)
             .expect("history registry export");
+        excel::export_history_registry(&history, "/tmp/opencode/paid_documents_test.xlsx", true)
+            .expect("paid documents export");
     }
 
     #[test]

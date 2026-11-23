@@ -7,7 +7,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, trashSnapshotRemote, restoreSnapshotRemote, purgeSnapshotRemote, isTrashedSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
-import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
+import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
 // CSCEC's buyer tax ID is fixed for every settlement document. Keep it in one
@@ -1120,13 +1120,13 @@ function App() {
   const [showChangePw, setShowChangePw] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [bankSection, setBankSection] = useState("sec-info");
-  const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [invoiceExportFrom, setInvoiceExportFrom] = useState(localDateInput(new Date(new Date().getFullYear(), 0, 1))); // Jan 1 of current year
-  const [invoiceExportTo, setInvoiceExportTo] = useState(localDateInput(new Date())); // Today
   const [showHistoryExport, setShowHistoryExport] = useState(false);
   const [historyExportFrom, setHistoryExportFrom] = useState(localDateInput(new Date(new Date().getFullYear(), 0, 1))); // Jan 1 of current year
   const [historyExportTo, setHistoryExportTo] = useState(localDateInput(new Date())); // Today
+  const [historyExportDecision, setHistoryExportDecision] = useState<"all" | "approve" | "conditional" | "reject">("all");
+  const [historyExportDocType, setHistoryExportDocType] = useState<"all" | "bank" | "import">("all");
+  const [historyExportPaid, setHistoryExportPaid] = useState<"all" | "paid" | "unpaid">("all");
   const [historyExportProgress, setHistoryExportProgress] = useState<number | null>(null);
   const [historyExportStatus, setHistoryExportStatus] = useState("");
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
@@ -4010,122 +4010,6 @@ function App() {
     } catch (e) {
       console.error("export_excel failed", e);
       showAlert(`${t("导出失败", "Export failed")}: ${String(e)}`);
-    }
-  };
-
-  const exportInvoiceSummary = async () => {
-    const startDate = new Date(invoiceExportFrom);
-    const endDate = new Date(invoiceExportTo);
-    // Set endDate to end of that day
-    endDate.setHours(23, 59, 59, 999);
-    type InvoiceExportRow = {
-      serial: string;
-      invoice_no: string;
-      seller_tax_id: string;
-      amount: number;
-      currency: string;
-      amount_egp: number;
-      doc_type: string;
-    };
-    let allInvoices: InvoiceExportRow[] = [];
-
-    // Only the active tab's rows belong to a document. This also prevents a
-    // stale Bank array from being exported after the document was switched to
-    // Import (and vice versa).
-    const collectDocRows = (parsed: any, serial: string, dt: string): InvoiceExportRow[] => {
-      const rows: InvoiceExportRow[] = [];
-      if (dt === "import") {
-        for (const e of parsed.import_entries || []) {
-          const amount = toNum(e.amount);
-          const poolRow = poolForInvoice(e);
-          const rate = toNum(e.rate) || Number(poolRow?.exchange_rate) || 0;
-          const currency = String(e.currency || poolRow?.currency || (rate > 0 ? "USD" : "EGP")).trim().toUpperCase();
-          const amountEgp = currency === "EGP" ? amount : (rate > 0 ? amount * rate : 0);
-          rows.push({
-            serial,
-            invoice_no: e.service_name || e.attached_invoice || "",
-            seller_tax_id: e.seller_tax_id || extractTaxIdFromName(e.service_name) || "",
-            amount,
-            currency,
-            amount_egp: amountEgp,
-            doc_type: "import",
-          });
-        }
-      } else {
-        for (const inv of parsed.invoices || []) {
-          const amount = toNum(inv.amount);
-          const currency = invoiceCurrency(inv);
-          const rate = invoiceExchangeRate(inv);
-          const amountEgp = currency === "EGP" ? amount : (rate > 0 ? amount * rate : 0);
-          rows.push({
-            serial,
-            invoice_no: inv.invoice_no || "",
-            seller_tax_id: inv.seller_tax_id || "",
-            amount,
-            currency,
-            amount_egp: amountEgp,
-            doc_type: dt,
-          });
-        }
-      }
-      return rows;
-    };
-
-    const remoteSerials = new Set<string>();
-    // If logged in, query Supabase
-    if (authUser) {
-      try {
-        const rows = await listSnapshotsRemote("");
-        for (const r of rows) {
-          const created = new Date(r.created_at);
-          if (!Number.isNaN(created.getTime()) && created >= startDate && created <= endDate) {
-            try {
-              const parsed = JSON.parse(r.data_json);
-              const serial = parsed.doc_serial || r.label;
-              remoteSerials.add(serial);
-              const dt = parsed.doc_type || "bank";
-              allInvoices.push(...collectDocRows(parsed, serial, dt));
-            } catch {}
-          }
-        }
-      } catch (e) {
-        console.error("Supabase invoice query failed", e);
-      }
-    }
-
-    // Also query local SQLite for any data not in cloud
-    try {
-      const localList = await invoke<HistoryEntry[]>("list_history", { search: "" });
-      for (const entry of localList) {
-        try {
-          const dataJson = await invoke<string>("load_history", { id: entry.id });
-          const parsed = JSON.parse(dataJson);
-          const entryDate = new Date(entry.created_at);
-          if (entryDate >= startDate && entryDate <= endDate) {
-            const serial = parsed.doc_serial || entry.label;
-            // The cloud snapshot is authoritative even when this document has
-            // no rows in the selected period.
-            if (authUser && remoteSerials.has(serial)) continue;
-            const dt = parsed.doc_type || "bank";
-            allInvoices.push(...collectDocRows(parsed, serial, dt));
-          }
-        } catch {}
-      }
-    } catch {}
-
-    if (allInvoices.length === 0) {
-      showAlert(t("没有找到该时间段内的发票数据", "No invoice data found for this period"));
-      return;
-    }
-
-    const filePath = await save({
-      defaultPath: `Invoice_Registry_${invoiceExportFrom}_to_${invoiceExportTo}.xlsx`,
-      filters: [{ name: "Excel", extensions: ["xlsx"] }],
-    });
-    if (filePath) {
-      await invoke("export_invoice_summary", { invoices: allInvoices, dateFrom: invoiceExportFrom, dateTo: invoiceExportTo, filePath });
-      showAlert(t("发票清单导出成功", "Invoice registry exported successfully"));
-      setShowInvoiceExport(false);
     }
   };
 
@@ -7022,9 +6906,11 @@ function App() {
         invoices: string;
         net_payable: number;
         current_paid: number;
+        final_decision: string;
+        paid: boolean;
       }[] = [];
       const seen = new Set<string>();
-      const candidates: { label: string; dataJson: string; seriesNo: string; entries: any[] }[] = [];
+      const candidates: { label: string; dataJson: string; seriesNo: string; entries: any[]; finalDecision: string; isPaid: boolean }[] = [];
       const addCandidate = (label: string, dataJson: string, createdAt?: string) => {
         if (createdAt) {
           const c = new Date(createdAt);
@@ -7033,9 +6919,18 @@ function App() {
         let parsed: any;
         try { parsed = JSON.parse(dataJson); } catch { return; }
         const serial = parsed.doc_serial || label || "";
-        if (!serial || seen.has(serial)) return;
-        seen.add(serial);
+        if (!serial) return;
         const isImport = parsed.doc_type === "import";
+        const finalDecision = String(parsed.final_decision || "");
+        const isPaid = parsed.paid === true;
+        // Apply the registry filters before de-duplicating so a filtered-out
+        // cloud copy cannot block a qualifying local copy of the same serial.
+        if (historyExportDecision !== "all" && finalDecision !== historyExportDecision) return;
+        if (historyExportDocType !== "all" && historyExportDocType !== (isImport ? "import" : "bank")) return;
+        if (historyExportPaid === "paid" && !isPaid) return;
+        if (historyExportPaid === "unpaid" && isPaid) return;
+        if (seen.has(serial)) return;
+        seen.add(serial);
         const taxSet = new Set<string>();
         const coSet = new Set<string>();
         const invSet = new Set<string>();
@@ -7059,6 +6954,8 @@ function App() {
           label,
           dataJson,
           seriesNo: serial,
+          finalDecision,
+          isPaid,
           entries: [
             { label: t("卖方税号", "Seller TAX ID"), value: dedupeTaxIds(taxSet).join(", ") },
             { label: t("公司名称", "Company"), value: Array.from(coSet).join(", ") },
@@ -7123,6 +7020,8 @@ function App() {
           invoices: inv,
           net_payable: net,
           current_paid: paid,
+          final_decision: cand.finalDecision,
+          paid: cand.isPaid,
         });
         done += 1;
         setHistoryExportProgress(Math.round((done / candidates.length) * 100));
@@ -7130,17 +7029,22 @@ function App() {
       }
       setHistoryExportStatus(t("正在写入Excel", "Writing Excel file..."));
 
+      const paidLayout = historyExportPaid === "paid";
       const filePath = await save({
-        defaultPath: `History_Registry_${historyExportFrom}_to_${historyExportTo}.xlsx`,
+        defaultPath: paidLayout
+          ? `Paid_Documents_${historyExportFrom}_to_${historyExportTo}.xlsx`
+          : `History_Registry_${historyExportFrom}_to_${historyExportTo}.xlsx`,
         filters: [{ name: "Excel", extensions: ["xlsx"] }],
       });
       if (filePath) {
         setHistoryExportStatus(t("正在写入Excel", "Writing Excel file..."));
-        await invoke("export_history_registry", { rows, filePath });
+        await invoke("export_history_registry", { rows, filePath, onlyPaidLayout: paidLayout });
         setHistoryExportProgress(null);
         setHistoryExportStatus("");
         setShowHistoryExport(false);
-        showAlert(t("历史记录导出成功", "History registry exported successfully"));
+        showAlert(paidLayout
+          ? t("已付款文件导出成功", "Paid documents exported successfully")
+          : t("历史记录导出成功", "History registry exported successfully"));
       } else {
         setHistoryExportProgress(null);
         setHistoryExportStatus("");
@@ -7472,9 +7376,6 @@ function App() {
             <div className="sidebar-export-dropdown">
               <button onClick={() => { setShowExportMenu(false); exportExcel(); }}>
                 <IconReport /> {t("结算报告", "Settlement Report")}
-              </button>
-              <button onClick={() => { setShowExportMenu(false); setShowInvoiceExport(true); }}>
-                <IconInvoice /> {t("发票清单", "Invoice Registry")}
               </button>
               <button onClick={() => { setShowExportMenu(false); setShowHistoryExport(true); }}>
                 <IconHistory /> {t("历史记录清单", "History Registry")}
@@ -7817,38 +7718,6 @@ function App() {
 </div>
         </div>
 
-      {showInvoiceExport && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 9999,
-        }} onClick={() => setShowInvoiceExport(false)}>
-          <div style={{
-            background: 'var(--bg-card, #fff)', borderRadius: 12, padding: '28px 36px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 320,
-            border: '1px solid var(--border, #e0e0e0)',
-          }} onClick={e => e.stopPropagation()}>
-            <h3 style={{marginBottom:20,fontSize:16}}>{t("发票清单导出", "Invoice Registry Export")}</h3>
-            <div style={{marginBottom:16}}>
-              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("开始日期", "From date")}</label>
-              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
-                value={invoiceExportFrom} onChange={e => setInvoiceExportFrom(e.target.value)} />
-            </div>
-            <div style={{marginBottom:20}}>
-              <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("结束日期", "To date")}</label>
-              <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
-                value={invoiceExportTo} onChange={e => setInvoiceExportTo(e.target.value)} />
-            </div>
-            <div style={{display:'flex',gap:8}}>
-              <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}
-                onClick={exportInvoiceSummary}>{t("导出", "Export")}</button>
-              <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
-                onClick={() => setShowInvoiceExport(false)}>{t("取消", "Cancel")}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {showHistoryExport && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -7868,10 +7737,43 @@ function App() {
                   <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
                     value={historyExportFrom} onChange={e => setHistoryExportFrom(e.target.value)} />
                 </div>
-                <div style={{marginBottom:20}}>
+                <div style={{marginBottom:16}}>
                   <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("结束日期", "To date")}</label>
                   <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
                     value={historyExportTo} onChange={e => setHistoryExportTo(e.target.value)} />
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("审核结果", "Decision")}</label>
+                  <select style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13,background:'var(--bg-card, #fff)',color:'inherit'}}
+                    value={historyExportDecision} onChange={e => setHistoryExportDecision(e.target.value as typeof historyExportDecision)}>
+                    <option value="all">{t("全部", "All")}</option>
+                    <option value="approve">{t("已批准", "Approved")}</option>
+                    <option value="conditional">{t("有条件批准", "Conditionally Approved")}</option>
+                    <option value="reject">{t("已拒绝", "Rejected")}</option>
+                  </select>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("文档类型", "Document Type")}</label>
+                  <select style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13,background:'var(--bg-card, #fff)',color:'inherit'}}
+                    value={historyExportDocType} onChange={e => setHistoryExportDocType(e.target.value as typeof historyExportDocType)}>
+                    <option value="all">{t("两者", "Both")}</option>
+                    <option value="bank">{t("银行", "Bank")}</option>
+                    <option value="import">{t("进口", "Import")}</option>
+                  </select>
+                </div>
+                <div style={{marginBottom:historyExportPaid === "paid" ? 8 : 20}}>
+                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("付款状态", "Payment Status")}</label>
+                  <select style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13,background:'var(--bg-card, #fff)',color:'inherit'}}
+                    value={historyExportPaid} onChange={e => setHistoryExportPaid(e.target.value as typeof historyExportPaid)}>
+                    <option value="all">{t("两者", "Both")}</option>
+                    <option value="paid">{t("已付款", "Paid")}</option>
+                    <option value="unpaid">{t("未付款", "Unpaid")}</option>
+                  </select>
+                  {historyExportPaid === "paid" && (
+                    <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:6}}>
+                      {t("已付款文档将使用专用登记表格式导出", "Paid documents are exported with the dedicated register layout")}
+                    </div>
+                  )}
                 </div>
                 <div style={{display:'flex',gap:8}}>
                   <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}

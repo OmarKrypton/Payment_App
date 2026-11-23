@@ -4,6 +4,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_doc_currency() -> String {
+    "EGP".into()
+}
+
 /// CSCEC's fixed buyer tax ID. Imported documents and the UI warning must use
 /// the same value.
 pub const BUYER_TAX_ID: &str = "100489095";
@@ -68,6 +72,9 @@ pub struct FormData {
     pub seller_tax_ids: Vec<String>,
     #[serde(default)]
     pub doc_type: String,
+    /// Currency the bank document's computed values are expressed in (EGP/USD).
+    #[serde(default = "default_doc_currency")]
+    pub doc_currency: String,
     #[serde(default)]
     pub remainder_of: String,
     #[serde(default)]
@@ -180,6 +187,7 @@ impl Default for FormData {
             seller_tax_id: String::new(),
             seller_tax_ids: vec![],
             doc_type: "bank".into(),
+            doc_currency: "EGP".into(),
             remainder_of: String::new(),
             checklist: std::collections::HashMap::new(),
             check_cover: false,
