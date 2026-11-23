@@ -4359,3 +4359,52 @@ mark.de-hl {
   border-color: rgba(13, 148, 136, 0.3);
   background: rgba(13, 148, 136, 0.09);
 }
+
+/* ── Settings tab (full-page, section based) ── */
+.settings-tab { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 1080px; margin: 0 auto; }
+.settings-tab .settings-hero { display: flex; align-items: center; gap: 14px; }
+.settings-glyph {
+  width: 42px; height: 42px; border-radius: 12px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; background: linear-gradient(135deg, #6366f1, #4f46e5);
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.3);
+}
+.settings-tab .settings-hero h2 { margin: 0; padding: 0; border: 0; font-size: 16px; }
+.settings-tab .settings-hero p { margin: 4px 0 0; font-size: 11px; color: var(--text-muted); }
+.settings-layout { display: grid; grid-template-columns: 190px 1fr; gap: 14px; align-items: start; }
+.settings-nav {
+  display: flex; flex-direction: column; gap: 4px; padding: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+}
+.settings-nav button {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text-muted);
+  font-size: 11.5px; text-align: left; cursor: pointer; transition: none;
+}
+.settings-nav button:hover { background: rgba(99, 102, 241, 0.08); color: var(--accent); }
+.settings-nav button.active { background: rgba(99, 102, 241, 0.16); color: var(--accent); font-weight: 600; }
+.settings-panel { min-height: 340px; }
+.settings-account { display: flex; align-items: center; gap: 12px; padding: 4px 0 14px; }
+.settings-account-name { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 13px 0; border-top: 1px solid var(--border);
+}
+.settings-row-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.settings-row-desc { margin-top: 3px; font-size: 10.5px; color: var(--text-muted); }
+.settings-row .hc-btn { flex: none; padding: 7px 13px; font-size: 11.5px; }
+.settings-pw { display: flex; flex-direction: column; gap: 8px; padding: 0 0 12px; }
+.settings-pw-actions { display: flex; gap: 8px; }
+.settings-signin { display: flex; flex-direction: column; gap: 9px; max-width: 380px; margin-top: 14px; }
+.settings-signin .hc-btn { padding: 9px 0; }
+.settings-hint { font-size: 10px; color: var(--text-muted); text-align: center; }
+.settings-version { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex: none; }
+.acct-login-link { width: 100%; flex: none; }
+.sidebar.collapsed .acct-login-link { display: none; }
+@media (max-width: 800px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { flex-direction: row; overflow-x: auto; }
+  .settings-nav button { width: auto; white-space: nowrap; }
+}

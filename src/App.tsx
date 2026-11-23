@@ -1086,7 +1086,7 @@ const dailySyncErrorText = (e: any, t: (zh: string, en: string) => string): stri
 const deSourceLabel = (s: string): string => String(s || "").replace(/\|(?=\d{2}-\d{2}-\d{4}$)/, " · ");
 
 function App() {
-  const [tab, setTab] = useState<"bank" | "import" | "suppliers" | "entries">("bank");
+  const [tab, setTab] = useState<"bank" | "import" | "suppliers" | "entries" | "settings">("bank");
   const [lang, setLang] = useState<"zh" | "en">("en");
   const [appVersion, setAppVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -1118,9 +1118,8 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<"account" | "general" | "about">("account");
   const [bankSection, setBankSection] = useState("sec-info");
-  const [showExportMenu, setShowExportMenu] = useState(false);
   const [showHistoryExport, setShowHistoryExport] = useState(false);
   const [historyExportFrom, setHistoryExportFrom] = useState(localDateInput(new Date(new Date().getFullYear(), 0, 1))); // Jan 1 of current year
   const [historyExportTo, setHistoryExportTo] = useState(localDateInput(new Date())); // Today
@@ -1402,17 +1401,6 @@ function App() {
       setCheckingUpdate(false);
     }
   };
-
-  // Close export dropdown when clicking outside
-  useEffect(() => {
-    if (!showExportMenu) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.sidebar-export-dropdown') && !target.closest('.export-trigger')) setShowExportMenu(false);
-    };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [showExportMenu]);
 
   // Listen for Supabase auth changes
   useEffect(() => {
@@ -3405,6 +3393,140 @@ function App() {
               <div className="computed-value highlight" style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>{fmtUsd(importSplit.usdInclVat)}</div>
               <div className="field-sub" style={{ marginTop: 2 }}>= {fmt(importSplit.usdEgpInclVat)}</div>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const SettingsTab = () => {
+    // Keep this as a section list so new settings can be added later without
+    // changing the surrounding page layout.
+    const sections: { key: "account" | "general" | "about"; label: string }[] = [
+      { key: "account", label: t("账户", "Account") },
+      { key: "general", label: t("常规", "General") },
+      { key: "about", label: t("关于", "About") },
+    ];
+    const sectionIcon = (key: "account" | "general" | "about") =>
+      key === "account" ? <IconUsers size={14} /> : key === "general" ? <IconSettings size={14} /> : <IconReport size={14} />;
+
+    return (
+      <div className="settings-tab">
+        <div className="card settings-hero">
+          <div className="settings-glyph"><IconSettings size={22} /></div>
+          <div>
+            <h2>{t("设置", "Settings")}</h2>
+            <p>{t("管理账户、语言与应用更新，更多选项将陆续添加。", "Manage your account, language and app updates. More options will be added here.")}</p>
+          </div>
+        </div>
+        <div className="settings-layout">
+          <nav className="settings-nav">
+            {sections.map(s => (
+              <button key={s.key} className={settingsSection === s.key ? "active" : ""} onClick={() => setSettingsSection(s.key)}>
+                {sectionIcon(s.key)}<span>{s.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="card settings-panel">
+            {settingsSection === "account" && (
+              <>
+                <h3>{t("账户", "Account")}</h3>
+                {authUser ? (
+                  <>
+                    <div className="settings-account">
+                      <div className="acct-avatar">{authUser.charAt(0).toUpperCase()}</div>
+                      <div>
+                        <div className="settings-account-name">{authUser}</div>
+                        <div className="acct-status"><span className={`doc-dot${synced ? "" : " red"}`} />{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</div>
+                      </div>
+                    </div>
+                    <div className="settings-row">
+                      <div>
+                        <div className="settings-row-label">{t("修改密码", "Change password")}</div>
+                        <div className="settings-row-desc">{t("更新用于登录和同步的密码", "Update the password used to sign in and sync")}</div>
+                      </div>
+                      <button className="hc-btn" onClick={() => setShowChangePw(v => !v)}>{showChangePw ? t("收起", "Hide") : t("修改", "Change")}</button>
+                    </div>
+                    {showChangePw && (
+                      <div className="settings-pw">
+                        <input
+                          className="field-input"
+                          type="password"
+                          placeholder={t("新密码", "New password")}
+                          value={newPassword}
+                          onChange={e => setNewPassword(e.target.value)} />
+                        <div className="settings-pw-actions">
+                          <button className="hc-btn pri" onClick={async () => {
+                            try { await changePassword(newPassword); setNewPassword(""); setShowChangePw(false); showAlert(t("密码已修改", "Password changed")); }
+                            catch (e: any) { showAlert(`${t("修改失败", "Change failed")}: ${e.message || e}`); }
+                          }}>{t("确认", "Confirm")}</button>
+                          <button className="hc-btn" onClick={() => { setShowChangePw(false); setNewPassword(""); }}>{t("取消", "Cancel")}</button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="settings-row">
+                      <div>
+                        <div className="settings-row-label">{t("登出", "Logout")}</div>
+                        <div className="settings-row-desc">{t("退出当前账户并返回本地模式", "Sign out and return to local mode")}</div>
+                      </div>
+                      <button className="hc-btn" onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); setTab("bank"); }}>{t("登出", "Logout")}</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="settings-row-label">{t("登录以同步", "Sign in to sync")}</div>
+                    <div className="settings-row-desc">{t("登录后即可跨设备共享快照数据", "Sign in to share snapshot data across devices")}</div>
+                    <div className="settings-signin">
+                      <input className="field-input" placeholder={t("邮箱", "Email")} value={authEmail} onChange={e => setAuthEmail(e.target.value)} />
+                      <input className="field-input" type="password" placeholder={t("密码", "Password")} value={authPassword} onChange={e => setAuthPassword(e.target.value)} />
+                      <button className="hc-btn pri" onClick={async () => {
+                        try { await signIn(authEmail, authPassword); setAuthPassword(""); }
+                        catch (e: any) { showAlert(`${t("登录失败", "Login failed")}: ${e.message || e}`); }
+                      }}>{t("登录", "Sign In")}</button>
+                      <span className="settings-hint">{t("账号由管理员创建", "Accounts created by admin")}</span>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+            {settingsSection === "general" && (
+              <>
+                <h3>{t("常规", "General")}</h3>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("语言", "Language")}</div>
+                    <div className="settings-row-desc">{t("切换界面语言", "Switch the interface language")}</div>
+                  </div>
+                  <button className="hc-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>{lang === "zh" ? "English" : "中文"}</button>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("检查更新", "Check Update")}</div>
+                    <div className="settings-row-desc">{t("检查是否有新版本可用", "Check whether a newer version is available")}</div>
+                  </div>
+                  <button className="hc-btn" disabled={checkingUpdate} onClick={handleCheckUpdate}>{checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}</button>
+                </div>
+              </>
+            )}
+            {settingsSection === "about" && (
+              <>
+                <h3>{t("关于", "About")}</h3>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">Vouchify</div>
+                    <div className="settings-row-desc">{t("付款文件审计与结算报告工具", "Payment document audit and settlement reporting tool")}</div>
+                  </div>
+                  <span className="settings-version">{appVersion ? `v${appVersion}` : ""}</span>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("ETA 门户", "ETA portal")}</div>
+                    <div className="settings-row-desc">{t("在浏览器中打开 ETA 发票门户", "Open the ETA invoice portal in your browser")}</div>
+                  </div>
+                  <button className="hc-btn" onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>{t("打开", "Open")}</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -7268,6 +7390,10 @@ function App() {
           <span className="navlabel">{t("发票池", "Invoice Pool")}</span>
           {availablePoolCount > 0 && <span className="navbadge violet">{availablePoolCount}</span>}
         </button>
+        <button className={`navitem${tab === "settings" ? " active" : ""}`} data-tip={sidebarCollapsed ? t("设置", "Settings") : undefined} onClick={() => setTab("settings")}>
+          <span className="sb-tile"><IconSettings size={15} /></span>
+          <span className="navlabel">{t("设置", "Settings")}</span>
+        </button>
         <button className="eta-link" data-tip={sidebarCollapsed ? t("打开 ETA 门户", "Open ETA portal") : undefined} onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
           <IconExternal size={13} /> <span className="eta-text">{t("打开 ETA 门户", "Open ETA portal")}</span>
         </button>
@@ -7279,10 +7405,10 @@ function App() {
                 <div className="acct-name">{(authUser || "").split("@")[0]}</div>
                 <div className="acct-status"><span className={`doc-dot${synced ? "" : " red"}`} />{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</div>
               </div>
-              <button className="acct-btn" onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); setShowSettings(false); }}>
+              <button className="acct-btn" onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); setTab("bank"); }}>
                 {t("登出", "Logout")}
               </button>
-              <button className={`acct-gear${showSettings ? " active" : ""}`} title={t("设置", "Settings")} onClick={() => setShowSettings(v => !v)}>
+              <button className={`acct-gear${tab === "settings" ? " active" : ""}`} title={t("设置", "Settings")} onClick={() => { setSettingsSection("account"); setTab("settings"); }}>
                 <IconSettings size={14} />
               </button>
             </>
@@ -7293,65 +7419,15 @@ function App() {
                 <div className="acct-name">{t("登录以同步", "Sign in to sync")}</div>
                 <div className="acct-status">{t("跨设备共享快照数据", "Share snapshots across devices")}</div>
               </div>
-              <button className={`acct-gear${showSettings ? " active" : ""}`} title={t("设置", "Settings")} onClick={() => setShowSettings(v => !v)}>
+              <button className={`acct-gear${tab === "settings" ? " active" : ""}`} title={t("设置", "Settings")} onClick={() => { setSettingsSection("account"); setTab("settings"); }}>
                 <IconSettings size={14} />
               </button>
             </>
           )}
           {!authUser && (
-            <div className="acct-login">
-              <input
-                placeholder={t("邮箱", "Email")}
-                value={authEmail}
-                onChange={e => setAuthEmail(e.target.value)} />
-              <input
-                type="password"
-                placeholder={t("密码", "Password")}
-                value={authPassword}
-                onChange={e => setAuthPassword(e.target.value)} />
-              <button className="acct-signin" onClick={async () => {
-                try { await signIn(authEmail, authPassword); setAuthPassword(""); } catch (e: any) { showAlert(`${t("登录失败", "Login failed")}: ${e.message || e}`); }
-              }}>{t("登录", "Sign In")}</button>
-              <span className="acct-hint">{t("账号由管理员创建", "Accounts created by admin")}</span>
-            </div>
-          )}
-          {showSettings && (
-            <div className="acct-settings">
-              {authUser && (
-                <button className="acct-setrow" onClick={() => setShowChangePw(v => !v)}>
-                  <span>{t("修改密码", "Change password")}</span>
-                  <IconChevronRight size={13} style={{ transform: showChangePw ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }} />
-                </button>
-              )}
-              {authUser && showChangePw && (
-                <div className="acct-pw">
-                  <input
-                    type="password"
-                    placeholder={t("新密码", "New password")}
-                    value={newPassword}
-                    onChange={e => setNewPassword(e.target.value)} />
-                  <div className="acct-pw-row">
-                    <button className="acct-signin" onClick={async () => {
-                      try { await changePassword(newPassword); setNewPassword(""); setShowChangePw(false); showAlert(t("密码已修改", "Password changed")); } catch (e: any) { showAlert(`${t("修改失败", "Change failed")}: ${e.message || e}`); }
-                    }}>{t("确认", "Confirm")}</button>
-                    <button className="acct-cancel" onClick={() => { setShowChangePw(false); setNewPassword(""); }}>
-                      {t("取消", "Cancel")}
-                    </button>
-                  </div>
-                </div>
-              )}
-              <button className="acct-setrow" onClick={handleCheckUpdate} disabled={checkingUpdate}>
-                <span>{checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}</span>
-              </button>
-              <button className="acct-setrow" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
-                <span>{t("语言", "Language")}</span>
-                <span className="acct-setval">{lang === "zh" ? "English" : "中文"}</span>
-              </button>
-              <div className="acct-setrow static">
-                <span>{t("版本", "Version")}</span>
-                <span className="acct-setval">{appVersion ? `v${appVersion}` : ""}</span>
-              </div>
-            </div>
+            <button className="acct-signin acct-login-link" onClick={() => { setSettingsSection("account"); setTab("settings"); }}>
+              {t("登录", "Sign In")}
+            </button>
           )}
         </div>
         <div className="sidebar-actions">
@@ -7368,17 +7444,10 @@ function App() {
             <button className="action-btn" onClick={importPdf} data-tip={t("上传PDF (OCR)", "Upload PDF (OCR)")}>
               <span className="sb-tile"><IconUpload size={14} /></span> <span className="action-text">{t("OCR", "OCR")}</span>
             </button>
-            <button className="action-btn export-trigger" onClick={() => { if (sidebarCollapsed) { toggleSidebar(); setShowExportMenu(true); } else { setShowExportMenu(!showExportMenu); } }} data-tip={t("导出", "Export")}>
+            <button className="action-btn export-trigger" onClick={exportExcel} data-tip={t("导出结算报告", "Export Settlement Report")} title={t("导出结算报告", "Export Settlement Report")}>
               <span className="sb-tile"><IconExport size={14} /></span> <span className="action-text">{t("导出", "Export")}</span>
             </button>
           </div>
-          {showExportMenu && (
-            <div className="sidebar-export-dropdown">
-              <button onClick={() => { setShowExportMenu(false); exportExcel(); }}>
-                <IconReport /> {t("结算报告", "Settlement Report")}
-              </button>
-            </div>
-          )}
         </div>
       </aside>
       <main className="content" ref={contentRef}>
@@ -7431,6 +7500,8 @@ function App() {
           </>
         ) : tab === "suppliers" ? (
           SuppliersTab()
+        ) : tab === "settings" ? (
+          SettingsTab()
         ) : (
           DailyEntriesTab()
         )}
