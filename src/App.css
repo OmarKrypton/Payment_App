@@ -3112,6 +3112,24 @@ body {
 .history-modal .history-view-tabs { gap: 6px; margin-bottom: 10px; }
 .history-modal .history-view-tabs > button { flex: 0 0 auto; font-weight: 700; padding: 6px 16px; }
 .history-modal .history-view-tabs > button.active { background: rgba(15, 23, 42, 0.88); border-color: rgba(15, 23, 42, 0.88); }
+/* History registry export — reuses the same frosted-glass modal chrome */
+.history-export-modal { width: min(430px, 94vw); overflow: visible; }
+.history-export-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 18px 18px; }
+.history-export-field { display: flex; flex-direction: column; gap: 5px; }
+.history-export-field > label { font-size: 11px; font-weight: 700; color: var(--text-secondary); }
+.history-export-field > .date-field-wrap,
+.history-export-field > .fsel { width: 100%; }
+.history-export-field .date-field,
+.history-export-field .fsel .fsel-btn { width: 100%; box-sizing: border-box; }
+.history-export-field .fsel-menu { width: 100%; }
+.history-export-note {
+  margin-top: 2px; padding: 7px 10px; border-radius: 8px; font-size: 10.5px; color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.85); background: rgba(255, 255, 255, 0.55);
+}
+.history-export-actions { display: flex; gap: 8px; margin-top: 4px; }
+.history-export-progress { padding: 8px 18px 20px; text-align: center; }
+.history-export-progress h3 { font-size: 14px; margin-bottom: 14px; }
+.history-export-progress-label { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
 .hc-item.trash { background: rgba(248, 250, 252, 0.62); border-color: rgba(226, 232, 240, 0.9); }
 .hc-item.trash .hc-bar { background: #94a3b8; }
 .hc-item.trash .hc-actions { margin-top: 8px; }

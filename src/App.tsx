@@ -7377,9 +7377,6 @@ function App() {
               <button onClick={() => { setShowExportMenu(false); exportExcel(); }}>
                 <IconReport /> {t("结算报告", "Settlement Report")}
               </button>
-              <button onClick={() => { setShowExportMenu(false); setShowHistoryExport(true); }}>
-                <IconHistory /> {t("历史记录清单", "History Registry")}
-              </button>
             </div>
           )}
         </div>
@@ -7512,7 +7509,14 @@ function App() {
         <div className="modal history-modal" onClick={e => e.stopPropagation()}>
           <div className="modal-header">
             <h3>{t("历史记录", "History Browser")} <span className="history-count">{historyTab === "trash" ? trashList.length : historyList.length} {t("份", "docs")}</span></h3>
-            <button className="modal-close" onClick={hideHistoryModal}>✕</button>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              {historyTab === "history" && (
+                <button className="hc-btn pri" onClick={() => setShowHistoryExport(true)} title={t("导出历史记录清单", "Export history registry")}>
+                  <IconExport size={13} /> {t("导出清单", "Export Registry")}
+                </button>
+              )}
+              <button className="modal-close" onClick={hideHistoryModal}>✕</button>
+            </div>
           </div>
           <div className="modal-search">
             <input className="field-input" placeholder={t("搜索快照...", "Search snapshots...")} value={historySearch} onChange={e => onHistorySearch(e.target.value)} />
@@ -7719,76 +7723,76 @@ function App() {
         </div>
 
       {showHistoryExport && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 9999,
-        }} onClick={() => { if (historyExportProgress == null) setShowHistoryExport(false); }}>
-          <div style={{
-            background: 'var(--bg-card, #fff)', borderRadius: 12, padding: '28px 36px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxWidth: 420, minWidth: 340,
-            border: '1px solid var(--border, #e0e0e0)',
-          }} onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay history-overlay" style={{position:'fixed'}} onClick={() => { if (historyExportProgress == null) setShowHistoryExport(false); }}>
+          <div className="modal history-modal history-export-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t("历史记录清单导出", "History Registry Export")}</h3>
+              <button className="modal-close" onClick={() => { if (historyExportProgress == null) setShowHistoryExport(false); }}>✕</button>
+            </div>
             {historyExportProgress == null ? (
-              <>
-                <h3 style={{marginBottom:20,fontSize:16}}>{t("历史记录清单导出", "History Registry Export")}</h3>
-                <div style={{marginBottom:16}}>
-                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("开始日期", "From date")}</label>
-                  <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
-                    value={historyExportFrom} onChange={e => setHistoryExportFrom(e.target.value)} />
+              <div className="history-export-body">
+                <div className="history-export-field">
+                  <label>{t("开始日期", "From date")}</label>
+                  <GlassDate value={historyExportFrom} onChange={setHistoryExportFrom} placeholder={t("起始日期", "From date")} />
                 </div>
-                <div style={{marginBottom:16}}>
-                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("结束日期", "To date")}</label>
-                  <input type="date" style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13}}
-                    value={historyExportTo} onChange={e => setHistoryExportTo(e.target.value)} />
+                <div className="history-export-field">
+                  <label>{t("结束日期", "To date")}</label>
+                  <GlassDate value={historyExportTo} onChange={setHistoryExportTo} placeholder={t("结束日期", "To date")} />
                 </div>
-                <div style={{marginBottom:12}}>
-                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("审核结果", "Decision")}</label>
-                  <select style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13,background:'var(--bg-card, #fff)',color:'inherit'}}
-                    value={historyExportDecision} onChange={e => setHistoryExportDecision(e.target.value as typeof historyExportDecision)}>
-                    <option value="all">{t("全部", "All")}</option>
-                    <option value="approve">{t("已批准", "Approved")}</option>
-                    <option value="conditional">{t("有条件批准", "Conditionally Approved")}</option>
-                    <option value="reject">{t("已拒绝", "Rejected")}</option>
-                  </select>
+                <div className="history-export-field">
+                  <label>{t("审核结果", "Decision")}</label>
+                  <GlassSelect
+                    value={historyExportDecision}
+                    onChange={v => setHistoryExportDecision(v as typeof historyExportDecision)}
+                    options={[
+                      { value: "all", label: t("全部", "All") },
+                      { value: "approve", label: t("已批准", "Approved") },
+                      { value: "conditional", label: t("有条件批准", "Conditionally Approved") },
+                      { value: "reject", label: t("已拒绝", "Rejected") },
+                    ]}
+                  />
                 </div>
-                <div style={{marginBottom:12}}>
-                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("文档类型", "Document Type")}</label>
-                  <select style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13,background:'var(--bg-card, #fff)',color:'inherit'}}
-                    value={historyExportDocType} onChange={e => setHistoryExportDocType(e.target.value as typeof historyExportDocType)}>
-                    <option value="all">{t("两者", "Both")}</option>
-                    <option value="bank">{t("银行", "Bank")}</option>
-                    <option value="import">{t("进口", "Import")}</option>
-                  </select>
+                <div className="history-export-field">
+                  <label>{t("文档类型", "Document Type")}</label>
+                  <GlassSelect
+                    value={historyExportDocType}
+                    onChange={v => setHistoryExportDocType(v as typeof historyExportDocType)}
+                    options={[
+                      { value: "all", label: t("两者", "Both") },
+                      { value: "bank", label: t("银行", "Bank") },
+                      { value: "import", label: t("进口", "Import") },
+                    ]}
+                  />
                 </div>
-                <div style={{marginBottom:historyExportPaid === "paid" ? 8 : 20}}>
-                  <label style={{fontSize:12,fontWeight:600,marginBottom:6,display:'block'}}>{t("付款状态", "Payment Status")}</label>
-                  <select style={{width:'100%',padding:'8px 10px',borderRadius:8,border:'1px solid var(--border)',fontSize:13,background:'var(--bg-card, #fff)',color:'inherit'}}
-                    value={historyExportPaid} onChange={e => setHistoryExportPaid(e.target.value as typeof historyExportPaid)}>
-                    <option value="all">{t("两者", "Both")}</option>
-                    <option value="paid">{t("已付款", "Paid")}</option>
-                    <option value="unpaid">{t("未付款", "Unpaid")}</option>
-                  </select>
+                <div className="history-export-field">
+                  <label>{t("付款状态", "Payment Status")}</label>
+                  <GlassSelect
+                    value={historyExportPaid}
+                    onChange={v => setHistoryExportPaid(v as typeof historyExportPaid)}
+                    options={[
+                      { value: "all", label: t("两者", "Both") },
+                      { value: "paid", label: t("已付款", "Paid") },
+                      { value: "unpaid", label: t("未付款", "Unpaid") },
+                    ]}
+                  />
                   {historyExportPaid === "paid" && (
-                    <div style={{fontSize:11,color:'var(--text-secondary)',marginTop:6}}>
+                    <div className="history-export-note">
                       {t("已付款文档将使用专用登记表格式导出", "Paid documents are exported with the dedicated register layout")}
                     </div>
                   )}
                 </div>
-                <div style={{display:'flex',gap:8}}>
-                  <button style={{padding:'8px 20px',borderRadius:8,border:'none',background:'var(--accent)',color:'#fff',cursor:'pointer',fontWeight:600,fontSize:14}}
-                    onClick={exportHistoryRegistry}>{t("导出", "Export")}</button>
-                  <button style={{padding:'8px 20px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',color:'inherit',cursor:'pointer',fontSize:14}}
-                    onClick={() => setShowHistoryExport(false)}>{t("取消", "Cancel")}</button>
+                <div className="history-export-actions">
+                  <button className="hc-btn pri" onClick={exportHistoryRegistry}>{t("导出", "Export")}</button>
+                  <button className="hc-btn" onClick={() => setShowHistoryExport(false)}>{t("取消", "Cancel")}</button>
                 </div>
-              </>
+              </div>
             ) : (
-              <div style={{padding:'8px 4px'}}>
-                <h3 style={{marginBottom:20,fontSize:16,textAlign:'center'}}>{t("正在导出历史记录...", "Exporting history...")}</h3>
-                <div style={{width:'100%',height:10,borderRadius:6,background:'#e2e8f0',overflow:'hidden'}}>
-                  <div style={{width:`${historyExportProgress}%`,height:'100%',background:'var(--accent)',borderRadius:6,transition:'width 0.2s'}} />
+              <div className="history-export-progress">
+                <h3>{t("正在导出历史记录...", "Exporting history...")}</h3>
+                <div className="pool-progress-track">
+                  <div className="pool-progress-fill" style={{width:`${historyExportProgress}%`}} />
                 </div>
-                <div style={{marginTop:12,fontSize:13,color:'var(--text-secondary)',textAlign:'center'}}>
+                <div className="history-export-progress-label">
                   {historyExportProgress}%{historyExportStatus ? ` · ${historyExportStatus}` : ""}
                 </div>
               </div>
