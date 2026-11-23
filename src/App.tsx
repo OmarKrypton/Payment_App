@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, trashSnapshotRemote, restoreSnapshotRemote, purgeSnapshotRemote, SNAPSHOT_TRASH_MARKER, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, trashSnapshotRemote, restoreSnapshotRemote, purgeSnapshotRemote, isTrashedSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconInvoice, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -4299,9 +4299,10 @@ function App() {
     markViewLoaded("history", cacheKey);
   };
 
-  // Trash / Recently deleted. Remote trashed rows are marked by
-  // SNAPSHOT_TRASH_MARKER in delete_requested_by; a pending deletion request
-  // carries the requesting user's id and stays in normal history.
+  // Trash / Recently deleted. Remote trashed rows carry the sentinel
+  // delete_requested_at (SNAPSHOT_TRASH_AT); a pending deletion request keeps a
+  // real timestamp and stays in normal history. `delete_requested_by` is a UUID
+  // column, so it can never hold a text marker.
   const loadTrashList = async (search = "") => {
     setHistoryLoading(true);
     const mapRow = (h: any, remote: boolean): HistoryEntry => ({
@@ -4330,7 +4331,7 @@ function App() {
       try {
         const rows = await listSnapshotsRemote(search, true);
         const remoteTrash = rows
-          .filter(r => r.delete_requested_by === SNAPSHOT_TRASH_MARKER)
+          .filter(isTrashedSnapshot)
           .map(r => mapRow(r, true));
         const remoteLabels = new Set(remoteTrash.map(r => r.label));
         setTrashList([...remoteTrash, ...localTrash.filter(h => !remoteLabels.has(h.label))]);
@@ -7649,7 +7650,7 @@ function App() {
               if (trashList.length === 0) return <div className="history-empty">{t("回收站为空", "Trash is empty")}</div>;
               return trashList.map(h => {
                 const deletedAt = h.deleted_at || h.delete_requested_at || "";
-                const deletedBy = h.deleted_by || (h.delete_requested_by && h.delete_requested_by !== SNAPSHOT_TRASH_MARKER ? h.delete_requested_by : "");
+                const deletedBy = h.deleted_by || (h.delete_requested_by && !isTrashedSnapshot(h) ? h.delete_requested_by : "");
                 const deletedLabel = deletedAt
                   ? (h.remote ? new Date(deletedAt).toLocaleString() : deletedAt)
                   : "—";

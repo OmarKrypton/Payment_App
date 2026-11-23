@@ -17,12 +17,25 @@ export interface SnapshotRow {
 }
 
 /**
- * Marker stored in `delete_requested_by` for a snapshot moved to Trash. It is
- * distinct from a *pending* deletion request, whose `delete_requested_by` is
- * the requesting user's id. Normal history/index/duplicate queries hide rows
- * carrying this marker; the Trash view passes `includeTrash = true`.
+ * Snapshots moved to Trash are marked by this sentinel `delete_requested_at`,
+ * NOT by a text value in `delete_requested_by`: that column is a UUID (it holds
+ * real auth user ids), so comparing/writing a plain string there makes every
+ * PostgREST request fail with 22P02 — which empties History and Suppliers.
+ * A pending deletion request keeps a real timestamp and user id and stays in
+ * normal history. The Trash view passes `includeTrash = true`.
  */
-export const SNAPSHOT_TRASH_MARKER = "__vouchify_trash__";
+export const SNAPSHOT_TRASH_AT = "1970-01-01T00:00:00Z";
+
+/** True when a remote snapshot row was moved to Trash (not a pending request). */
+export const isTrashedSnapshot = (row: { delete_requested_at?: string | null }): boolean => {
+  const value = row.delete_requested_at;
+  if (!value) return false;
+  // Supabase may return the sentinel with a timezone suffix or as a naive
+  // timestamp; accept either form so Trash works in every timezone.
+  if (value.startsWith("1970-01-01T00:00:00")) return true;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) && ts === 0;
+};
 
 export async function signUp(email: string, password: string): Promise<User | null> {
   const { data, error } = await supabase.auth.signUp({ email, password });
@@ -84,9 +97,9 @@ export async function listSnapshotsRemote(search?: string, includeTrash = false)
       .order("created_at", { ascending: false })
       .range(from, to);
     if (!includeTrash) {
-      // Only exclude the Trash marker: a pending deletion request (a real user
-      // id) must stay visible in normal history until an admin acts on it.
-      query = query.or(`delete_requested_by.is.null,delete_requested_by.neq.${SNAPSHOT_TRASH_MARKER}`);
+      // Only exclude the Trash sentinel: a pending deletion request (real
+      // timestamp + user id) must stay visible until an admin acts on it.
+      query = query.or(`delete_requested_at.is.null,delete_requested_at.neq.${SNAPSHOT_TRASH_AT}`);
     }
     if (search) {
       query = query.ilike("label", `%${search}%`);
@@ -123,10 +136,12 @@ export async function deleteSnapshotRemote(id: number): Promise<void> {
  * the row; `restoreSnapshotRemote` can bring it back.
  */
 export async function trashSnapshotRemote(id: number): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
   const { count, error } = await supabase
     .from("snapshots")
     .update(
-      { delete_requested_at: new Date().toISOString(), delete_requested_by: SNAPSHOT_TRASH_MARKER },
+      { delete_requested_at: SNAPSHOT_TRASH_AT, delete_requested_by: session.user.id },
       { count: "exact" },
     )
     .eq("id", id);
