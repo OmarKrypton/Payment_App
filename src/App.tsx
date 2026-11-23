@@ -2561,7 +2561,13 @@ function App() {
       current: computed.c_9A,
       returned: "—",
       ending: computed.c_9A,
-      remaining: computed.c_10A > 0.005 ? computed.c_9A - computed.c_10A : undefined,
+      // The total net payable keeps its remaining balance even when there is no
+      // current-period activity (e.g. only opening/initial balances). The
+      // current-only row below stays hidden in that case.
+      remaining:
+        Math.abs(computed.c_9A) > tol || Math.abs(computed.c_10A) > tol
+          ? computed.c_9A - computed.c_10A
+          : undefined,
       status: computed.c_9A < -tol ? "warn" : "pass",
     });
 
@@ -2575,7 +2581,10 @@ function App() {
         current: currentOnlyNet,
         returned: "—",
         ending: currentOnlyNet,
-        remaining: computed.c_10A > 0.005 ? currentOnlyNet - computed.c_10A : undefined,
+        remaining:
+          computed.c_10A > tol && Math.abs(currentOnlyNet) > tol
+            ? currentOnlyNet - computed.c_10A
+            : undefined,
         status: currentOnlyNet < -tol ? "warn" : "pass",
         note: t("不含期初/累计余额", "Excludes opening/cumulative balances"),
       });
