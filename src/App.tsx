@@ -1131,14 +1131,16 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
+  const [isAdminUser, setIsAdminUser] = useState(false);
   const [hiddenButtons, setHiddenButtons] = useState<HiddenButtons>(readHiddenButtons);
   const setHiddenButton = useCallback((key: HiddenButtonKey, hidden: boolean) => {
+    if (!isAdminUser) return;
     setHiddenButtons(prev => {
       const next = { ...prev, [key]: hidden };
       try { localStorage.setItem(HIDDEN_BUTTONS_STORAGE_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
-  }, []);
+  }, [isAdminUser]);
   const [settingsSection, setSettingsSection] = useState<"account" | "general" | "about">("account");
   const [bankSection, setBankSection] = useState("sec-info");
   const [showHistoryExport, setShowHistoryExport] = useState(false);
@@ -1151,7 +1153,6 @@ function App() {
   const [historyExportStatus, setHistoryExportStatus] = useState("");
   const [authUser, setAuthUser] = useState<string | null>(null); // email of logged-in user
   const [authUserId, setAuthUserId] = useState<string | null>(null); // uuid for ownership checks
-  const [isAdminUser, setIsAdminUser] = useState(false);
   const [synced, setSynced] = useState(false);
   const [rateVisible, setRateVisible] = useState(true);
   const [historyFilter, setHistoryFilter] = useState<"all" | "bank" | "import">("all");
@@ -3527,27 +3528,30 @@ function App() {
                   </div>
                   <button className="hc-btn" disabled={checkingUpdate} onClick={handleCheckUpdate}>{checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}</button>
                 </div>
-                <div className="settings-subhead">{t("按钮显示", "Button visibility")}</div>
-                <div className="settings-row">
-                  <div>
-                    <div className="settings-row-label">{t("供应商：标记自由区", "Suppliers: Mark free zone")}</div>
-                    <div className="settings-row-desc">{t("隐藏供应商卡片上的“标记自由区”按钮", "Hide the Mark free zone button on supplier cards")}</div>
+                <div className={isAdminUser ? "settings-admin-only" : "settings-admin-only locked"}>
+                  <div className="settings-subhead">{t("按钮显示", "Button visibility")}</div>
+                  {!isAdminUser && <div className="settings-hint settings-admin-note">{t("仅管理员账户可修改按钮显示设置", "Only admin accounts can change button visibility")}</div>}
+                  <div className="settings-row">
+                    <div>
+                      <div className="settings-row-label">{t("供应商：标记自由区", "Suppliers: Mark free zone")}</div>
+                      <div className="settings-row-desc">{t("隐藏供应商卡片上的“标记自由区”按钮", "Hide the Mark free zone button on supplier cards")}</div>
+                    </div>
+                    <label className="toggle"><input type="checkbox" checked={hiddenButtons.markFreeZone} disabled={!isAdminUser} onChange={e => setHiddenButton("markFreeZone", e.target.checked)} />{t("隐藏", "Hide")}</label>
                   </div>
-                  <label className="toggle"><input type="checkbox" checked={hiddenButtons.markFreeZone} onChange={e => setHiddenButton("markFreeZone", e.target.checked)} />{t("隐藏", "Hide")}</label>
-                </div>
-                <div className="settings-row">
-                  <div>
-                    <div className="settings-row-label">{t("发票池：恢复本文档认领", "Invoice Pool: Restore Doc Claims")}</div>
-                    <div className="settings-row-desc">{t("隐藏发票池工具栏中的“恢复本文档认领”按钮", "Hide the Restore Doc Claims button in the pool toolbar")}</div>
+                  <div className="settings-row">
+                    <div>
+                      <div className="settings-row-label">{t("发票池：恢复本文档认领", "Invoice Pool: Restore Doc Claims")}</div>
+                      <div className="settings-row-desc">{t("隐藏发票池工具栏中的“恢复本文档认领”按钮", "Hide the Restore Doc Claims button in the pool toolbar")}</div>
+                    </div>
+                    <label className="toggle"><input type="checkbox" checked={hiddenButtons.restoreDocClaims} disabled={!isAdminUser} onChange={e => setHiddenButton("restoreDocClaims", e.target.checked)} />{t("隐藏", "Hide")}</label>
                   </div>
-                  <label className="toggle"><input type="checkbox" checked={hiddenButtons.restoreDocClaims} onChange={e => setHiddenButton("restoreDocClaims", e.target.checked)} />{t("隐藏", "Hide")}</label>
-                </div>
-                <div className="settings-row">
-                  <div>
-                    <div className="settings-row-label">{t("发票池：恢复全部文档认领", "Invoice Pool: Restore All Claims")}</div>
-                    <div className="settings-row-desc">{t("隐藏发票池工具栏中的“恢复全部文档认领”按钮", "Hide the Restore All Claims button in the pool toolbar")}</div>
+                  <div className="settings-row">
+                    <div>
+                      <div className="settings-row-label">{t("发票池：恢复全部文档认领", "Invoice Pool: Restore All Claims")}</div>
+                      <div className="settings-row-desc">{t("隐藏发票池工具栏中的“恢复全部文档认领”按钮", "Hide the Restore All Claims button in the pool toolbar")}</div>
+                    </div>
+                    <label className="toggle"><input type="checkbox" checked={hiddenButtons.restoreAllClaims} disabled={!isAdminUser} onChange={e => setHiddenButton("restoreAllClaims", e.target.checked)} />{t("隐藏", "Hide")}</label>
                   </div>
-                  <label className="toggle"><input type="checkbox" checked={hiddenButtons.restoreAllClaims} onChange={e => setHiddenButton("restoreAllClaims", e.target.checked)} />{t("隐藏", "Hide")}</label>
                 </div>
               </>
             )}
