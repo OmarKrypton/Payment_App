@@ -58,6 +58,7 @@ Imports the e-invoice XML alongside a document and verifies it field-by-field:
 
 - Per-invoice result with **errors and warnings** and the exact `XML → Form` value mismatch.
 - Summary tiles (issues / errors / warnings) and a searchable result list.
+- Reopen results at any time with the **View Validation Results** button in the bank or import tab; large result lists scroll in a single panel.
 - One-click **validation report export**.
 
 ### 5. Suppliers & WHT-free certificates
@@ -71,21 +72,29 @@ A supplier overview derived from saved documents and the invoice pool:
 ### 6. History Browser
 Every save is a snapshot. The browser lets you:
 
-- Search and filter by type (Bank / Import) and decision (Approved / Conditional / Rejected / Pending delete), with counts and sorting.
+- Search and filter by type (Bank / Import), decision (Approved / Conditional / Rejected / Pending delete) and payment status, with counts and sorting.
 - **Load a snapshot and keep editing** — pressing Save updates that same snapshot in place.
 - **Duplicate-serial protection**: you can’t save two documents under the same serial number.
+- **Recently deleted (Trash)**: deletions are reversible — restore or permanently purge a snapshot, with a short Undo window after moving it there.
+- **Export Registry** button with date-range and decision / document-type / payment filters.
 - Admin delete requests and full audit info (owner, auditor, remainder-of links).
 
 ### 7. Exports
-- **Settlement workbook** (Excel) with the EGP/USD layout and merged “Grand Total − Temp Labour” rows.
-- Invoice registry export by date range.
-- Validation report export.
-- History registry export.
+- **Settlement workbook** (Excel) with the EGP/USD layout, merged “Grand Total − Temp Labour” rows and the document currency.
+- **History registry export** from the History Browser, filtered by date range, decision, document type and payment status. Choosing **Paid** produces a dedicated “Paid Documents” register (Date, N, S.N., Type, Bank ref.).
+- **Validation report export**.
 
 ### 8. Accounts & sync
 - Email/password sign-in (Supabase) with row-level security.
 - Local-first storage (SQLite) with cloud sync and offline fallback.
-- Admin role for invoice-pool and history delete approvals.
+- Admin role for invoice-pool and history delete approvals, and for changing button visibility settings.
+
+### 9. Settings
+A dedicated **Settings** tab (gear icon in the sidebar) keeps account and app preferences in one place:
+
+- **Account** — sign in/out, change password and check sync status.
+- **General** — switch language and, for admins, hide selected buttons (Mark free zone, Restore Doc Claims, Restore All Claims).
+- **About** — app version and a manual **Check Update** button.
 
 ---
 
@@ -97,12 +106,12 @@ Vouchify uses a single **“liquid glass” design language** across every surfa
 - **Glass buttons, chips, tabs and inputs** with a cursor-tracking **specular highlight** on hover.
 - Consistent **status colours** (green = approved/valid, orange = conditional, red = rejected/pending, grey = cancelled).
 - **Card lists** with coloured left rails for documents, invoices and validation results.
-- **Bilingual** UI — English / 中文 — toggleable from the account menu.
+- **Bilingual** UI — English / 中文 — toggleable in Settings → General.
 
 ## Other features
 
 - **Offline-first** with automatic cloud sync when signed in.
-- **In-app updater** with signed release artifacts.
+- **In-app updater** with signed release artifacts; check manually from Settings → About.
 - Keyboard-friendly inputs with caret-safe number formatting.
 - **Remainder documents**: link a document as the remaining part of another so deductions are only applied once.
 - Automatic claim restoration if the invoice pool is wiped or a device was offline.
@@ -133,7 +142,7 @@ npm run tauri dev
 npm run tauri build
 ```
 
-> Releases are published from `v*` tags via GitHub Actions. The in-app updater checks the latest release automatically.
+> Releases are built from `v*` tags via GitHub Actions and published as drafts. Use **Check Update** in Settings → About to check for a newer version.
 
 ## Credits
 
