@@ -3521,13 +3521,6 @@ function App() {
                   </div>
                   <button className="hc-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>{lang === "zh" ? "English" : "中文"}</button>
                 </div>
-                <div className="settings-row">
-                  <div>
-                    <div className="settings-row-label">{t("检查更新", "Check Update")}</div>
-                    <div className="settings-row-desc">{t("检查是否有新版本可用", "Check whether a newer version is available")}</div>
-                  </div>
-                  <button className="hc-btn" disabled={checkingUpdate} onClick={handleCheckUpdate}>{checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}</button>
-                </div>
                 <div className={isAdminUser ? "settings-admin-only" : "settings-admin-only locked"}>
                   <div className="settings-subhead">{t("按钮显示", "Button visibility")}</div>
                   {!isAdminUser && <div className="settings-hint settings-admin-note">{t("仅管理员账户可修改按钮显示设置", "Only admin accounts can change button visibility")}</div>}
@@ -3563,14 +3556,10 @@ function App() {
                     <div className="settings-row-label">Vouchify</div>
                     <div className="settings-row-desc">{t("付款文件审计与结算报告工具", "Payment document audit and settlement reporting tool")}</div>
                   </div>
-                  <span className="settings-version">{appVersion ? `v${appVersion}` : ""}</span>
-                </div>
-                <div className="settings-row">
-                  <div>
-                    <div className="settings-row-label">{t("ETA 门户", "ETA portal")}</div>
-                    <div className="settings-row-desc">{t("在浏览器中打开 ETA 发票门户", "Open the ETA invoice portal in your browser")}</div>
+                  <div className="settings-update">
+                    {appVersion ? <span className="settings-version">v{appVersion}</span> : null}
+                    <button className="hc-btn" disabled={checkingUpdate} onClick={handleCheckUpdate} title={t("检查是否有新版本可用", "Check whether a newer version is available")}>{checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}</button>
                   </div>
-                  <button className="hc-btn" onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>{t("打开", "Open")}</button>
                 </div>
               </>
             )}
