@@ -1085,6 +1085,19 @@ const dailySyncErrorText = (e: any, t: (zh: string, en: string) => string): stri
 // suffix without exposing the separator in the file list.
 const deSourceLabel = (s: string): string => String(s || "").replace(/\|(?=\d{2}-\d{2}-\d{4}$)/, " · ");
 
+// Settings toggles that hide individual action buttons. Stored locally so each
+// user can keep their own layout when the app restarts.
+type HiddenButtonKey = "markFreeZone" | "restoreDocClaims" | "restoreAllClaims";
+type HiddenButtons = Record<HiddenButtonKey, boolean>;
+const DEFAULT_HIDDEN_BUTTONS: HiddenButtons = { markFreeZone: false, restoreDocClaims: false, restoreAllClaims: false };
+const HIDDEN_BUTTONS_STORAGE_KEY = "vouchify_hidden_buttons";
+const readHiddenButtons = (): HiddenButtons => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HIDDEN_BUTTONS_STORAGE_KEY) || "{}");
+    return { ...DEFAULT_HIDDEN_BUTTONS, ...saved };
+  } catch { return { ...DEFAULT_HIDDEN_BUTTONS }; }
+};
+
 function App() {
   const [tab, setTab] = useState<"bank" | "import" | "suppliers" | "entries" | "settings">("bank");
   const [lang, setLang] = useState<"zh" | "en">("en");
@@ -1118,6 +1131,14 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [showChangePw, setShowChangePw] = useState(false);
+  const [hiddenButtons, setHiddenButtons] = useState<HiddenButtons>(readHiddenButtons);
+  const setHiddenButton = useCallback((key: HiddenButtonKey, hidden: boolean) => {
+    setHiddenButtons(prev => {
+      const next = { ...prev, [key]: hidden };
+      try { localStorage.setItem(HIDDEN_BUTTONS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
   const [settingsSection, setSettingsSection] = useState<"account" | "general" | "about">("account");
   const [bankSection, setBankSection] = useState("sec-info");
   const [showHistoryExport, setShowHistoryExport] = useState(false);
@@ -3506,6 +3527,28 @@ function App() {
                   </div>
                   <button className="hc-btn" disabled={checkingUpdate} onClick={handleCheckUpdate}>{checkingUpdate ? t("检查中…", "Checking…") : t("检查更新", "Check Update")}</button>
                 </div>
+                <div className="settings-subhead">{t("按钮显示", "Button visibility")}</div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("供应商：标记自由区", "Suppliers: Mark free zone")}</div>
+                    <div className="settings-row-desc">{t("隐藏供应商卡片上的“标记自由区”按钮", "Hide the Mark free zone button on supplier cards")}</div>
+                  </div>
+                  <label className="toggle"><input type="checkbox" checked={hiddenButtons.markFreeZone} onChange={e => setHiddenButton("markFreeZone", e.target.checked)} />{t("隐藏", "Hide")}</label>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("发票池：恢复本文档认领", "Invoice Pool: Restore Doc Claims")}</div>
+                    <div className="settings-row-desc">{t("隐藏发票池工具栏中的“恢复本文档认领”按钮", "Hide the Restore Doc Claims button in the pool toolbar")}</div>
+                  </div>
+                  <label className="toggle"><input type="checkbox" checked={hiddenButtons.restoreDocClaims} onChange={e => setHiddenButton("restoreDocClaims", e.target.checked)} />{t("隐藏", "Hide")}</label>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">{t("发票池：恢复全部文档认领", "Invoice Pool: Restore All Claims")}</div>
+                    <div className="settings-row-desc">{t("隐藏发票池工具栏中的“恢复全部文档认领”按钮", "Hide the Restore All Claims button in the pool toolbar")}</div>
+                  </div>
+                  <label className="toggle"><input type="checkbox" checked={hiddenButtons.restoreAllClaims} onChange={e => setHiddenButton("restoreAllClaims", e.target.checked)} />{t("隐藏", "Hide")}</label>
+                </div>
               </>
             )}
             {settingsSection === "about" && (
@@ -3712,7 +3755,7 @@ function App() {
                       </div>
                     )}
                     <div className="supplier-wht-actions">
-                    {!isFreeZoneTaxId(s.taxId) && (
+                    {!hiddenButtons.markFreeZone && !isFreeZoneTaxId(s.taxId) && (
                       <button className="hc-btn" onClick={() => void markSupplierFreeZone(s.taxId, s.name || s.poolName)}>
                         {t("标记自由区", "Mark free zone")}
                       </button>
@@ -7390,10 +7433,6 @@ function App() {
           <span className="navlabel">{t("发票池", "Invoice Pool")}</span>
           {availablePoolCount > 0 && <span className="navbadge violet">{availablePoolCount}</span>}
         </button>
-        <button className={`navitem${tab === "settings" ? " active" : ""}`} data-tip={sidebarCollapsed ? t("设置", "Settings") : undefined} onClick={() => setTab("settings")}>
-          <span className="sb-tile"><IconSettings size={15} /></span>
-          <span className="navlabel">{t("设置", "Settings")}</span>
-        </button>
         <button className="eta-link" data-tip={sidebarCollapsed ? t("打开 ETA 门户", "Open ETA portal") : undefined} onClick={() => openUrl("https://invoicing.eta.gov.eg").catch(err => showAlert(`${t("无法打开浏览器", "Failed to open browser")}: ${err}`))}>
           <IconExternal size={13} /> <span className="eta-text">{t("打开 ETA 门户", "Open ETA portal")}</span>
         </button>
@@ -7405,9 +7444,6 @@ function App() {
                 <div className="acct-name">{(authUser || "").split("@")[0]}</div>
                 <div className="acct-status"><span className={`doc-dot${synced ? "" : " red"}`} />{synced ? t("已同步", "Synced") : t("未同步", "Not synced")}</div>
               </div>
-              <button className="acct-btn" onClick={async () => { await signOut(); setAuthUser(null); setAuthUserId(null); setSynced(false); setShowChangePw(false); setTab("bank"); }}>
-                {t("登出", "Logout")}
-              </button>
               <button className={`acct-gear${tab === "settings" ? " active" : ""}`} title={t("设置", "Settings")} onClick={() => { setSettingsSection("account"); setTab("settings"); }}>
                 <IconSettings size={14} />
               </button>
@@ -8009,18 +8045,18 @@ function App() {
                   setPoolLoading(false);
                 }}>{t("同步云端", "Sync Now")}</button>
                 <span style={{flex:1}} />
-                <button className="hc-btn" onClick={async () => {
+                {!hiddenButtons.restoreDocClaims && <button className="hc-btn" onClick={async () => {
                   const n = await restoreClaimsFromDocument();
                   showAlert(n > 0
                     ? `${t("已认领", "Claimed")} ${n} ${t("张本文档引用的发票", "invoice(s) referenced by this document")}`
                     : t("本文档没有可恢复的发票", "No recoverable invoices for this document"));
-                }}>{t("恢复本文档认领", "Restore Doc Claims")}</button>
-                <button className="hc-btn" onClick={async () => {
+                }}>{t("恢复本文档认领", "Restore Doc Claims")}</button>}
+                {!hiddenButtons.restoreAllClaims && <button className="hc-btn" onClick={async () => {
                   const n = await restoreAllClaims();
                   showAlert(n > 0
                     ? `${t("已恢复", "Restored")} ${n} ${t("张发票在所有已保存文档中的认领", "invoice claim(s) across all saved documents")}`
                     : t("没有可恢复的发票", "No recoverable invoices"));
-                }}>{t("恢复全部文档认领", "Restore All Claims")}</button>
+                }}>{t("恢复全部文档认领", "Restore All Claims")}</button>}
               </div>
               <div className={`pool-syncinfo ${poolSyncInfo.ok ? 'ok' : 'err'}`}>
                 <span>sync: local={poolSyncInfo.local} · cloud={poolSyncInfo.cloud} · ↑{poolSyncInfo.pushed} ↓{poolSyncInfo.pulled}</span>
