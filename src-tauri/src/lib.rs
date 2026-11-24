@@ -365,6 +365,13 @@ fn reject_pool_delete(state: tauri::State<'_, DbState>, id: i64) -> Result<(), S
 }
 
 #[tauri::command]
+fn set_credit_note_target(state: tauri::State<'_, DbState>, credit_uuid: String, target_uuid: String) -> Result<(), String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
+    history::set_credit_note_target(conn, &credit_uuid, &target_uuid)
+}
+
+#[tauri::command]
 fn sync_pool_from_remote(state: tauri::State<'_, DbState>, invoices: Vec<history::PoolInvoice>) -> Result<(), String> {
     let guard = state.0.lock().map_err(|e| e.to_string())?;
     let conn = guard.as_ref().ok_or("DB not initialized".to_string())?;
@@ -426,7 +433,9 @@ fn validate_from_pool(state: tauri::State<'_, DbState>, ids: Vec<i64>, form_json
             result.is_valid = false;
         }
         if let Some(cn) = cancellations.get(&pool_inv.uuid.trim().to_uppercase()) {
-            let how = if cn.via == "amount" { "matched by amount" } else { "ETA reference" };
+            let how = if cn.via == "amount" { "matched by amount" }
+              else if cn.via == "manual" { "selected manually" }
+              else { "ETA reference" };
             result.issues.push(eta_xml::ValidationIssue {
                 field: "Document Status".into(),
                 xml_value: format!("Cancelled by credit note {}", cn.credit_note_id),
@@ -745,6 +754,7 @@ pub fn run() {
             delete_pool_invoice,
             request_pool_delete,
             reject_pool_delete,
+            set_credit_note_target,
             sync_pool_from_remote,
             validate_from_pool,
             import_daily_entries,

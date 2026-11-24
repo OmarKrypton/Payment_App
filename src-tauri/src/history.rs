@@ -1,6 +1,6 @@
 use crate::models::HistoryEntry;
 use crate::eta_xml::EtaInvoice;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
 pub fn init_db(db_path: &Path) -> Result<Connection, String> {
@@ -67,6 +67,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             exchange_rate REAL DEFAULT 0,
             doc_kind TEXT DEFAULT '',
             references_json TEXT DEFAULT '[]',
+            credit_target_uuid TEXT DEFAULT '',
             lines_json TEXT DEFAULT '[]',
             raw_xml TEXT DEFAULT '',
             file_name TEXT DEFAULT '',
@@ -148,6 +149,13 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     }
     if !cols.iter().any(|c| c == "references_json") {
         conn.execute("ALTER TABLE eta_invoices ADD COLUMN references_json TEXT DEFAULT '[]'", [])
+            .map_err(|e| e.to_string())?;
+    }
+    // User-selected invoice for a credit note that carries no ETA `references`.
+    // Unlike the fields derived from raw XML, this is a real shared column: an
+    // admin/finance user's choice must reach every device via Supabase.
+    if !cols.iter().any(|c| c == "credit_target_uuid") {
+        conn.execute("ALTER TABLE eta_invoices ADD COLUMN credit_target_uuid TEXT DEFAULT ''", [])
             .map_err(|e| e.to_string())?;
     }
     // These repairs used to run one statement per row in autocommit mode. On
@@ -352,6 +360,11 @@ pub struct PoolInvoice {
     /// JSON array of ETA UUIDs a credit note references (empty otherwise).
     #[serde(default)]
     pub references_json: String,
+    /// User-selected invoice UUID for a credit note without ETA references.
+    /// Option so a cloud row from an older schema (missing column) leaves the
+    /// locally chosen target untouched during sync.
+    #[serde(default)]
+    pub credit_target_uuid: Option<String>,
     pub     lines_json: String,
     #[serde(default)]
     pub raw_xml: String,
@@ -616,7 +629,7 @@ pub fn add_to_pool(conn: &Connection, invoice: &EtaInvoice, raw_xml: &str, file_
 pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
     let mut result = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json FROM eta_invoices ORDER BY created_at DESC")
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json, credit_target_uuid FROM eta_invoices ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -650,6 +663,7 @@ pub fn list_pool(conn: &Connection) -> Result<Vec<PoolInvoice>, String> {
                 exchange_rate: row.get(23).unwrap_or(0.0),
                 doc_kind: row.get(24).unwrap_or_default(),
                 references_json: row.get(25).unwrap_or_else(|_| "[]".to_string()),
+                credit_target_uuid: row.get(26).ok(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -670,7 +684,7 @@ pub fn list_pool_by_uuids(conn: &Connection, uuids: &[String]) -> Result<Vec<Poo
     for chunk in uuids.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
-            "SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json FROM eta_invoices WHERE uuid IN ({})",
+            "SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_snapshot_id, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json, credit_target_uuid FROM eta_invoices WHERE uuid IN ({})",
             placeholders
         );
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
@@ -706,6 +720,7 @@ pub fn list_pool_by_uuids(conn: &Connection, uuids: &[String]) -> Result<Vec<Poo
                     exchange_rate: row.get(23).unwrap_or(0.0),
                     doc_kind: row.get(24).unwrap_or_default(),
                     references_json: row.get(25).unwrap_or_else(|_| "[]".to_string()),
+                    credit_target_uuid: row.get(26).ok(),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -962,6 +977,8 @@ pub struct PoolInvoiceSummary {
     pub doc_kind: String,
     /// JSON array of ETA UUIDs a credit note references (empty otherwise).
     pub references_json: String,
+    /// Manual target chosen by the user for a credit note without references.
+    pub credit_target_uuid: String,
     /// True when a valid credit note references this invoice and fully offsets
     /// it. Such an invoice can no longer be claimed or attached.
     pub cancelled: bool,
@@ -996,6 +1013,7 @@ struct PoolMeta {
     currency: String,
     doc_kind: String,
     references_json: String,
+    credit_target_uuid: String,
     doc_status: String,
     delete_requested_at: Option<String>,
     issue_date: String,
@@ -1034,7 +1052,7 @@ fn is_invoice_kind(kind: &str) -> bool {
 /// us it belongs to another invoice).
 pub fn credit_cancellations(conn: &Connection) -> Result<std::collections::HashMap<String, CreditCancellation>, String> {
     let mut stmt = conn
-        .prepare("SELECT uuid, invoice_id, seller_tax_id, grand_total, currency, doc_kind, references_json, doc_status, delete_requested_at, issue_date FROM eta_invoices")
+        .prepare("SELECT uuid, invoice_id, seller_tax_id, grand_total, currency, doc_kind, references_json, credit_target_uuid, doc_status, delete_requested_at, issue_date FROM eta_invoices")
         .map_err(|e| e.to_string())?;
     let rows: Vec<PoolMeta> = stmt
         .query_map([], |r| {
@@ -1046,9 +1064,10 @@ pub fn credit_cancellations(conn: &Connection) -> Result<std::collections::HashM
                 currency: r.get(4)?,
                 doc_kind: r.get(5).unwrap_or_default(),
                 references_json: r.get(6).unwrap_or_else(|_| "[]".to_string()),
-                doc_status: r.get(7).unwrap_or_default(),
-                delete_requested_at: r.get(8)?,
-                issue_date: r.get(9).unwrap_or_default(),
+                credit_target_uuid: r.get(7).unwrap_or_default(),
+                doc_status: r.get(8).unwrap_or_default(),
+                delete_requested_at: r.get(9)?,
+                issue_date: r.get(10).unwrap_or_default(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -1122,6 +1141,33 @@ pub fn credit_cancellations(conn: &Connection) -> Result<std::collections::HashM
         }
     }
 
+    // Explicit user choice for credit notes that carry no ETA `references`.
+    // This runs after the authoritative reference passes (so a referenced
+    // invoice can never be stolen by a manual pick) and before the automatic
+    // amount fallback (so the user's pick wins over an ambiguous guess).
+    let amount_match = |cn: &PoolMeta, inv: &PoolMeta| -> bool {
+        if (inv.grand_total - cn.grand_total).abs() > 0.02 { return false; }
+        let cn_date = date_only(&cn.issue_date);
+        let inv_date = date_only(&inv.issue_date);
+        !(cn_date.len() >= 10 && inv_date.len() >= 10 && inv_date > cn_date)
+    };
+    let mut manual_handled: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for (i, cn) in rows.iter().enumerate() {
+        if !cn.doc_kind.eq_ignore_ascii_case("C") || !credit_ok(cn) { continue; }
+        let refs: Vec<String> = serde_json::from_str(&cn.references_json).unwrap_or_default();
+        if refs.iter().any(|r| !r.trim().is_empty()) { continue; }
+        let target_key = cn.credit_target_uuid.trim().to_uppercase();
+        if target_key.is_empty() { continue; }
+        let Some(&j) = by_uuid.get(&target_key) else { continue };
+        let inv = &rows[j];
+        if j == i || !is_invoice_kind(&inv.doc_kind) || !target_ok(cn, inv) || !amount_match(cn, inv) { continue; }
+        if !inv.doc_status.is_empty() && !inv.doc_status.eq_ignore_ascii_case("Valid") { continue; }
+        let key = inv.uuid.trim().to_uppercase();
+        if out.contains_key(&key) { continue; }
+        out.insert(key, CreditCancellation { credit_note_id: cn.invoice_id.clone(), via: "manual".to_string() });
+        manual_handled.insert(i);
+    }
+
     // Fallback for credit notes that carry no ETA `references` at all. Only an
     // unambiguous amount link is accepted: same seller, currency and total, an
     // invoice issued no later than the credit note (same-day allowed), exactly
@@ -1152,6 +1198,7 @@ pub fn credit_cancellations(conn: &Connection) -> Result<std::collections::HashM
         if !cn.doc_kind.eq_ignore_ascii_case("C") || !credit_ok(cn) {
             continue;
         }
+        if manual_handled.contains(&i) { continue; }
         let refs: Vec<String> = serde_json::from_str(&cn.references_json).unwrap_or_default();
         if refs.iter().any(|r| !r.trim().is_empty()) {
             continue;
@@ -1192,10 +1239,71 @@ pub fn credit_cancellations(conn: &Connection) -> Result<std::collections::HashM
     Ok(out)
 }
 
+/// Store (or clear, with an empty `target_uuid`) the user's choice of which
+/// invoice a reference-less credit note offsets. The choice is validated with
+/// the same rules as automatic amount matching, so a bad pick can never cancel
+/// an unrelated document.
+pub fn set_credit_note_target(conn: &Connection, credit_uuid: &str, target_uuid: &str) -> Result<(), String> {
+    let credit_key = credit_uuid.trim().to_uppercase();
+    if credit_key.is_empty() { return Err("Credit note uuid is required".to_string()); }
+    let cn: (String, f64, String, String, String, String, Option<String>, String) = {
+        let mut stmt = conn.prepare(
+            "SELECT seller_tax_id, grand_total, currency, doc_kind, references_json, doc_status, delete_requested_at, issue_date FROM eta_invoices WHERE uuid=?1",
+        ).map_err(|e| e.to_string())?;
+        stmt.query_row(params![credit_key], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))
+        }).optional().map_err(|e| e.to_string())?.ok_or_else(|| "Credit note not found in pool".to_string())?
+    };
+    let (cn_seller, cn_total, cn_currency, cn_kind, cn_refs, cn_status, cn_deleted, cn_date) = cn;
+    if !cn_kind.eq_ignore_ascii_case("C") { return Err("Selected document is not a credit note".to_string()); }
+    if cn_deleted.is_some() || (!cn_status.is_empty() && !cn_status.eq_ignore_ascii_case("Valid")) {
+        return Err("This credit note is not valid".to_string());
+    }
+    let refs: Vec<String> = serde_json::from_str(&cn_refs).unwrap_or_default();
+    if refs.iter().any(|r| !r.trim().is_empty()) {
+        return Err("This credit note already references an invoice in its ETA XML; the reference cannot be overridden".to_string());
+    }
+    let target_key = target_uuid.trim().to_uppercase();
+    if !target_key.is_empty() {
+        let inv: (String, f64, String, String, String, Option<String>, String) = {
+            let mut stmt = conn.prepare(
+                "SELECT seller_tax_id, grand_total, currency, doc_kind, doc_status, delete_requested_at, issue_date FROM eta_invoices WHERE uuid=?1",
+            ).map_err(|e| e.to_string())?;
+            stmt.query_row(params![target_key], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+            }).optional().map_err(|e| e.to_string())?.ok_or_else(|| "Invoice not found in pool".to_string())?
+        };
+        let (inv_seller, inv_total, inv_currency, inv_kind, inv_status, inv_deleted, inv_date) = inv;
+        if !is_invoice_kind(&inv_kind) { return Err("The chosen document is not an ordinary invoice".to_string()); }
+        if cn_seller.trim().is_empty() || cn_seller.trim() != inv_seller.trim() {
+            return Err("The chosen invoice belongs to a different seller".to_string());
+        }
+        if !same_currency(&cn_currency, &inv_currency) {
+            return Err("The chosen invoice uses a different currency".to_string());
+        }
+        if (inv_total - cn_total).abs() > 0.02 {
+            return Err("The chosen invoice total does not match the credit note".to_string());
+        }
+        if inv_deleted.is_some() || (!inv_status.is_empty() && !inv_status.eq_ignore_ascii_case("Valid")) {
+            return Err("The chosen invoice is not valid".to_string());
+        }
+        let cn_date = date_only(&cn_date);
+        let inv_date = date_only(&inv_date);
+        if cn_date.len() >= 10 && inv_date.len() >= 10 && inv_date > cn_date {
+            return Err("The chosen invoice was issued after the credit note".to_string());
+        }
+    }
+    conn.execute(
+        "UPDATE eta_invoices SET credit_target_uuid=?2 WHERE uuid=?1",
+        params![credit_key, target_key],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn list_pool_summary(conn: &Connection) -> Result<Vec<PoolInvoiceSummary>, String> {
     let mut result = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json FROM eta_invoices ORDER BY created_at DESC")
+        .prepare("SELECT id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json, credit_target_uuid FROM eta_invoices ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -1226,6 +1334,7 @@ pub fn list_pool_summary(conn: &Connection) -> Result<Vec<PoolInvoiceSummary>, S
                 exchange_rate: row.get(20).unwrap_or(0.0),
                 doc_kind: row.get(21).unwrap_or_default(),
                 references_json: row.get(22).unwrap_or_else(|_| "[]".to_string()),
+                credit_target_uuid: row.get(23).unwrap_or_default(),
                 cancelled: false,
                 cancelled_by: String::new(),
                 cancelled_via: String::new(),
@@ -1363,13 +1472,15 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
              status=?18, used_by_label=?19, delete_requested_at=?20, delete_requested_by=?21,
              exchange_rate=?22,
              doc_kind = CASE WHEN ?23 = '' THEN doc_kind ELSE ?23 END,
-             references_json = CASE WHEN ?24 = '' THEN references_json ELSE ?24 END
+             references_json = CASE WHEN ?24 = '' THEN references_json ELSE ?24 END,
+             credit_target_uuid = CASE WHEN ?25 IS NULL THEN credit_target_uuid ELSE ?25 END
              WHERE id=?1",
             params![
                 id, inv.invoice_id, final_uuid, inv.seller_tax_id, inv.seller_name, inv.buyer_tax_id, inv.buyer_name,
                 inv.issue_date, currency, net_amount, total_vat, total_wht, grand_total,
                 lines_json, inv.raw_xml, inv.file_name, inv.doc_status, inv.status, inv.used_by_label,
-                inv.delete_requested_at, inv.delete_requested_by, exchange_rate, doc_kind, references_json
+                inv.delete_requested_at, inv.delete_requested_by, exchange_rate, doc_kind, references_json,
+                inv.credit_target_uuid.clone()
             ],
         ).map_err(|e| e.to_string())?;
         return Ok(());
@@ -1377,8 +1488,8 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
     let insert_kind = if doc_kind.is_empty() { "I".to_string() } else { doc_kind };
     let insert_refs = if references_json.is_empty() { "[]".to_string() } else { references_json };
     conn.execute(
-        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        "INSERT INTO eta_invoices (invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, doc_status, status, used_by_label, delete_requested_at, delete_requested_by, created_at, exchange_rate, doc_kind, references_json, credit_target_uuid)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         params![
             inv.invoice_id, resolved, inv.seller_tax_id, inv.seller_name,
             inv.buyer_tax_id, inv.buyer_name, inv.issue_date, currency,
@@ -1386,6 +1497,7 @@ pub fn sync_pool_from_remote(conn: &Connection, inv: &PoolInvoice) -> Result<(),
             lines_json, inv.raw_xml, inv.file_name, inv.doc_status,
             inv.status, inv.used_by_label, inv.delete_requested_at, inv.delete_requested_by,
             inv.created_at, exchange_rate, insert_kind, insert_refs,
+            inv.credit_target_uuid.clone().unwrap_or_default(),
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
@@ -1650,6 +1762,12 @@ mod pool_supersede_tests {
         assert!(!inv2.cancelled);
         let cn_row = summary.iter().find(|r| r.uuid == "UUID-CN-1").unwrap();
         assert_eq!(cn_row.doc_kind, "C");
+
+        // A referenced credit note cannot be manually redirected.
+        assert!(set_credit_note_target(&conn, "UUID-CN-1", "UUID-INV-2").is_err());
+        let cancels = credit_cancellations(&conn).unwrap();
+        assert!(cancels.contains_key("UUID-INV-1"));
+        assert!(!cancels.contains_key("UUID-INV-2"));
     }
 
     #[test]
@@ -1707,6 +1825,58 @@ mod pool_supersede_tests {
         add_to_pool(&conn, &cn, "<x/>", "cn.xml").unwrap();
 
         assert!(credit_cancellations(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn manual_credit_target_resolves_ambiguous_amounts() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        for id in ["INV-1", "INV-2"] {
+            let mut inv = sample_seller(id, &format!("UUID-{id}"), "Valid", "111");
+            inv.grand_total = 1000.0;
+            add_to_pool(&conn, &inv, "<x/>", &format!("{id}.xml")).unwrap();
+        }
+        let mut cn = sample_seller("CN-1", "UUID-CN-1", "Valid", "111");
+        cn.invoice_type_code = "C".to_string();
+        cn.grand_total = 1000.0;
+        add_to_pool(&conn, &cn, "<x/>", "cn.xml").unwrap();
+
+        // Still ambiguous until the user picks one.
+        assert!(credit_cancellations(&conn).unwrap().is_empty());
+        set_credit_note_target(&conn, "UUID-CN-1", "UUID-INV-2").unwrap();
+
+        let cancels = credit_cancellations(&conn).unwrap();
+        let picked = cancels.get("UUID-INV-2").expect("chosen invoice must be cancelled");
+        assert_eq!(picked.via, "manual");
+        assert_eq!(picked.credit_note_id, "CN-1");
+        assert!(!cancels.contains_key("UUID-INV-1"));
+
+        // Clearing the choice restores the ambiguous (no auto-cancel) state.
+        set_credit_note_target(&conn, "UUID-CN-1", "").unwrap();
+        assert!(credit_cancellations(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn manual_credit_target_rejects_a_different_seller() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        let mut inv = sample_seller("INV-1", "UUID-INV-1", "Valid", "111");
+        inv.grand_total = 1000.0;
+        add_to_pool(&conn, &inv, "<x/>", "inv.xml").unwrap();
+        let mut other = sample_seller("INV-2", "UUID-INV-2", "Valid", "222");
+        other.grand_total = 1000.0;
+        add_to_pool(&conn, &other, "<x/>", "inv2.xml").unwrap();
+        let mut cn = sample_seller("CN-1", "UUID-CN-1", "Valid", "111");
+        cn.invoice_type_code = "C".to_string();
+        cn.grand_total = 1000.0;
+        add_to_pool(&conn, &cn, "<x/>", "cn.xml").unwrap();
+
+        assert!(set_credit_note_target(&conn, "UUID-CN-1", "UUID-INV-2").is_err());
+        let summary = list_pool_summary(&conn).unwrap();
+        let cn_row = summary.iter().find(|r| r.uuid == "UUID-CN-1").unwrap();
+        assert_eq!(cn_row.credit_target_uuid, "");
     }
 
     #[test]

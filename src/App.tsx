@@ -6,7 +6,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
-import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, trashSnapshotRemote, restoreSnapshotRemote, purgeSnapshotRemote, isTrashedSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
+import { supabase, signIn, signOut, getSession, saveSnapshotRemote, listSnapshotsRemote, loadSnapshotRemote, updateSnapshotRemote, changePassword, requestDeleteSnapshot, approveDeleteSnapshot, rejectDeleteSnapshot, trashSnapshotRemote, restoreSnapshotRemote, purgeSnapshotRemote, isTrashedSnapshot, listPoolRemoteByIds, listPoolRemoteMeta, upsertPoolInvoicesRemote, markPoolAvailableRemoteIfOwner, markPoolUsedRemoteIfFree, markPoolInvoiceDeletedRemote, clearPoolDeletedForDocumentRemote, POOL_DELETED_MARKER, deletePoolInvoiceRemote, requestPoolDeleteRemote, setPoolCreditTargetRemote, listWhtCertsRemote, upsertWhtCertRemote, listManualSuppliersRemote, upsertManualSupplierRemote, deleteManualSupplierRemote, listDailyEntriesRemoteMeta, listDailyEntriesRemoteByKeys, normalizeDailyEntrySyncRow, upsertDailyEntriesRemote, softDeleteDailyEntriesRemoteByKeys, dailyEntriesSyncToken } from "./supabase";
 import { IconSave, IconHistory, IconNewSession, IconExport, IconReport, IconBank, IconTruck, IconUsers, IconLayers, IconUpload, IconExternal, IconChevronRight, IconSettings, IconLedger } from "./icons";
 import { checkForUpdate, performUpdate } from "./update";
 
@@ -5276,6 +5276,7 @@ function App() {
           return (l.status || "available") !== (r.status || "available") ||
                  (l.used_by_label || "") !== (r.used_by_label || "") ||
                  (l.doc_status || "Valid") !== (r.doc_status || "Valid") ||
+                 (l.credit_target_uuid || "") !== (r.credit_target_uuid || "") ||
                  (l.delete_requested_at || "") !== (r.delete_requested_at || "") ||
                  (l.delete_requested_by || "") !== (r.delete_requested_by || "");
         });
@@ -5326,6 +5327,7 @@ function App() {
           raw_xml: r.raw_xml || "",
           file_name: r.file_name || "",
           ...(r.doc_status ? { doc_status: r.doc_status } : {}),
+          credit_target_uuid: String(r.credit_target_uuid || ""),
           status: r.status || "available",
           used_by_snapshot_id: null,
           used_by_label: r.used_by_label || "",
@@ -6960,7 +6962,8 @@ function App() {
       return t("该文档是贷项通知单（credit note），不能加入付款文档", "This document is a credit note and cannot be added to a payment document");
     }
     if (isCancelledByCredit(p)) {
-      const how = p.cancelled_via === "amount" ? ` (${t("按金额匹配", "matched by amount")})` : "";
+      const how = p.cancelled_via === "amount" ? ` (${t("按金额匹配", "matched by amount")})`
+        : p.cancelled_via === "manual" ? ` (${t("手动指定", "selected manually")})` : "";
       return `${t("该发票已被贷项通知单取消", "Invoice cancelled by credit note")}: ${p.cancelled_by || ""}${how}`;
     }
     if (p.doc_status && p.doc_status !== "Valid") {
@@ -6970,6 +6973,46 @@ function App() {
       return t("该发票待删除，无法使用", "This invoice is pending deletion and cannot be used");
     }
     return null;
+  };
+
+  // Candidate invoices a reference-less credit note may cancel: same seller,
+  // currency and total, valid, issued on/before the credit note. Mirrors the
+  // rules enforced by Rust set_credit_note_target.
+  const creditNoteCandidates = (cn: any): any[] => {
+    if (!isCreditNote(cn)) return [];
+    let refs: string[] = [];
+    try { refs = JSON.parse(cn.references_json || "[]"); } catch { refs = []; }
+    if (refs.some((r) => String(r || "").trim())) return [];
+    const cnDate = String(cn.issue_date || "").slice(0, 10);
+    const cnSeller = String(cn.seller_tax_id || "").trim();
+    const cnCurrency = String(cn.currency || "EGP").trim().toUpperCase();
+    return poolList.filter((x: any) => {
+      if (String(x.uuid || "") === String(cn.uuid || "")) return false;
+      if (isCreditNote(x) || isDebitNote(x)) return false;
+      if (!cnSeller || String(x.seller_tax_id || "").trim() !== cnSeller) return false;
+      if (String(x.currency || "EGP").trim().toUpperCase() !== cnCurrency) return false;
+      if (Math.abs(Number(x.grand_total || 0) - Number(cn.grand_total || 0)) > 0.02) return false;
+      if (x.doc_status && x.doc_status !== "Valid") return false;
+      if (x.delete_requested_at != null) return false;
+      const invDate = String(x.issue_date || "").slice(0, 10);
+      if (cnDate.length >= 10 && invDate.length >= 10 && invDate > cnDate) return false;
+      if (isCancelledByCredit(x) && String(x.cancelled_by || "") !== String(cn.invoice_id || "")) return false;
+      return true;
+    });
+  };
+
+  const chooseCreditNoteTarget = async (cn: any, targetUuid: string) => {
+    try {
+      await invoke("set_credit_note_target", { creditUuid: cn.uuid, targetUuid });
+      try {
+        await setPoolCreditTargetRemote(cn.uuid, targetUuid);
+      } catch (e) {
+        showAlert(`${t("选择已在本机保存，但未能同步到其他设备", "Choice saved locally but could not sync to other devices")}: ${(e as any)?.message || e}`);
+      }
+      await loadPool();
+    } catch (e) {
+      showAlert(`${t("无法设置贷项通知单取消的发票", "Could not set the credit note target")}: ${(e as any)?.message || e}`);
+    }
   };
 
   const autoValidateAttachedInvoices = async () => {
@@ -8201,9 +8244,17 @@ function App() {
                           ? poolList.filter((x: any) =>
                               String(x.cancelled_by || "") === String(p.invoice_id || "") &&
                               String(x.seller_tax_id || "") === String(p.seller_tax_id || "") &&
-                              String(x.cancelled_via || "") === "amount")
+                              (String(x.cancelled_via || "") === "amount" || String(x.cancelled_via || "") === "manual"))
                             .map((x: any) => x.invoice_id)
                           : [];
+                        const manualMatchedIds = credit
+                          ? poolList.filter((x: any) =>
+                              String(x.cancelled_by || "") === String(p.invoice_id || "") &&
+                              String(x.cancelled_via || "") === "manual")
+                            .map((x: any) => x.invoice_id)
+                          : [];
+                        const cnCandidates = credit ? creditNoteCandidates(p) : [];
+                        const cnSelectedUuid = String(p.credit_target_uuid || "").trim().toUpperCase();
                         return (
                         <div key={p.id} className={`hc-item pool-card ${cardCls}${dim ? " dim" : ""}`}>
                           <span className="hc-bar" />
@@ -8238,6 +8289,8 @@ function App() {
                                 {cancelledByCn && !credit ? (
                                   <span className="hc-pill pp-cnby" title={p.cancelled_via === "amount"
                                     ? t("按金额匹配的贷项通知单已全额抵销本发票", "Fully offset by a credit note matched by amount")
+                                    : p.cancelled_via === "manual"
+                                    ? t("手动指定的贷项通知单已全额抵销本发票", "Fully offset by a manually assigned credit note")
                                     : t("引用本发票的贷项通知单已全额抵销", "Fully offset by a referencing credit note")}>
                                     {t("已被贷项通知单取消", "Cancelled by credit note")}{p.cancelled_by ? ` · ${p.cancelled_by}` : ""}
                                   </span>
@@ -8275,11 +8328,34 @@ function App() {
                                 <div className="hc-cn-ref">
                                   {cnRefIds.length > 0
                                     ? `↳ ${t("抵销", "Cancels")}: ${cnRefIds.join(", ")}`
-                                    : amountMatchedIds.length > 0
+                                    : manualMatchedIds.length > 0
+                                      ? `↳ ${t("抵销（手动指定）", "Cancels (selected manually)")}: ${manualMatchedIds.join(", ")}`
+                                      : amountMatchedIds.length > 0
                                       ? `↳ ${t("抵销（按金额匹配）", "Cancels (matched by amount)")}: ${amountMatchedIds.join(", ")}`
                                       : cnRefs.length > 0
                                         ? t("↳ 关联发票不在池中（无法自动取消）", "↳ Linked invoice not in pool (cannot auto-cancel)")
                                         : t("↳ 未关联发票（无法自动取消）", "↳ No linked invoice (cannot auto-cancel)")}
+                                </div>
+                              )}
+                              {credit && cnRefs.length === 0 && cnCandidates.length > 0 && (
+                                <div className="hc-cn-choices">
+                                  <span className="hc-cn-choices-label">{t("取消哪张发票", "Cancel which invoice")}:</span>
+                                  {cnCandidates.map((x: any) => {
+                                    const selected = cnSelectedUuid === String(x.uuid || "").trim().toUpperCase();
+                                    return (
+                                      <button
+                                        key={String(x.uuid || x.id)}
+                                        className={`hc-cn-choice${selected ? " sel" : ""}`}
+                                        title={selected ? t("当前选择", "Currently selected") : t("点击让此贷项通知单取消该发票", "Click to let this credit note cancel the invoice")}
+                                        onClick={() => chooseCreditNoteTarget(p, String(x.uuid || ""))}
+                                      >{x.invoice_id}</button>
+                                    );
+                                  })}
+                                  {cnSelectedUuid && (
+                                    <button className="hc-cn-choice clear" onClick={() => chooseCreditNoteTarget(p, "")}>
+                                      {t("清除", "Clear")}
+                                    </button>
+                                  )}
                                 </div>
                               )}
                               {p.file_name && (

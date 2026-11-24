@@ -237,6 +237,8 @@ export interface PoolInvoiceRow {
   delete_requested_at: string | null;
   delete_requested_by: string | null;
   created_at: string;
+  /** Manual credit-note target (added by supabase/credit_note_target.sql). */
+  credit_target_uuid?: string | null;
 }
 
 // The doc_status column was added later than the base table; until the project
@@ -249,13 +251,34 @@ function isMissingDocStatusError(e: any): boolean {
   return msg.includes("doc_status");
 }
 
+// Credit-note target is a later additive migration too. Probe once so older
+// projects keep syncing with a local-only choice instead of every pool query
+// failing on an unknown column.
+let cloudHasCreditTarget = true;
+let creditTargetChecked = false;
+
+function isMissingCreditTargetError(e: any): boolean {
+  const msg = String((e && (e.message ?? e)) || "");
+  return msg.includes("credit_target_uuid");
+}
+
+async function ensureCreditTargetColumn(): Promise<boolean> {
+  if (creditTargetChecked) return cloudHasCreditTarget;
+  const { error } = await supabase.from("pool_invoices").select("credit_target_uuid").limit(1);
+  if (error && isMissingCreditTargetError(error)) cloudHasCreditTarget = false;
+  creditTargetChecked = true;
+  return cloudHasCreditTarget;
+}
+
 function poolSelect(colsBase: string): string {
-  return cloudHasDocStatus ? `${colsBase}, doc_status` : colsBase;
+  const withDoc = cloudHasDocStatus ? `${colsBase}, doc_status` : colsBase;
+  return cloudHasCreditTarget ? `${withDoc}, credit_target_uuid` : withDoc;
 }
 
 export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
+  await ensureCreditTargetColumn();
   const COLS = "id, invoice_id, uuid, seller_tax_id, seller_name, buyer_tax_id, buyer_name, issue_date, currency, net_amount, total_vat, total_wht, grand_total, lines_json, raw_xml, file_name, status, used_by_label, delete_requested_at, delete_requested_by";
   const build = (from: number, to: number) =>
     supabase
@@ -269,7 +292,7 @@ export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
             cloudHasDocStatus = false;
             return supabase
               .from("pool_invoices")
-              .select(`${COLS}, created_at`)
+              .select(poolSelect(`${COLS}, created_at`))
               .order("created_at", { ascending: false })
               .range(from, to)
               .then((r2: any) => {
@@ -290,6 +313,7 @@ export async function listPoolRemote(): Promise<PoolInvoiceRow[]> {
 export async function listPoolRemoteByIds(uuids: string[]): Promise<PoolInvoiceRow[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
+  await ensureCreditTargetColumn();
   if (uuids.length === 0) return [];
   const PAGE = 50;
   const all: PoolInvoiceRow[] = [];
@@ -305,7 +329,7 @@ export async function listPoolRemoteByIds(uuids: string[]): Promise<PoolInvoiceR
   let res: any = await run(poolSelect(COLS));
   if (res.error && cloudHasDocStatus && isMissingDocStatusError(res.error)) {
     cloudHasDocStatus = false;
-    res = await run(COLS);
+    res = await run(poolSelect(COLS));
   }
   if (res.error) throw res.error;
   if (res.data) all.push(...(res.data as PoolInvoiceRow[]));
@@ -322,9 +346,11 @@ export async function listPoolRemoteMeta(): Promise<{
   used_by_label: string;
   delete_requested_at: string | null;
   delete_requested_by: string | null;
+  credit_target_uuid?: string | null;
 }[]> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
+  await ensureCreditTargetColumn();
   const COLS = "uuid, invoice_id, seller_tax_id, status, used_by_label, delete_requested_at, delete_requested_by";
   const build = (from: number, to: number) =>
     supabase
@@ -338,7 +364,7 @@ export async function listPoolRemoteMeta(): Promise<{
             cloudHasDocStatus = false;
             return supabase
               .from("pool_invoices")
-              .select(COLS)
+              .select(poolSelect(COLS))
               .order("created_at", { ascending: false })
               .range(from, to)
               .then((r2: any) => {
@@ -356,6 +382,7 @@ export async function listPoolRemoteMeta(): Promise<{
 export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
+  await ensureCreditTargetColumn();
   if (rows.length === 0) return;
   const upserts = rows.map((r) => ({
     invoice_id: r.invoice_id,
@@ -376,6 +403,7 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
     doc_status: r.doc_status || "Valid",
     status: r.status || "available",
     used_by_label: r.used_by_label || "",
+    ...(cloudHasCreditTarget ? { credit_target_uuid: r.credit_target_uuid || "" } : {}),
   }));
   // Chunk the upload: a single request carrying every invoice (with full
   // raw_xml) can exceed Supabase's request body limit and fail wholesale,
@@ -401,6 +429,20 @@ export async function upsertPoolInvoicesRemote(rows: PoolInvoiceRow[]): Promise<
     }
     if (error) throw error;
   }
+}
+
+export async function setPoolCreditTargetRemote(uuid: string, targetUuid: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+  const hasColumn = await ensureCreditTargetColumn();
+  if (!hasColumn) {
+    throw new Error("Supabase pool_invoices has no credit_target_uuid column. Run supabase/credit_note_target.sql in the Supabase SQL Editor.");
+  }
+  const { error } = await supabase
+    .from("pool_invoices")
+    .update({ credit_target_uuid: targetUuid || "" })
+    .eq("uuid", uuid);
+  if (error) throw error;
 }
 
 export async function markPoolUsedRemote(uuid: string, usedByLabel: string): Promise<void> {

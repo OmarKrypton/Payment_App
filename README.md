@@ -49,6 +49,7 @@ A shared pool of ETA XML invoices that can be claimed by any document:
 - **Batch XML import** with live progress.
 - Search and filter by currency, seller, date range and document status (Valid / Rejected / Cancelled).
 - Claim (attach) invoices to a document, unclaim, or validate before attaching.
+- **Credit-note matching**: a credit note that references an ETA invoice cancels it automatically; when it has no reference, invoices with the same seller/currency/total are candidates and you can choose which one it cancels from the credit-note card. The choice syncs across devices.
 - Synthetic/legacy UUIDs are normalised so the same invoice never duplicates on re-import.
 - **Admin delete requests**: normal users request deletion, admins approve or reject.
 - Cloud sync with local fallback.
@@ -141,6 +142,8 @@ npm run tauri dev
 # build the production bundle
 npm run tauri build
 ```
+
+> Existing Supabase projects should run `supabase/credit_note_target.sql` once in the SQL Editor to enable synced credit-note target choices (the app works locally without it).
 
 > Releases are built from `v*` tags via GitHub Actions and published as drafts. Use **Check Update** in Settings → About to check for a newer version.
 
